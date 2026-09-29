@@ -26,7 +26,7 @@ public class AuditLog {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "actor_id")
-    private com.example.distrobackend.Domain.entity.JsonType.User actor;
+    private com.example.distrobackend.Domain.entity.User actor;
 
     @Column(name = "action", nullable = false, length = 100)
     private String action;

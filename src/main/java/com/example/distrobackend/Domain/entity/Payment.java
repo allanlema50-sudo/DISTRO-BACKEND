@@ -1,10 +1,10 @@
 package com.example.distrobackend.Domain.entity;
 
+import com.example.distrobackend.Domain.enums.PaymentMethod;
 import com.example.distrobackend.Domain.enums.PaymentStatus;
 
 import io.hypersistence.utils.hibernate.type.json.JsonType;
 import jakarta.persistence.*;
-import jakarta.persistence.criteria.Order;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -69,7 +69,7 @@ public class Payment {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "reconciled_by")
-    private com.example.distrobackend.Domain.entity.JsonType.User reconciledBy;
+    private com.example.distrobackend.Domain.entity.User reconciledBy;
 
     @Column(name = "reconciled_note", columnDefinition = "TEXT")
     private String reconciledNote;

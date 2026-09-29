@@ -49,7 +49,7 @@ private UUID id;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "rider_id")
-    private JsonType.User rider;
+    private User rider;
 
     @Column(name = "origin_lat")
     private Double originLat;

@@ -35,7 +35,7 @@ public class TripStatusHistory<TripStatus> {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "changed_by")
-    private JsonType.User changedBy;
+    private User changedBy;
 
     @Column(name = "note", columnDefinition = "TEXT")
     private String note;

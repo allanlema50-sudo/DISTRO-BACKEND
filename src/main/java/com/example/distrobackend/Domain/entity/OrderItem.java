@@ -1,5 +1,6 @@
 package com.example.distrobackend.Domain.entity;
 
+
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -11,14 +12,13 @@ import org.hibernate.type.SqlTypes;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.UUID;
-
 @Entity
 @Table(name = "order_items")
 @Getter
 @Setter
 @NoArgsConstructor
-public class OrderItem {
 
+public class OrderItem {
     @Id
     @GeneratedValue
     @JdbcTypeCode(SqlTypes.UUID)
@@ -35,18 +35,12 @@ public class OrderItem {
     @Column(name = "quantity", nullable = false)
     private int quantity;
 
-    // Snapshot of unit price at order time
+    // snapshot of unit price at order time, independent of later stock_item price changes
     @Column(name = "unit_price", nullable = false, precision = 12, scale = 2)
     private BigDecimal unitPrice;
 
-    // DB-generated column: quantity * unit_price
-    @Column(
-            name = "line_total",
-            precision = 12,
-            scale = 2,
-            insertable = false,
-            updatable = false
-    )
+    // DB-generated column (quantity * unit_price) — read-only from the JPA side
+    @Column(name = "line_total", precision = 12, scale = 2, insertable = false, updatable = false)
     private BigDecimal lineTotal;
 
     @Column(name = "stock_check_status", nullable = false, length = 20)

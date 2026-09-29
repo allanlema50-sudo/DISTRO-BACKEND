@@ -2,7 +2,6 @@ package com.example.distrobackend.Domain.entity;
 
 import com.example.distrobackend.Domain.enums.OrderStatus;
 import jakarta.persistence.*;
-
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;

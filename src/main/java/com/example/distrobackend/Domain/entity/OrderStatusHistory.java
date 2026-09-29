@@ -2,7 +2,7 @@ package com.example.distrobackend.Domain.entity;
 
 import com.example.distrobackend.Domain.enums.OrderStatus;
 import jakarta.persistence.*;
-import jakarta.persistence.criteria.Order;
+import com.example.distrobackend.Domain.entity.Order;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -41,7 +41,7 @@ public class OrderStatusHistory {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "changed_by")
-    private JsonType.User changedBy;
+    private User changedBy;
 
     @Column(name = "note", columnDefinition = "TEXT")
     private String note;
@@ -50,3 +50,4 @@ public class OrderStatusHistory {
     @Column(name = "changed_at", nullable = false, updatable = false)
     private OffsetDateTime changedAt;
 }
+

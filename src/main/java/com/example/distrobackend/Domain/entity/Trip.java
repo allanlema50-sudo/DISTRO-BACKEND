@@ -3,7 +3,7 @@ package com.example.distrobackend.Domain.entity;
 import com.example.distrobackend.Domain.enums.TripStatus;
 import com.example.distrobackend.Domain.enums.TripType;
 import jakarta.persistence.*;
-import jakarta.persistence.criteria.Order;
+import com.example.distrobackend.Domain.entity.Order;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -49,7 +49,7 @@ private UUID id;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "rider_id")
-    private JsonType.User rider;
+    private User rider;
 
     @Column(name = "origin_lat")
     private Double originLat;
@@ -86,3 +86,4 @@ private UUID id;
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 }
+

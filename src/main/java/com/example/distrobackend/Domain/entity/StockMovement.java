@@ -46,7 +46,7 @@ private UUID id;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "performed_by")
-    private JsonType.User performedBy;
+    private User performedBy;
 
     @Column(name = "note", columnDefinition = "TEXT")
     private String note;
@@ -55,3 +55,4 @@ private UUID id;
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 }
+

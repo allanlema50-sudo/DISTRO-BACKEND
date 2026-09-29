@@ -28,7 +28,7 @@ private UUID id;
     // nullable: OTP flows (e.g. registration) can precede a user record
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id")
-    private JsonType.User user;
+    private User user;
 
     @Column(name = "destination", nullable = false, length = 150)
     private String destination;
@@ -60,3 +60,4 @@ private UUID id;
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 }
+

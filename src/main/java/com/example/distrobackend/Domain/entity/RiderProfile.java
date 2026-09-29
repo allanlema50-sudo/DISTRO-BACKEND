@@ -24,7 +24,7 @@ private UUID userId;
     @OneToOne(fetch = FetchType.LAZY)
     @MapsId
     @JoinColumn(name = "user_id")
-    private JsonType.User user;
+    private User user;
 
     @Column(name = "vehicle_type", length = 50)
     private String vehicleType;
@@ -47,3 +47,4 @@ private UUID userId;
     @Column(name = "last_location_at")
     private OffsetDateTime lastLocationAt;
 }
+

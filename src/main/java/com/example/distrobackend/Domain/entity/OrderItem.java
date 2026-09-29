@@ -2,7 +2,7 @@ package com.example.distrobackend.Domain.entity;
 
 
 import jakarta.persistence.*;
-import jakarta.persistence.criteria.Order;
+import com.example.distrobackend.Domain.entity.Order;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;

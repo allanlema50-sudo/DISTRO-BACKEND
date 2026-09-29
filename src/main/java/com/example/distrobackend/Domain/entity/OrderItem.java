@@ -1,8 +1,6 @@
 package com.example.distrobackend.Domain.entity;
 
-
 import jakarta.persistence.*;
-import com.example.distrobackend.Domain.entity.Order;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -13,13 +11,14 @@ import org.hibernate.type.SqlTypes;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.UUID;
+
 @Entity
 @Table(name = "order_items")
 @Getter
 @Setter
 @NoArgsConstructor
-
 public class OrderItem {
+
     @Id
     @GeneratedValue
     @JdbcTypeCode(SqlTypes.UUID)

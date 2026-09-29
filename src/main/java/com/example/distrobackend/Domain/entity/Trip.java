@@ -3,7 +3,7 @@ package com.example.distrobackend.Domain.entity;
 import com.example.distrobackend.Domain.enums.TripStatus;
 import com.example.distrobackend.Domain.enums.TripType;
 import jakarta.persistence.*;
-import com.example.distrobackend.Domain.entity.Order;
+
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -86,4 +86,3 @@ private UUID id;
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 }
-

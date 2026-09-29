@@ -25,7 +25,6 @@ private UUID id;
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
-
     @Column(name = "token_hash", nullable = false, unique = true)
     private String tokenHash;
 
@@ -39,4 +38,3 @@ private UUID id;
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 }
-

@@ -2,7 +2,6 @@ package com.example.distrobackend.Domain.entity;
 
 import com.example.distrobackend.Domain.enums.OrderStatus;
 import jakarta.persistence.*;
-import com.example.distrobackend.Domain.entity.Order;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -10,9 +9,7 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 import org.hibernate.annotations.CreationTimestamp;
 
-
 import java.time.OffsetDateTime;
-
 import java.util.UUID;
 
 @Entity
@@ -20,8 +17,8 @@ import java.util.UUID;
 @Getter
 @Setter
 @NoArgsConstructor
-
 public class OrderStatusHistory {
+
     @Id
     @GeneratedValue
     @JdbcTypeCode(SqlTypes.UUID)
@@ -50,4 +47,3 @@ public class OrderStatusHistory {
     @Column(name = "changed_at", nullable = false, updatable = false)
     private OffsetDateTime changedAt;
 }
-

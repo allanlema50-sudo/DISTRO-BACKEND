@@ -1,6 +1,9 @@
 package com.example.distrobackend.Domain.entity;
 
 
+
+
+
 import com.example.distrobackend.Domain.enums.Organizationtype;
 import jakarta.persistence.*;
 import lombok.Getter;
@@ -19,8 +22,8 @@ import java.util.UUID;
 @Getter
 @Setter
 @NoArgsConstructor
-
 public class Organization {
+
     @Id
     @GeneratedValue
     @JdbcTypeCode(SqlTypes.UUID)
@@ -30,7 +33,7 @@ public class Organization {
     private String name;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "type", nullable = false, length = 20)
+    @Column(name = "type", nullable = false)
     private Organizationtype type;
 
     @CreationTimestamp

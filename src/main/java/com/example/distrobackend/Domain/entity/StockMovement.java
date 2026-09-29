@@ -46,7 +46,7 @@ private UUID id;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "performed_by")
-    private JsonType.User performedBy;
+    private User performedBy;
 
     @Column(name = "note", columnDefinition = "TEXT")
     private String note;

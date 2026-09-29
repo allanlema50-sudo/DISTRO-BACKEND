@@ -1,4 +1,6 @@
 package com.example.distrobackend.Domain.entity;
+
+
 import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Domain.enums.UserStatus;
 import jakarta.persistence.*;
@@ -34,8 +36,8 @@ public class User {
     @Column(name = "phone_number", nullable = false, unique = true, length = 20)
     private String phoneNumber;
 
-    @Column(name = "password", nullable = false)
-    private String password;
+    @Column(name = "password_hash", nullable = false)
+    private String passwordHash;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "role", nullable = false)
@@ -44,6 +46,11 @@ public class User {
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false)
     private UserStatus status = UserStatus.ACTIVE;
+
+    // Tenant the user belongs to. Null for customers; set for org staff/admins and drivers.
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "organization_id")
+    private Organization organization;
 
     @Column(name = "is_phone_verified", nullable = false)
     private boolean phoneVerified = false;

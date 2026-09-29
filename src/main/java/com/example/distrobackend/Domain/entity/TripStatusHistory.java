@@ -1,4 +1,5 @@
 package com.example.distrobackend.Domain.entity;
+import com.example.distrobackend.Domain.enums.TripStatus;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -15,7 +16,7 @@ import java.util.UUID;
 @Setter
 @NoArgsConstructor
 
-public class TripStatusHistory<TripStatus> {
+public class TripStatusHistory {
     @Id
     @GeneratedValue
     @JdbcTypeCode(SqlTypes.UUID)
@@ -35,7 +36,7 @@ public class TripStatusHistory<TripStatus> {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "changed_by")
-    private JsonType.User changedBy;
+    private User changedBy;
 
     @Column(name = "note", columnDefinition = "TEXT")
     private String note;

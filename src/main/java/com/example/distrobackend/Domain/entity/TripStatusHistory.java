@@ -1,4 +1,5 @@
 package com.example.distrobackend.Domain.entity;
+import com.example.distrobackend.Domain.enums.TripStatus;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -9,13 +10,13 @@ import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
+
 @Entity
 @Table(name = "trip_status_history")
 @Getter
 @Setter
 @NoArgsConstructor
-
-public class TripStatusHistory<TripStatus> {
+public class TripStatusHistory {
     @Id
     @GeneratedValue
     @JdbcTypeCode(SqlTypes.UUID)

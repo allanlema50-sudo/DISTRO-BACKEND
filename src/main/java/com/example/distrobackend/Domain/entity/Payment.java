@@ -3,14 +3,12 @@ package com.example.distrobackend.Domain.entity;
 import com.example.distrobackend.Domain.enums.PaymentMethod;
 import com.example.distrobackend.Domain.enums.PaymentStatus;
 
-import io.hypersistence.utils.hibernate.type.json.JsonType;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.annotations.Type;
 import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.type.SqlTypes;
 
@@ -60,7 +58,7 @@ public class Payment {
     @Column(name = "phone_number", length = 20)
     private String phoneNumber;
 
-    @Type(JsonType.class)
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "callback_raw_payload", columnDefinition = "jsonb")
     private Map<String, Object> callbackRawPayload;
 

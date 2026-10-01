@@ -24,4 +24,7 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     @Query(value = "SELECT o FROM Order o JOIN FETCH o.customer c JOIN FETCH o.organization org WHERE o.organization.id = :organizationId",
            countQuery = "SELECT COUNT(o) FROM Order o WHERE o.organization.id = :organizationId")
     Page<Order> findByOrganizationIdWithDetails(@Param("organizationId") UUID organizationId, Pageable pageable);
+
+    @Query(value = "SELECT nextval('order_number_seq')", nativeQuery = true)
+    Long getNextOrderSequence();
 }

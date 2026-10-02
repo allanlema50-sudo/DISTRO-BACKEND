@@ -11,6 +11,7 @@ import org.hibernate.type.SqlTypes;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
+@Entity
 @Table(name = "rider_profiles")
 @Getter
 @Setter

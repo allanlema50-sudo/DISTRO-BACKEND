@@ -26,6 +26,12 @@ public class JwtService {
                       @Value("${app.jwt.issuer:logiflow}") String issuer,
                       @Value("${app.jwt.access-token-ttl-minutes:15}") long accessTtlMinutes) {
         // Base64-encoded secret, at least 32 bytes decoded. Generate with: openssl rand -base64 64
+        if (base64Secret == null || base64Secret.isBlank()) {
+            throw new IllegalStateException("JWT_SECRET must be configured");
+        }
+        if (accessTtlMinutes <= 0) {
+            throw new IllegalStateException("JWT access-token TTL must be positive");
+        }
         this.key = Keys.hmacShaKeyFor(Decoders.BASE64.decode(base64Secret));
         this.issuer = issuer;
         this.accessTtlSeconds = accessTtlMinutes * 60;

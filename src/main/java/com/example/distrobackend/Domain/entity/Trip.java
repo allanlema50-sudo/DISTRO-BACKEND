@@ -16,7 +16,9 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 @Entity
-@Table(name = "trips")
+@Table(name = "trips", indexes = {
+        @Index(name = "idx_trips_organization_status", columnList = "organization_id,status")
+})
 @Getter
 @Setter
 @NoArgsConstructor
@@ -50,6 +52,11 @@ private UUID id;
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "rider_id")
     private User rider;
+
+    /** Organization responsible for the trip and its tracking feed. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "organization_id")
+    private Organization organization;
 
     @Column(name = "origin_lat")
     private Double originLat;

@@ -43,7 +43,8 @@ public class JwtAuthenticationService {
         validateOrganizationClaims(role, organizationId, organizationType);
 
         AuthenticatedUser principal = new AuthenticatedUser(
-                userId, role, organizationId, organizationType);
+                userId, role, organizationId, organizationType,
+                claims.getExpiration().toInstant());
 
         return new UsernamePasswordAuthenticationToken(
                 principal,

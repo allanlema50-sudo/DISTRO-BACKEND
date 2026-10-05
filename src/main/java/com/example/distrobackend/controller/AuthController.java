@@ -5,12 +5,14 @@ package com.example.distrobackend.controller;
 import com.example.distrobackend.dto.*;
 import com.example.distrobackend.service.AuthService;
 import jakarta.validation.Valid;
+import io.swagger.v3.oas.annotations.security.SecurityRequirements;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/auth")
+@SecurityRequirements
 @RequiredArgsConstructor
 public class AuthController {
 

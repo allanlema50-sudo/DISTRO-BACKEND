@@ -6,7 +6,8 @@ public enum UserRole {
     DISTRIBUTOR_ADMIN,
     DISTRIBUTOR_STAFF,
     DRIVER,
-    CUSTOMER;
+    CUSTOMER,
+    SUPER_ADMIN;
 
     /** Organization type implied by the role, or null for DRIVER / CUSTOMER. */
     public Organizationtype organizationtype() {

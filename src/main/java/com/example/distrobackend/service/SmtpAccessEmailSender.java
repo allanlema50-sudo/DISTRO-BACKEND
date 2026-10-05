@@ -2,13 +2,13 @@ package com.example.distrobackend.service;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Profile;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Component;
 
 @Component
-@Profile("prod")
+@ConditionalOnProperty(name = "app.mail.enabled", havingValue = "true")
 @RequiredArgsConstructor
 public class SmtpAccessEmailSender implements AccessEmailSender {
     private final JavaMailSender mailSender;

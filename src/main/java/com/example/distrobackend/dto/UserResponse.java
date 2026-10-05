@@ -1,7 +1,7 @@
 package com.example.distrobackend.dto;
 
 
-
+import com.example.distrobackend.Domain.enums.UserStatus;
 import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.Organizationtype;
@@ -15,20 +15,24 @@ public record UserResponse(
         String email,
         String phoneNumber,
         UserRole role,
+        UserStatus status,
         UUID organizationId,
         String organizationName,
         Organizationtype organizationtype,
         boolean phoneVerified
 ) {
+
     /** Must be called inside a transaction (organization is lazy). */
     public static UserResponse from(User user) {
         Organization org = user.getOrganization();
+
         return new UserResponse(
                 user.getId(),
                 user.getFullName(),
                 user.getEmail(),
                 user.getPhoneNumber(),
                 user.getRole(),
+                user.getStatus(),
                 org == null ? null : org.getId(),
                 org == null ? null : org.getName(),
                 org == null ? null : org.getType(),

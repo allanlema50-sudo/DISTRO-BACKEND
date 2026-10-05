@@ -99,10 +99,11 @@
 
         <!-- Lombok -->
         <dependency>
-            <groupId>org.projectlombok</groupId>
-            <artifactId>lombok</artifactId>
-            <optional>true</optional>
-        </dependency>
+    <groupId>org.projectlombok</groupId>
+    <artifactId>lombok</artifactId>
+    <version>1.18.46</version>
+    <optional>true</optional>
+</dependency>
 
         <!-- DevTools -->
         <dependency>

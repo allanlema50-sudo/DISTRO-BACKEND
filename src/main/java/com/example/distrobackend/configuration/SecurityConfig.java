@@ -50,6 +50,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/api/auth/**").permitAll()
+                        .requestMatchers("/api/v1/payments/mpesa/callback").permitAll()
 
                         // Workspace isolation: each area is reachable only by its own roles.
                         .requestMatchers("/api/manufacturer/**")

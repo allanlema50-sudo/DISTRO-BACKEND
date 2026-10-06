@@ -1,4 +1,25 @@
 package com.example.distrobackend.controller.admin;
 
+import com.example.distrobackend.dto.AdminStockResponse;
+import com.example.distrobackend.service.AdminStockService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/admin/stock")
+@RequiredArgsConstructor
+@PreAuthorize("hasAnyRole('MANUFACTURER_ADMIN', 'DISTRIBUTOR_ADMIN')")
 public class AdminStockController {
+
+    private final AdminStockService adminStockService;
+
+    @GetMapping
+    public List<AdminStockResponse> getAllStock() {
+        return adminStockService.getAllStock();
+    }
 }

@@ -1,4 +1,16 @@
 package com.example.distrobackend.repository;
 
-public interface StockItemRepository {
+import com.example.distrobackend.Domain.entity.StockItem;
+import com.example.distrobackend.Domain.enums.ProductApprovalStatus;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+import java.util.UUID;
+
+public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
+
+    long countByActiveTrue();
+
+    long countByApprovalStatus(ProductApprovalStatus approvalStatus);
+
+    long countByQuantityOnHandLessThanEqualAndActiveTrue(int quantity);
 }

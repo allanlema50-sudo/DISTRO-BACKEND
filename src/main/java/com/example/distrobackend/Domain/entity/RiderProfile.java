@@ -47,3 +47,4 @@ private UUID userId;
     @Column(name = "last_location_at")
     private OffsetDateTime lastLocationAt;
 }
+

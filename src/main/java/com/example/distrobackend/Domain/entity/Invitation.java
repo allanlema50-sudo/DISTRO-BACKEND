@@ -1,8 +1,7 @@
 package com.example.distrobackend.Domain.entity;
 
-
+import com.example.distrobackend.Domain.enums.InvitationStatus;
 import com.example.distrobackend.Domain.enums.UserRole;
-import com.example.distrobackend.Domain.enums.UserStatus;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -16,47 +15,46 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 @Entity
-@Table(name = "users")
+@Table(name = "invitations")
 @Getter
 @Setter
 @NoArgsConstructor
-public class User {
+public class Invitation {
 
     @Id
     @GeneratedValue
     @JdbcTypeCode(SqlTypes.UUID)
     private UUID id;
 
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "organization_id", nullable = false)
+    private Organization organization;
+
     @Column(name = "full_name", nullable = false, length = 150)
     private String fullName;
 
-    @Column(name = "email", unique = true, length = 150)
+    @Column(name = "email", nullable = false, length = 150)
     private String email;
 
-    @Column(name = "phone_number", nullable = false, unique = true, length = 20)
+    @Column(name = "phone_number", length = 20)
     private String phoneNumber;
-
-    @Column(name = "password_hash", nullable = false)
-    private String passwordHash;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "role", nullable = false)
-    private UserRole role = UserRole.CUSTOMER;
+    private UserRole role;
+
+    @Column(name = "token", nullable = false, unique = true, length = 100)
+    private String token;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false)
-    private UserStatus status = UserStatus.ACTIVE;
+    private InvitationStatus status = InvitationStatus.PENDING;
 
-    // Tenant the user belongs to. Null for customers; set for org staff/admins and drivers.
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "organization_id")
-    private Organization organization;
+    @Column(name = "expires_at", nullable = false)
+    private OffsetDateTime expiresAt;
 
-    @Column(name = "is_phone_verified", nullable = false)
-    private boolean phoneVerified = false;
-
-    @Column(name = "is_email_verified", nullable = false)
-    private boolean emailVerified = false;
+    @Column(name = "accepted_at")
+    private OffsetDateTime acceptedAt;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

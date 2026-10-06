@@ -39,6 +39,11 @@ public class Organization {
     @Column(name = "type", nullable = false)
     private Organizationtype type;
 
+    // A request may create at most one organization, even if activation is retried concurrently.
+    @OneToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "access_request_id", unique = true)
+    private AccessRequest accessRequest;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;

@@ -64,7 +64,14 @@ public class AccessRequestService {
 
     @Transactional
     public MessageResponse approve(java.util.UUID id) {
-        AccessRequest request = findPending(id);
+        AccessRequest request = requests.findByIdForUpdate(id)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Access request not found"));
+        if (request.getStatus() == AccessRequestStatus.APPROVED) {
+            return new MessageResponse("Request was already approved; no additional activation link was sent");
+        }
+        if (request.getStatus() != AccessRequestStatus.PENDING) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Only pending requests can be approved");
+        }
         if (users.existsByEmail(request.getPersonalEmail()) || users.existsByPhoneNumber(request.getPhoneNumber()))
             throw new ApiException(ErrorCode.CONFLICT, "The requested email or phone is already attached to an account");
         String token = Base64.getUrlEncoder().withoutPadding().encodeToString(randomBytes());
@@ -80,7 +87,14 @@ public class AccessRequestService {
 
     @Transactional
     public MessageResponse reject(java.util.UUID id) {
-        AccessRequest request = findPending(id);
+        AccessRequest request = requests.findByIdForUpdate(id)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Access request not found"));
+        if (request.getStatus() == AccessRequestStatus.REJECTED) {
+            return new MessageResponse("Request was already rejected");
+        }
+        if (request.getStatus() != AccessRequestStatus.PENDING) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Only pending requests can be rejected");
+        }
         request.setStatus(AccessRequestStatus.REJECTED);
         request.setActivationTokenHash(null); request.setActivationExpiresAt(null);
         return new MessageResponse("Request rejected");
@@ -90,7 +104,8 @@ public class AccessRequestService {
     public MessageResponse activate(ActivateAccountRequest req) {
         if (!req.password().equals(req.confirmPassword()))
             throw new ApiException(ErrorCode.BAD_REQUEST, "Password and confirmation do not match");
-        AccessRequest request = requests.findByPersonalEmailAndStatus(normalizeEmail(req.email()), AccessRequestStatus.APPROVED)
+        AccessRequest request = requests.findByPersonalEmailAndStatusForUpdate(
+                        normalizeEmail(req.email()), AccessRequestStatus.APPROVED)
                 .filter(r -> r.getActivationExpiresAt() != null && r.getActivationExpiresAt().isAfter(OffsetDateTime.now()))
                 .filter(r -> constantTimeEquals(r.getActivationTokenHash(), hash(req.token())))
                 .orElseThrow(() -> new ApiException(ErrorCode.INVALID_TOKEN,
@@ -100,7 +115,9 @@ public class AccessRequestService {
 
         Organization organization = new Organization();
         organization.setName(request.getOrganizationName()); organization.setType(request.getOrganizationType());
-        organization.setEmail(request.getOrganizationEmail()); organizations.save(organization);
+        organization.setEmail(request.getOrganizationEmail());
+        organization.setAccessRequest(request);
+        organizations.save(organization);
         User user = new User();
         user.setFullName(request.getFullName()); user.setEmail(request.getPersonalEmail());
         user.setPhoneNumber(request.getPhoneNumber()); user.setPasswordHash(passwordEncoder.encode(req.password()));
@@ -112,12 +129,6 @@ public class AccessRequestService {
         return new MessageResponse("Account activated. You can now sign in.");
     }
 
-    private AccessRequest findPending(java.util.UUID id) {
-        AccessRequest request = requests.findById(id).orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Access request not found"));
-        if (request.getStatus() != AccessRequestStatus.PENDING)
-            throw new ApiException(ErrorCode.BAD_REQUEST, "Only pending requests can be reviewed");
-        return request;
-    }
     private static String normalizeEmail(String email) { return email.trim().toLowerCase(java.util.Locale.ROOT); }
     private static byte[] randomBytes() { byte[] bytes = new byte[32]; RANDOM.nextBytes(bytes); return bytes; }
     private static String hash(String token) {

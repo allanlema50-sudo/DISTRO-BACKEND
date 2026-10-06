@@ -31,6 +31,8 @@ All routes below require `Authorization: Bearer <backend access token>`. The tok
 
 Each list item contains `id`, `fullName`, `phoneNumber`, `personalEmail`, `organizationEmail`, `organizationName`, `organizationType`, `status` (`PENDING`, `APPROVED`, `REJECTED`, `ACTIVATED`), and `createdAt`. Only `PENDING` requests can be approved or rejected. Show the API error `message` when an action fails, and reload the row/list after success.
 
+Approval is idempotent: repeating approval for an already `APPROVED` request returns a message without generating or sending another activation link. Only one activation can consume a request token. The organization type is taken from the saved request; the activation API has no organization-type field. Activation creates the account but does not sign the user in; the user must use the normal login endpoint afterwards. Workspace authorization is enforced by the backend token role and organization, not by the URL the user visits.
+
 The super-admin account must be provisioned by the platform's real identity/account provisioning process. Self-registration cannot assign `SUPER_ADMIN`. The dashboard must authenticate through an identity integration whose access token this backend accepts and maps to `ROLE_SUPER_ADMIN`; do not add a public role-assignment endpoint or let the dashboard send a role in its request body.
 
 ## Activation page

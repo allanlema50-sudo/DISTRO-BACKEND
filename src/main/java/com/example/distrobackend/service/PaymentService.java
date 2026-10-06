@@ -18,6 +18,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.client.RestTemplate;
 
 import java.time.LocalDateTime;
@@ -34,11 +35,17 @@ public class PaymentService {
     private final PaymentRepository paymentRepository;
     private final OrderRepository orderRepository;
 
-    // Sandbox Credentials
-    private static final String CONSUMER_KEY = "cpol7ARNvoMKIOoX9lPsXDFAAJ8Y2zc0WizUkoMWZuMPhqHs";
-    private static final String CONSUMER_SECRET = "vw7nlCsEpaltj0vYoM8C0E0m0O4sfJzZfQseGjFhEIvL4DkdaoMYDuViSclZ3POX";
-    private static final String SHORTCODE = "174379";
-    private static final String PASSKEY = "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919";
+    @Value("${mpesa.consumer-key}")
+    private String consumerKey;
+
+    @Value("${mpesa.consumer-secret}")
+    private String consumerSecret;
+
+    @Value("${mpesa.shortcode}")
+    private String shortcode;
+
+    @Value("${mpesa.passkey}")
+    private String passkey;
     
     // IMPORTANT: Daraja cannot reach localhost. For real sandbox testing, you MUST use Ngrok or a public URL.
     // e.g. "https://<your-ngrok-id>.ngrok-free.app/api/v1/payments/mpesa/callback"
@@ -50,7 +57,7 @@ public class PaymentService {
     private final RestTemplate restTemplate = new RestTemplate();
 
     private String getDarajaAccessToken() {
-        String auth = CONSUMER_KEY + ":" + CONSUMER_SECRET;
+        String auth = consumerKey + ":" + consumerSecret;
         String encodedAuth = Base64.getEncoder().encodeToString(auth.getBytes());
 
         HttpHeaders headers = new HttpHeaders();
@@ -83,7 +90,7 @@ public class PaymentService {
 
         // 1. Generate Timestamp and Password
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
-        String passwordStr = SHORTCODE + PASSKEY + timestamp;
+        String passwordStr = shortcode + passkey + timestamp;
         String password = Base64.getEncoder().encodeToString(passwordStr.getBytes());
 
         // 2. Format Phone Number (Daraja strictly expects 2547XXXXXXXX)
@@ -93,14 +100,14 @@ public class PaymentService {
 
         // 3. Build STK Push Request
         MpesaStkPushRequest stkRequest = MpesaStkPushRequest.builder()
-                .businessShortCode(SHORTCODE)
+                .businessShortCode(shortcode)
                 .password(password)
                 .timestamp(timestamp)
                 .transactionType("CustomerPayBillOnline")
                 // Daraja sandbox can be flaky with large amounts. Hardcode to "1" if it fails, but trying real amount first:
                 .amount(String.valueOf(totalAmount.intValue())) 
                 .partyA(phone)
-                .partyB(SHORTCODE)
+                .partyB(shortcode)
                 .phoneNumber(phone)
                 .callBackURL(CALLBACK_URL)
                 .accountReference(order.getOrderNumber())

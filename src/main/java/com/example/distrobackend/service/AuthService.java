@@ -35,7 +35,7 @@ import java.util.UUID;
 public class AuthService {
 
     private static final Set<UserRole> SELF_REGISTRATION_ROLES =
-            EnumSet.of(UserRole.CUSTOMER, UserRole.MANUFACTURER_ADMIN, UserRole.DISTRIBUTOR_ADMIN);
+            EnumSet.of(UserRole.CUSTOMER);
 
     private final UserRepository userRepository;
     private final OrganizationRepository organizationRepository;

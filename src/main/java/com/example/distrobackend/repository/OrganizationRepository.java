@@ -12,4 +12,6 @@ public interface OrganizationRepository
     boolean existsByNameIgnoreCase(String name);
 
     Optional<Organization> findByNameIgnoreCase(String name);
+
+    Optional<Organization> findByAccessRequest_Id(UUID accessRequestId);
 }

@@ -3,8 +3,13 @@ package com.example.distrobackend.controller;
 import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.StockItem;
 import com.example.distrobackend.Domain.enums.ProductApprovalStatus;
+import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.repository.OrganizationRepository;
 import com.example.distrobackend.repository.StockItemRepository;
+import com.example.distrobackend.security.AuthenticatedUser;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -14,7 +19,7 @@ import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/products")
-@CrossOrigin(origins = "http://localhost:4200")
+@PreAuthorize("hasAnyRole('PLATFORM_ADMIN','SUPER_ADMIN','MANUFACTURER_ADMIN','MANUFACTURER_STAFF','DISTRIBUTOR_ADMIN','DISTRIBUTOR_STAFF')")
 public class ProductController {
 
     private final StockItemRepository stockItemRepository;
@@ -30,14 +35,21 @@ public class ProductController {
 
     // GET /api/v1/products
     @GetMapping
-    public ResponseEntity<List<StockItem>> getProducts() {
-        return ResponseEntity.ok(stockItemRepository.findAll());
+    public ResponseEntity<List<StockItem>> getProducts(
+            @AuthenticationPrincipal AuthenticatedUser me
+    ) {
+        return ResponseEntity.ok(isPlatformAdmin(me)
+                ? stockItemRepository.findAll()
+                : stockItemRepository.findAllByOrganizationId(requireOrganizationId(me)));
     }
 
     // GET /api/v1/products/{id}
     @GetMapping("/{id}")
-    public ResponseEntity<StockItem> getProduct(@PathVariable UUID id) {
-        return stockItemRepository.findById(id)
+    public ResponseEntity<StockItem> getProduct(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal AuthenticatedUser me
+    ) {
+        return findProduct(id, me)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
@@ -45,18 +57,13 @@ public class ProductController {
     // POST /api/v1/products
     @PostMapping
     public ResponseEntity<StockItem> createProduct(
-            @RequestBody StockItem product
+            @RequestBody StockItem product,
+            @AuthenticationPrincipal AuthenticatedUser me
     ) {
-        applyOrganization(product);
-
-        if (product.getApprovalStatus() == null) {
-            product.setApprovalStatus(ProductApprovalStatus.PENDING);
-        }
-
-        // New products must be approved before becoming active.
-        if (product.getApprovalStatus() != ProductApprovalStatus.APPROVED) {
-            product.setActive(false);
-        }
+        applyOrganization(product, me);
+        // Only the platform-admin approval endpoint can approve a new product.
+        product.setApprovalStatus(ProductApprovalStatus.PENDING);
+        product.setActive(false);
 
         StockItem savedProduct = stockItemRepository.save(product);
 
@@ -69,9 +76,10 @@ public class ProductController {
     @PutMapping("/{id}")
     public ResponseEntity<StockItem> updateProduct(
             @PathVariable UUID id,
-            @RequestBody StockItem product
+            @RequestBody StockItem product,
+            @AuthenticationPrincipal AuthenticatedUser me
     ) {
-        return stockItemRepository.findById(id)
+        return findProduct(id, me)
                 .map(existingProduct -> {
 
                     existingProduct.setSku(product.getSku());
@@ -82,22 +90,16 @@ public class ProductController {
                     existingProduct.setQuantityOnHand(product.getQuantityOnHand());
                     existingProduct.setReorderThreshold(product.getReorderThreshold());
 
-                    if (product.getOrganizationId() != null
+                    if (isPlatformAdmin(me)
+                            && (product.getOrganizationId() != null
                             || (product.getOrganizationName() != null
-                            && !product.getOrganizationName().isBlank())) {
-
-                        applyOrganization(product);
-
-                        existingProduct.setOrganizationId(
-                                product.getOrganizationId()
-                        );
-
-                        existingProduct.setOrganizationName(
-                                product.getOrganizationName()
-                        );
+                            && !product.getOrganizationName().isBlank()))) {
+                        applyOrganization(product, me);
+                        existingProduct.setOrganizationId(product.getOrganizationId());
+                        existingProduct.setOrganizationName(product.getOrganizationName());
                     }
 
-                    if (product.getApprovalStatus() != null) {
+                    if (isPlatformAdmin(me) && product.getApprovalStatus() != null) {
                         existingProduct.setApprovalStatus(
                                 product.getApprovalStatus()
                         );
@@ -124,9 +126,10 @@ public class ProductController {
     @PatchMapping("/{id}/status")
     public ResponseEntity<StockItem> updateProductStatus(
             @PathVariable UUID id,
-            @RequestBody StatusRequest request
+            @RequestBody StatusRequest request,
+            @AuthenticationPrincipal AuthenticatedUser me
     ) {
-        return stockItemRepository.findById(id)
+        return findProduct(id, me)
                 .map(product -> {
 
                     boolean active =
@@ -153,6 +156,7 @@ public class ProductController {
 
     // PATCH /api/v1/products/{id}/approval
     @PatchMapping("/{id}/approval")
+    @PreAuthorize("hasAnyRole('PLATFORM_ADMIN','SUPER_ADMIN')")
     public ResponseEntity<StockItem> updateProductApproval(
             @PathVariable UUID id,
             @RequestBody ApprovalRequest request
@@ -183,18 +187,21 @@ public class ProductController {
     // GET /api/v1/products/{id}/inventory
     @GetMapping("/{id}/inventory")
     public ResponseEntity<StockItem> getProductInventory(
-            @PathVariable UUID id
+            @PathVariable UUID id,
+            @AuthenticationPrincipal AuthenticatedUser me
     ) {
-        return stockItemRepository.findById(id)
+        return findProduct(id, me)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
 
     // GET /api/v1/products/categories
     @GetMapping("/categories")
-    public ResponseEntity<List<String>> getCategories() {
+    public ResponseEntity<List<String>> getCategories(
+            @AuthenticationPrincipal AuthenticatedUser me
+    ) {
 
-        List<String> categories = stockItemRepository.findAll()
+        List<String> categories = scopedProducts(me)
                 .stream()
                 .map(StockItem::getCategory)
                 .filter(category ->
@@ -209,25 +216,17 @@ public class ProductController {
 
     // GET /api/v1/products/stats
     @GetMapping("/stats")
-    public ResponseEntity<ProductStatsResponse> getProductStats() {
+    public ResponseEntity<ProductStatsResponse> getProductStats(
+            @AuthenticationPrincipal AuthenticatedUser me
+    ) {
 
-        long totalProducts =
-                stockItemRepository.count();
-
-        long activeProducts =
-                stockItemRepository.countByActiveTrue();
-
-        long inactiveProducts =
-                totalProducts - activeProducts;
-
-        long pendingProducts =
-                stockItemRepository.countByApprovalStatus(
-                        ProductApprovalStatus.PENDING
-                );
-
-        long categories =
-                stockItemRepository.findAll()
-                        .stream()
+        List<StockItem> products = scopedProducts(me);
+        long totalProducts = products.size();
+        long activeProducts = products.stream().filter(StockItem::isActive).count();
+        long inactiveProducts = totalProducts - activeProducts;
+        long pendingProducts = products.stream()
+                .filter(product -> product.getApprovalStatus() == ProductApprovalStatus.PENDING).count();
+        long categories = products.stream()
                         .map(StockItem::getCategory)
                         .filter(category ->
                                 category != null && !category.isBlank()
@@ -253,7 +252,15 @@ public class ProductController {
      * We verify that the organization exists and then
      * store both its ID and name on the product.
      */
-    private void applyOrganization(StockItem product) {
+    private void applyOrganization(StockItem product, AuthenticatedUser me) {
+
+        if (!isPlatformAdmin(me)) {
+            Organization organization = organizationRepository.findById(requireOrganizationId(me))
+                    .orElseThrow(() -> new IllegalStateException("Your organization no longer exists"));
+            product.setOrganizationId(organization.getId());
+            product.setOrganizationName(organization.getName());
+            return;
+        }
 
         if (product.getOrganizationId() != null) {
 
@@ -297,6 +304,30 @@ public class ProductController {
                     organization.getName()
             );
         }
+    }
+
+    private java.util.Optional<StockItem> findProduct(UUID id, AuthenticatedUser me) {
+        if (isPlatformAdmin(me)) {
+            return stockItemRepository.findById(id);
+        }
+        return stockItemRepository.findByIdAndOrganizationId(id, requireOrganizationId(me));
+    }
+
+    private List<StockItem> scopedProducts(AuthenticatedUser me) {
+        return isPlatformAdmin(me)
+                ? stockItemRepository.findAll()
+                : stockItemRepository.findAllByOrganizationId(requireOrganizationId(me));
+    }
+
+    private UUID requireOrganizationId(AuthenticatedUser me) {
+        if (me.organizationId() == null) {
+            throw new AccessDeniedException("This role must be associated with an organization");
+        }
+        return me.organizationId();
+    }
+
+    private boolean isPlatformAdmin(AuthenticatedUser me) {
+        return me.role() == UserRole.PLATFORM_ADMIN || me.role() == UserRole.SUPER_ADMIN;
     }
 
     public record StatusRequest(String status) {

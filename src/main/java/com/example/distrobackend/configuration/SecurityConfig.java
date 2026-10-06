@@ -45,7 +45,12 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/api/access-requests", "/api/access-requests/activate").permitAll()
-                        .requestMatchers("/api/admin/**").hasRole("SUPER_ADMIN")
+                        // This legacy stock listing is also used by organization workspaces.
+                        .requestMatchers("/api/admin/stock/**").hasAnyRole(
+                                "PLATFORM_ADMIN", "SUPER_ADMIN",
+                                "MANUFACTURER_ADMIN", "DISTRIBUTOR_ADMIN")
+                        // Platform admins manage the shared platform; SUPER_ADMIN remains accepted for older tokens.
+                        .requestMatchers("/api/admin/**").hasAnyRole("PLATFORM_ADMIN", "SUPER_ADMIN")
 
                         // Workspace isolation: each area is reachable only by its own roles.
                         .requestMatchers("/api/manufacturer/**")

@@ -5,8 +5,8 @@
 - The public form posts to `POST /api/access-requests` and the backend persists the request as `PENDING`.
 - The backend calls `AccessEmailSender` after submission.
 - With the default `MAIL_ENABLED=false`, `LoggingAccessEmailSender` writes the notification and activation link to the backend console.
-- Approval creates a random activation token, stores only its SHA-256 hash, and builds `{FRONTEND_BASE_URL}/auth/activate?email=...&token=...`. Activation tokens expire after 24 hours and are cleared after successful activation.
-- The super-admin API is protected by `ROLE_SUPER_ADMIN`.
+- Approval creates the organization immediately, creates a random activation token, stores only its SHA-256 hash, and builds `{FRONTEND_BASE_URL}/auth/activate?email=...&token=...`. Activation tokens expire after 24 hours and are cleared after successful activation.
+- The admin API is protected by `ROLE_PLATFORM_ADMIN` (or legacy `ROLE_SUPER_ADMIN`).
 
 ## 1. Start local services
 
@@ -19,7 +19,7 @@ SMTP is optional for local testing. Do not set `MAIL_ENABLED=true` unless a reac
 
 ## 2. Admin identity prerequisite
 
-This backend does not create or seed a super-admin account. A real super-admin account must already exist in the backend identity store with role `SUPER_ADMIN`, active status, and verified phone. The account can then sign in at `POST /api/auth/login` and the backend will issue the token used below.
+This backend does not create or seed a platform-admin account. A real admin account must already exist in the backend identity store with role `PLATFORM_ADMIN` (or legacy `SUPER_ADMIN`), active status, and verified phone. The account can then sign in at `POST /api/auth/login` and the backend will issue the token used below.
 
 The current JWT filter trusts tokens signed and issued according to this backend's `app.jwt.secret` and `app.jwt.issuer` configuration. A token from a separate admin portal/identity provider will not work automatically. Do not copy the signing secret into browser code. If the admin portal uses a separate identity provider, its developer and backend owner must agree on a server-side verification integration (for example, an OIDC/JWKS issuer and audience) before the dashboard can call the admin API.
 

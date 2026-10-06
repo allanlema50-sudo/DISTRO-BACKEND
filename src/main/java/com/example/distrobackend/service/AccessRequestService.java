@@ -67,6 +67,9 @@ public class AccessRequestService {
         AccessRequest request = requests.findByIdForUpdate(id)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Access request not found"));
         if (request.getStatus() == AccessRequestStatus.APPROVED) {
+            // Recover an organization if this request was approved before organization creation
+            // moved from activation to approval. The unique access_request_id prevents duplicates.
+            getOrCreateOrganization(request);
             return new MessageResponse("Request was already approved; no additional activation link was sent");
         }
         if (request.getStatus() != AccessRequestStatus.PENDING) {
@@ -74,6 +77,7 @@ public class AccessRequestService {
         }
         if (users.existsByEmail(request.getPersonalEmail()) || users.existsByPhoneNumber(request.getPhoneNumber()))
             throw new ApiException(ErrorCode.CONFLICT, "The requested email or phone is already attached to an account");
+        getOrCreateOrganization(request);
         String token = Base64.getUrlEncoder().withoutPadding().encodeToString(randomBytes());
         request.setActivationTokenHash(hash(token));
         request.setActivationExpiresAt(OffsetDateTime.now().plusHours(TOKEN_TTL_HOURS));
@@ -113,11 +117,7 @@ public class AccessRequestService {
         if (users.existsByEmail(request.getPersonalEmail()) || users.existsByPhoneNumber(request.getPhoneNumber()))
             throw new ApiException(ErrorCode.CONFLICT, "The requested email or phone is already attached to an account");
 
-        Organization organization = new Organization();
-        organization.setName(request.getOrganizationName()); organization.setType(request.getOrganizationType());
-        organization.setEmail(request.getOrganizationEmail());
-        organization.setAccessRequest(request);
-        organizations.save(organization);
+        Organization organization = getOrCreateOrganization(request);
         User user = new User();
         user.setFullName(request.getFullName()); user.setEmail(request.getPersonalEmail());
         user.setPhoneNumber(request.getPhoneNumber()); user.setPasswordHash(passwordEncoder.encode(req.password()));
@@ -127,6 +127,17 @@ public class AccessRequestService {
         users.save(user);
         request.setStatus(AccessRequestStatus.ACTIVATED); request.setActivationTokenHash(null); request.setActivationExpiresAt(null);
         return new MessageResponse("Account activated. You can now sign in.");
+    }
+
+    private Organization getOrCreateOrganization(AccessRequest request) {
+        return organizations.findByAccessRequest_Id(request.getId()).orElseGet(() -> {
+            Organization organization = new Organization();
+            organization.setName(request.getOrganizationName());
+            organization.setType(request.getOrganizationType());
+            organization.setEmail(request.getOrganizationEmail());
+            organization.setAccessRequest(request);
+            return organizations.save(organization);
+        });
     }
 
     private static String normalizeEmail(String email) { return email.trim().toLowerCase(java.util.Locale.ROOT); }

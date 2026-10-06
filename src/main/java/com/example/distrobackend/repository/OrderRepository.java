@@ -15,30 +15,62 @@ import java.util.UUID;
 @Repository
 public interface OrderRepository extends JpaRepository<Order, UUID> {
 
-    // Admin dashboard: count orders by status
     long countByStatus(OrderStatus status);
 
-    // Get a single order together with its products
+    @Query("""
+        SELECT COUNT(o)
+        FROM Order o
+        WHERE o.organization.id = :organizationId
+        """)
+    long countByOrganizationId(
+            @Param("organizationId") UUID organizationId
+    );
+
+    @Query("""
+        SELECT COUNT(o)
+        FROM Order o
+        WHERE o.organization.id = :organizationId
+        AND o.status = :status
+        """)
+    long countByOrganizationIdAndStatus(
+            @Param("organizationId") UUID organizationId,
+            @Param("status") OrderStatus status
+    );
+
     @Query("SELECT o FROM Order o LEFT JOIN FETCH o.orderItems WHERE o.id = :id")
     Optional<Order> findByIdWithItems(@Param("id") UUID id);
 
-    // Get orders belonging to a customer with pagination
-    @Query(value = "SELECT o FROM Order o " +
-            "JOIN FETCH o.customer c " +
-            "JOIN FETCH o.organization org " +
-            "WHERE o.customer.id = :customerId",
-           countQuery = "SELECT COUNT(o) FROM Order o WHERE o.customer.id = :customerId")
+    @Query(
+        value = """
+            SELECT o FROM Order o
+            JOIN FETCH o.customer c
+            JOIN FETCH o.organization org
+            WHERE o.customer.id = :customerId
+            """,
+        countQuery = """
+            SELECT COUNT(o)
+            FROM Order o
+            WHERE o.customer.id = :customerId
+            """
+    )
     Page<Order> findByCustomerIdWithDetails(
             @Param("customerId") UUID customerId,
             Pageable pageable
     );
 
-    // Get orders belonging to an organization with pagination
-    @Query(value = "SELECT o FROM Order o " +
-            "JOIN FETCH o.customer c " +
-            "JOIN FETCH o.organization org " +
-            "WHERE o.organization.id = :organizationId",
-           countQuery = "SELECT COUNT(o) FROM Order o WHERE o.organization.id = :organizationId")
+    @Query(
+        value = """
+            SELECT o FROM Order o
+            JOIN FETCH o.customer c
+            JOIN FETCH o.organization org
+            WHERE o.organization.id = :organizationId
+            """,
+        countQuery = """
+            SELECT COUNT(o)
+            FROM Order o
+            WHERE o.organization.id = :organizationId
+            """
+    )
     Page<Order> findByOrganizationIdWithDetails(
             @Param("organizationId") UUID organizationId,
             Pageable pageable

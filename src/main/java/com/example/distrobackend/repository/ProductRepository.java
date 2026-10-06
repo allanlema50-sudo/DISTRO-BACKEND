@@ -20,4 +20,11 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
     List<Product> findByCategoryIgnoreCase(String category);
 
     List<Product> findByStatus(ProductStatus status);
+
+    long countByOrganizationId(UUID organizationId);
+
+    long countByOrganizationIdAndStatus(
+            UUID organizationId,
+            ProductStatus status
+    );
 }

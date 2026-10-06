@@ -1,6 +1,5 @@
 package com.example.distrobackend.configuration;
 
-
 import com.example.distrobackend.security.JwtAuthFilter;
 import com.example.distrobackend.security.JwtService;
 import com.example.distrobackend.security.RestAccessDeniedHandler;
@@ -30,52 +29,226 @@ import java.util.List;
 public class SecurityConfig {
 
     private final JwtService jwtService;
+
     private final RestAuthenticationEntryPoint authenticationEntryPoint;
+
     private final RestAccessDeniedHandler accessDeniedHandler;
+
 
     @Bean
     public PasswordEncoder passwordEncoder() {
+
         return new BCryptPasswordEncoder(12);
+
     }
+
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain securityFilterChain(
+            HttpSecurity http
+    ) throws Exception {
+
         http
-                .csrf(csrf -> csrf.disable())               // stateless API, bearer tokens, no cookies
+
+                .csrf(csrf ->
+                        csrf.disable()
+                )
+
                 .cors(Customizer.withDefaults())
-                .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+
+                .sessionManagement(s ->
+                        s.sessionCreationPolicy(
+                                SessionCreationPolicy.STATELESS
+                        )
+                )
+
                 .exceptionHandling(e -> e
-                        .authenticationEntryPoint(authenticationEntryPoint)
-                        .accessDeniedHandler(accessDeniedHandler))
+
+                        .authenticationEntryPoint(
+                                authenticationEntryPoint
+                        )
+
+                        .accessDeniedHandler(
+                                accessDeniedHandler
+                        )
+
+                )
+
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                        .requestMatchers("/api/auth/**").permitAll()
 
-                        // Workspace isolation: each area is reachable only by its own roles.
-                        .requestMatchers("/api/manufacturer/**")
-                        .hasAnyRole("MANUFACTURER_ADMIN", "MANUFACTURER_STAFF")
-                        .requestMatchers("/api/distributor/**")
-                        .hasAnyRole("DISTRIBUTOR_ADMIN", "DISTRIBUTOR_STAFF")
-                        .requestMatchers("/api/driver/**").hasRole("DRIVER")
-                        .requestMatchers("/api/customer/**").hasRole("CUSTOMER")
 
-                        .anyRequest().authenticated())
-                .addFilterBefore(new JwtAuthFilter(jwtService), UsernamePasswordAuthenticationFilter.class);
+                        // =================================================
+                        // CORS PREFLIGHT
+                        // =================================================
+
+                        .requestMatchers(
+                                HttpMethod.OPTIONS,
+                                "/**"
+                        )
+                        .permitAll()
+
+
+                        // =================================================
+                        // AUTHENTICATION
+                        // =================================================
+
+                        .requestMatchers(
+                                "/api/auth/**"
+                        )
+                        .permitAll()
+
+
+                        // =================================================
+                        // PUBLIC ACCESS REQUEST
+                        // =================================================
+                        //
+                        // A new organization does not have an account yet,
+                        // therefore it must be able to submit an access
+                        // request without authentication.
+                        //
+
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/api/access-requests"
+                        )
+                        .permitAll()
+
+
+                        // =================================================
+                        // PUBLIC INVITATION ACCEPTANCE
+                        // =================================================
+
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/invitations/*"
+                        )
+                        .permitAll()
+
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/api/invitations/*/accept"
+                        )
+                        .permitAll()
+
+
+                        // =================================================
+                        // MANUFACTURER
+                        // =================================================
+
+                        .requestMatchers(
+                                "/api/manufacturer/**"
+                        )
+                        .hasAnyRole(
+                                "MANUFACTURER_ADMIN",
+                                "MANUFACTURER_STAFF"
+                        )
+
+
+                        // =================================================
+                        // DISTRIBUTOR
+                        // =================================================
+
+                        .requestMatchers(
+                                "/api/distributor/**"
+                        )
+                        .hasAnyRole(
+                                "DISTRIBUTOR_ADMIN",
+                                "DISTRIBUTOR_STAFF"
+                        )
+
+
+                        // =================================================
+                        // DRIVER
+                        // =================================================
+
+                        .requestMatchers(
+                                "/api/driver/**"
+                        )
+                        .hasRole("DRIVER")
+
+
+                        // =================================================
+                        // CUSTOMER
+                        // =================================================
+
+                        .requestMatchers(
+                                "/api/customer/**"
+                        )
+                        .hasRole("CUSTOMER")
+
+
+                        // =================================================
+                        // EVERYTHING ELSE REQUIRES AUTHENTICATION
+                        // =================================================
+
+                        .anyRequest()
+                        .authenticated()
+
+                )
+
+                .addFilterBefore(
+                        new JwtAuthFilter(jwtService),
+                        UsernamePasswordAuthenticationFilter.class
+                );
+
 
         return http.build();
+
     }
+
 
     @Bean
     public CorsConfigurationSource corsConfigurationSource(
-            @Value("${app.cors.allowed-origins}") List<String> allowedOrigins) {
-        CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOrigins(allowedOrigins);
-        config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-        config.setAllowedHeaders(List.of("Authorization", "Content-Type"));
-        config.setMaxAge(3600L);
+            @Value("${app.cors.allowed-origins}")
+            List<String> allowedOrigins
+    ) {
 
-        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        source.registerCorsConfiguration("/**", config);
+        CorsConfiguration config =
+                new CorsConfiguration();
+
+
+        config.setAllowedOrigins(
+                allowedOrigins
+        );
+
+
+        config.setAllowedMethods(
+                List.of(
+                        "GET",
+                        "POST",
+                        "PUT",
+                        "PATCH",
+                        "DELETE",
+                        "OPTIONS"
+                )
+        );
+
+
+        config.setAllowedHeaders(
+                List.of(
+                        "Authorization",
+                        "Content-Type"
+                )
+        );
+
+
+        config.setMaxAge(
+                3600L
+        );
+
+
+        UrlBasedCorsConfigurationSource source =
+                new UrlBasedCorsConfigurationSource();
+
+
+        source.registerCorsConfiguration(
+                "/**",
+                config
+        );
+
+
         return source;
+
     }
+
 }

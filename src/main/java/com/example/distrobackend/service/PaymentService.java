@@ -47,9 +47,8 @@ public class PaymentService {
     @Value("${mpesa.passkey}")
     private String passkey;
     
-    // IMPORTANT: Daraja cannot reach localhost. For real sandbox testing, you MUST use Ngrok or a public URL.
-    // e.g. "https://<your-ngrok-id>.ngrok-free.app/api/v1/payments/mpesa/callback"
-    private static final String CALLBACK_URL = "https://gullible-given-sherry.ngrok-free.dev/api/v1/payments/mpesa/callback"; 
+    @Value("${mpesa.callback-url}")
+    private String callbackUrl; 
 
     private static final String AUTH_URL = "https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials";
     private static final String STK_PUSH_URL = "https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest";
@@ -109,7 +108,7 @@ public class PaymentService {
                 .partyA(phone)
                 .partyB(shortcode)
                 .phoneNumber(phone)
-                .callBackURL(CALLBACK_URL)
+                .callBackURL(callbackUrl)
                 .accountReference(order.getOrderNumber())
                 .transactionDesc("Payment for Order " + order.getOrderNumber())
                 .build();

@@ -5,7 +5,7 @@ import com.example.distrobackend.Domain.entity.Invitation;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
-public record InvitationResponse(
+public record InvitationPublicResponse(
 
         UUID id,
 
@@ -13,37 +13,30 @@ public record InvitationResponse(
 
         String email,
 
-        String phoneNumber,
-
         String role,
-
-        String status,
-
-        UUID organizationId,
 
         String organizationName,
 
-        String invitationLink,
+        UUID organizationId,
+
+        String status,
 
         OffsetDateTime expiresAt
 
 ) {
 
-    public static InvitationResponse from(
-            Invitation invitation,
-            String invitationLink
+    public static InvitationPublicResponse from(
+            Invitation invitation
     ) {
 
-        return new InvitationResponse(
+        return new InvitationPublicResponse(
                 invitation.getId(),
                 invitation.getFullName(),
                 invitation.getEmail(),
-                invitation.getPhoneNumber(),
                 invitation.getRole().name(),
-                invitation.getStatus().name(),
-                invitation.getOrganization().getId(),
                 invitation.getOrganization().getName(),
-                invitationLink,
+                invitation.getOrganization().getId(),
+                invitation.getStatus().name(),
                 invitation.getExpiresAt()
         );
     }

@@ -8,7 +8,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-public interface InvitationRepository extends JpaRepository<Invitation, UUID> {
+public interface InvitationRepository
+        extends JpaRepository<Invitation, UUID> {
 
     Optional<Invitation> findByToken(String token);
 
@@ -20,4 +21,10 @@ public interface InvitationRepository extends JpaRepository<Invitation, UUID> {
     );
 
     boolean existsByToken(String token);
+
+    boolean existsByEmailIgnoreCaseAndOrganizationIdAndStatus(
+            String email,
+            UUID organizationId,
+            InvitationStatus status
+    );
 }

@@ -1,6 +1,5 @@
 package com.example.distrobackend.configuration;
 
-
 import com.example.distrobackend.security.JwtAuthFilter;
 import com.example.distrobackend.security.JwtService;
 import com.example.distrobackend.security.RestAccessDeniedHandler;
@@ -22,7 +21,6 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 @EnableMethodSecurity
 @RequiredArgsConstructor
 public class SecurityConfig {
-
     private final JwtService jwtService;
     private final RestAuthenticationEntryPoint authenticationEntryPoint;
     private final RestAccessDeniedHandler accessDeniedHandler;
@@ -35,7 +33,7 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-                .csrf(csrf -> csrf.disable())               // stateless API, bearer tokens, no cookies
+                .csrf(csrf -> csrf.disable())
                 .cors(Customizer.withDefaults())
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .exceptionHandling(e -> e
@@ -44,26 +42,20 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/api/auth/**").permitAll()
-                        .requestMatchers("/api/access-requests", "/api/access-requests/activate").permitAll()
-                        // This legacy stock listing is also used by organization workspaces.
+                        .requestMatchers(HttpMethod.POST, "/api/access-requests", "/api/access-requests/activate").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/invitations/*").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/invitations/*/accept").permitAll()
                         .requestMatchers("/api/admin/stock/**").hasAnyRole(
-                                "PLATFORM_ADMIN", "SUPER_ADMIN",
-                                "MANUFACTURER_ADMIN", "DISTRIBUTOR_ADMIN")
-                        // Platform admins manage the shared platform; SUPER_ADMIN remains accepted for older tokens.
+                                "PLATFORM_ADMIN", "SUPER_ADMIN", "MANUFACTURER_ADMIN", "DISTRIBUTOR_ADMIN")
                         .requestMatchers("/api/admin/**").hasAnyRole("PLATFORM_ADMIN", "SUPER_ADMIN")
-
-                        // Workspace isolation: each area is reachable only by its own roles.
                         .requestMatchers("/api/manufacturer/**")
                         .hasAnyRole("MANUFACTURER_ADMIN", "MANUFACTURER_STAFF")
                         .requestMatchers("/api/distributor/**")
                         .hasAnyRole("DISTRIBUTOR_ADMIN", "DISTRIBUTOR_STAFF")
                         .requestMatchers("/api/driver/**").hasRole("DRIVER")
                         .requestMatchers("/api/customer/**").hasRole("CUSTOMER")
-
                         .anyRequest().authenticated())
                 .addFilterBefore(new JwtAuthFilter(jwtService), UsernamePasswordAuthenticationFilter.class);
-
         return http.build();
     }
-
 }

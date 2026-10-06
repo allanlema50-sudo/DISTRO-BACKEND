@@ -10,15 +10,19 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
-@RequestMapping("/api/access-requests")
+@RequestMapping("/api")
 @RequiredArgsConstructor
 public class AccessRequestController {
     private final AccessRequestService service;
 
-    @PostMapping
+    @PostMapping("/access-requests")
     @ResponseStatus(HttpStatus.CREATED)
-    public MessageResponse submit(@Valid @RequestBody AccessRequestCreateRequest request) { return service.submit(request); }
+    public MessageResponse submit(@Valid @RequestBody AccessRequestCreateRequest request) {
+        return service.submit(request);
+    }
 
-    @PostMapping("/activate")
-    public MessageResponse activate(@Valid @RequestBody ActivateAccountRequest request) { return service.activate(request); }
+    @PostMapping("/access-requests/activate")
+    public MessageResponse activate(@Valid @RequestBody ActivateAccountRequest request) {
+        return service.activate(request);
+    }
 }

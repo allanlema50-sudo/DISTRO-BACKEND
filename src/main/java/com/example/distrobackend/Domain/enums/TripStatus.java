@@ -1,10 +1,9 @@
 package com.example.distrobackend.Domain.enums;
 
 public enum TripStatus {
-    UNASSIGNED,
-    ASSIGNED,
-    IN_PROGRESS,
+    SCHEDULED,
+    ONGOING,
     COMPLETED,
-    CANCELLED,
-    FAILED
+    DELAYED,
+    CANCELLED
 }

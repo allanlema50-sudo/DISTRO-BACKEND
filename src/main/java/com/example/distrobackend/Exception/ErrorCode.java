@@ -32,6 +32,8 @@ public enum ErrorCode {
     OTP_ATTEMPTS_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "Too many incorrect attempts. Request a new code"),
     OTP_COOLDOWN(HttpStatus.TOO_MANY_REQUESTS, "Please wait a moment before requesting another code"),
 
+    NOT_IMPLEMENTED(HttpStatus.NOT_IMPLEMENTED, "This feature is not yet implemented"),
+
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "Something went wrong. Please try again later");
 
     private final HttpStatus status;

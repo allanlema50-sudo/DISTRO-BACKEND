@@ -238,7 +238,7 @@ The initial migration is `V1__initial_schema.sql`. Add subsequent schema
 changes as new versioned migrations, for example:
 
 ```text
-V4__add_warehouse_table.sql
+V5__add_warehouse_table.sql
 ```
 
 Do not modify a migration that has already been applied to a shared database.
@@ -247,8 +247,14 @@ or alter tables automatically.
 
 For an existing database created before Flyway history was introduced, first
 verify that its schema matches `V1__initial_schema.sql`, then set
-`FLYWAY_BASELINE_ON_MIGRATE=true` and `FLYWAY_BASELINE_VERSION=1` for the
-one-time startup. This is an explicit compatibility decision, not a general
+`FLYWAY_BASELINE_ON_MIGRATE=true` and `FLYWAY_BASELINE_VERSION=1` in `.env`.
+The baseline only records the existing schema as V1; it does not perform the
+tenant ownership migration. On the first startup, V2 expands the schema and
+V3 derives ownership where it is unambiguous. If V3 reports unresolved rows,
+stop the API, backfill `organization_id` on the affected orders, stock items,
+and trips using an approved data-migration procedure, then start the API again.
+Only after those rows are reviewed should V3 add the foreign keys and NOT NULL
+constraints. This is an explicit compatibility decision, not a general
 production default; leave the setting false for new or unverified databases.
 
 ## Host-based development

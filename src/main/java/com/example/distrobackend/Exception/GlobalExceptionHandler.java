@@ -6,6 +6,7 @@ import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DataAccessException;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -100,6 +101,13 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(OptimisticLockingFailureException.class)
     public ResponseEntity<ApiError> handleOptimisticLock(
             OptimisticLockingFailureException ex, HttpServletRequest request) {
+        return build(ErrorCode.CONFLICT,
+                "The resource was changed by another request. Retry with the latest representation", request);
+    }
+
+    @ExceptionHandler(ObjectOptimisticLockingFailureException.class)
+    public ResponseEntity<ApiError> handleObjectOptimisticLock(
+            ObjectOptimisticLockingFailureException ex, HttpServletRequest request) {
         return build(ErrorCode.CONFLICT,
                 "The resource was changed by another request. Retry with the latest representation", request);
     }

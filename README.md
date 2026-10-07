@@ -276,6 +276,24 @@ any existing non-positive values, validate it from the database service:
 ALTER TABLE trip_stops VALIDATE CONSTRAINT ck_trip_stops_sequence_positive;
 ```
 
+`V6__scope_stock_sku_uniqueness_to_organization.sql` fails closed when an
+existing organization contains SKUs that differ only by case. Review conflicts
+before retrying the migration; for example:
+
+```sql
+SELECT organization_id, UPPER(sku) AS normalized_sku, COUNT(*)
+FROM stock_items
+GROUP BY organization_id, UPPER(sku)
+HAVING COUNT(*) > 1;
+```
+
+Do not edit an applied Flyway migration. The tenant-ownership migration V3 was
+corrected before this branch's first deployment; if an environment has already
+recorded a different V3 checksum, stop deployment and perform an approved
+Flyway checksum repair against the exact reviewed artifact after confirming the
+database schema. Never use `flyway repair` to conceal an unreviewed schema
+difference.
+
 ## Host-based development
 
 This workflow runs PostgreSQL in Docker and the Spring Boot API through Maven.

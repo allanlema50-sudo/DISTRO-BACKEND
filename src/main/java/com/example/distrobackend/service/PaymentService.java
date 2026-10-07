@@ -333,7 +333,8 @@ public class PaymentService {
 
     private void ensureConfigured() {
         if (isBlank(baseUrl) || isBlank(consumerKey) || isBlank(consumerSecret)
-                || isBlank(shortcode) || isBlank(passkey) || isBlank(callbackUrl)) {
+                || isBlank(shortcode) || isBlank(passkey) || isBlank(callbackUrl)
+                || isBlank(callbackSecret)) {
             throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED);
         }
     }

@@ -148,6 +148,19 @@ class PaymentServiceTest {
         verifyNoInteractions(paymentRepository);
     }
 
+    @Test
+    void paymentInitiationRequiresCallbackSecretConfiguration() {
+        ReflectionTestUtils.setField(paymentService, "callbackSecret", "");
+        Order order = order();
+        when(orderRepository.findByIdWithOwnership(orderId)).thenReturn(Optional.of(order));
+
+        assertThatThrownBy(() -> paymentService.initiatePayment(
+                principal(customerId), new PaymentInitiateRequest(orderId, "0712345678", null)))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("Payment service is not configured");
+        verifyNoInteractions(paymentRepository, restTemplate);
+    }
+
     private Order order() {
         Organization organization = new Organization();
         organization.setId(UUID.randomUUID());

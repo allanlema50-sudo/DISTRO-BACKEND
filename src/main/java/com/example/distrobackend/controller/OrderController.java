@@ -126,7 +126,8 @@ public class OrderController {
         // Order editing semantics (which fields are mutable, recalculation rules,
         // status constraints) are not yet confirmed. Throwing 501 so callers get
         // an explicit signal rather than a misleading 200 with unchanged data.
-        // TODO(ORDERS): implement OrderService.updateOrder() once edit semantics are confirmed.
+        // Order editing remains intentionally unsupported until its mutable fields,
+        // recalculation rules, and status constraints are confirmed.
         throw new ApiException(ErrorCode.NOT_IMPLEMENTED,
                 "Order editing is not yet supported. Use PATCH /{orderId}/status to transition order state.");
     }

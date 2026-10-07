@@ -1,6 +1,5 @@
 package com.example.distrobackend.service;
 
-import com.example.distrobackend.Domain.entity.StockItem;
 import com.example.distrobackend.repository.StockItemRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

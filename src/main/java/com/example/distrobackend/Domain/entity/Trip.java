@@ -29,7 +29,7 @@ public class Trip {
     @JdbcTypeCode(SqlTypes.UUID)
     private UUID id;
 
-    @Column(name = "trip_number", nullable = false, unique = true, length = 50)
+    @Column(name = "trip_number", nullable = false, unique = true, length = 36)
     private String tripNumber;
 
     @Enumerated(EnumType.STRING)
@@ -57,8 +57,8 @@ public class Trip {
     private Integer restockQuantity;
 
     /** Organization responsible for the trip and its tracking feed. */
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "organization_id")
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "organization_id", nullable = false)
     private Organization organization;
 
     @Column(name = "origin_name")
@@ -91,6 +91,9 @@ public class Trip {
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
+    @Version
+    @Column(name = "version", nullable = false)
+    private long version;
     public void addStop(TripStop stop) {
         stops.add(stop);
         stop.setTrip(this);

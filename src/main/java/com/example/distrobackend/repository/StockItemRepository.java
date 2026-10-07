@@ -9,13 +9,11 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
-
 import java.util.Optional;
 import java.util.UUID;
 
 @Repository
 public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
-
     Page<StockItem> findByOrganization_Id(UUID organizationId, Pageable pageable);
 
     Page<StockItem> findByActiveTrue(Pageable pageable);
@@ -29,13 +27,16 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
 
     Optional<StockItem> findByIdAndOrganization_Id(UUID id, UUID organizationId);
 
+    default Optional<StockItem> findByIdAndOrganizationId(UUID id, UUID organizationId) {
+        return findByIdAndOrganization_Id(id, organizationId);
+    }
+
     boolean existsByOrganization_IdAndSkuIgnoreCase(UUID organizationId, String sku);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from StockItem s where s.id = :id and s.organization.id = :organizationId")
     Optional<StockItem> findByIdAndOrganizationIdForUpdate(
             @Param("id") UUID id, @Param("organizationId") UUID organizationId);
-
     @Query("""
             select s from StockItem s
             where s.organization.id = :organizationId

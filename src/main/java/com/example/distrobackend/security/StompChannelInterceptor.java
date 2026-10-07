@@ -11,7 +11,6 @@ import org.springframework.messaging.support.MessageHeaderAccessor;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Component;
 
-import java.time.Instant;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -44,10 +43,12 @@ public class StompChannelInterceptor implements ChannelInterceptor {
             }
         }
 
-        if (accessor.getUser() instanceof Authentication authentication
-                && authentication.getPrincipal() instanceof AuthenticatedUser user
-                && user.isExpired(Instant.now())) {
-            throw new MessagingException("WebSocket authentication has expired");
+        if (accessor.getCommand() != StompCommand.CONNECT) {
+            if (!(accessor.getUser() instanceof Authentication authentication)
+                    || !(authentication.getPrincipal() instanceof AuthenticatedUser user)
+                    || user.isExpired()) {
+                throw new MessagingException("WebSocket authentication expired or missing");
+            }
         }
 
         if (accessor.getCommand() == StompCommand.SEND) {

@@ -23,7 +23,6 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-
 import java.util.UUID;
 
 @RestController
@@ -121,7 +120,7 @@ public class StockController {
 
     @GetMapping("/items/{id}/movements")
     @PreAuthorize("hasAnyRole('MANUFACTURER_ADMIN','MANUFACTURER_STAFF','DISTRIBUTOR_ADMIN','DISTRIBUTOR_STAFF') and @tenantAccess.hasOrganization(authentication)")
-    public Page<StockMovementResponse> movements(
+        public Page<StockMovementResponse> movements(
             @AuthenticationPrincipal AuthenticatedUser user,
             @PathVariable UUID id,
             Pageable pageable) {

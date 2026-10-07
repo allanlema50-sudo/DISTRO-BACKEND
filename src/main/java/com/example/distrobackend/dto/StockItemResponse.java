@@ -1,7 +1,6 @@
 package com.example.distrobackend.dto;
 
 import com.example.distrobackend.Domain.entity.StockItem;
-
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.UUID;

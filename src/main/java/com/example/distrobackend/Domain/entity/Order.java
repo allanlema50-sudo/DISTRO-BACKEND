@@ -44,6 +44,7 @@ public class Order {
     @Column(name = "status", nullable = false, length = 30)
     private OrderStatus status = OrderStatus.PENDING;
 
+
     @Column(name = "order_number", nullable = false, unique = true, length = 30)
     private String orderNumber;
 
@@ -93,6 +94,10 @@ public class Order {
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
+
+    @Version
+    @Column(name = "version", nullable = false)
+    private long version;
 
     // Convenience methods for bi-directional relationships
     public void addOrderItem(OrderItem item) {

@@ -62,7 +62,7 @@ public class TripController {
             throw new ApiException(ErrorCode.ACCESS_DENIED, "Only drivers can confirm deliveries");
         }
 
-        return tripService.confirmStopDelivery(me.userId(), tripId, stopId, request);
+        return tripService.confirmStopDelivery(me, tripId, stopId, request);
     }
 
     @PostMapping("/{tripId}/stops/{stopId}/delivery-otp")
@@ -74,6 +74,21 @@ public class TripController {
             throw new ApiException(ErrorCode.ACCESS_DENIED, "Only customers may request delivery OTPs");
         }
         tripService.issueDeliveryOtp(me.userId(), tripId, stopId);
+    }
+
+    @PostMapping("/{tripId}/location")
+    public LocationPingResponse recordLocation(
+            @AuthenticationPrincipal AuthenticatedUser me,
+            @PathVariable UUID tripId,
+            @Valid @RequestBody LocationPingRequest request) {
+        return tripService.recordLocation(me, tripId, request);
+    }
+
+    @GetMapping("/{tripId}/location")
+    public List<LocationPingResponse> locationHistory(
+            @AuthenticationPrincipal AuthenticatedUser me,
+            @PathVariable UUID tripId) {
+        return tripService.locationHistory(me, tripId);
     }
 
     @PatchMapping("/{tripId}/assign")

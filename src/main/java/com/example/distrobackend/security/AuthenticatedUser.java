@@ -11,6 +11,9 @@ public record AuthenticatedUser(UUID userId,
                                  UUID organizationId,
                                  Organizationtype organizationType,
                                  Instant expiresAt) {
+    public boolean isExpired() {
+        return expiresAt == null || !expiresAt.isAfter(Instant.now());
+    }
 
     public boolean isExpired(Instant now) {
         return expiresAt == null || !now.isBefore(expiresAt);

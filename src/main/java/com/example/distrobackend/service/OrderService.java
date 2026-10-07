@@ -1,7 +1,6 @@
 package com.example.distrobackend.service;
 
 import com.example.distrobackend.Domain.entity.*;
-import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.OrderStatus;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
@@ -53,9 +52,6 @@ public class OrderService {
 
         Organization org = organizationRepository.findById(request.organizationId())
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Organization not found"));
-        if (org.getType() != Organizationtype.DISTRIBUTOR) {
-            throw new ApiException(ErrorCode.BAD_REQUEST, "Orders can only be placed with a distributor");
-        }
 
         Order order = new Order();
         order.setCustomer(customer);
@@ -70,9 +66,14 @@ public class OrderService {
         BigDecimal subtotal = BigDecimal.ZERO;
 
         for (OrderItemRequest itemReq : request.items()) {
-            StockItem stockItem = stockItemRepository.findByIdAndOrganization_Id(
-                            itemReq.stockItemId(), org.getId())
+            StockItem stockItem = stockItemRepository.findById(itemReq.stockItemId())
                     .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Stock item not found: " + itemReq.stockItemId()));
+
+            if (stockItem.getOrganization() == null
+                    || !org.getId().equals(stockItem.getOrganization().getId())) {
+                throw new ApiException(ErrorCode.ACCESS_DENIED,
+                        "Stock item does not belong to the selected organization");
+            }
 
             if (!stockItem.isActive()) {
                 throw new ApiException(ErrorCode.BAD_REQUEST, "Stock item is not active: " + stockItem.getName());
@@ -84,7 +85,6 @@ public class OrderService {
             orderItem.setUnitPrice(stockItem.getUnitPrice());
 
             BigDecimal lineTotal = stockItem.getUnitPrice().multiply(BigDecimal.valueOf(itemReq.quantity()));
-            orderItem.setLineTotal(lineTotal); // Sets in memory; DB uses generated column
             subtotal = subtotal.add(lineTotal);
 
             order.addOrderItem(orderItem);
@@ -106,6 +106,10 @@ public class OrderService {
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
 
         Set<OrderStatus> allowedNext = ALLOWED_TRANSITIONS.getOrDefault(order.getStatus(), Collections.emptySet());
+        if (update.status() == OrderStatus.CONFIRMED) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    "Orders are confirmed only after a verified payment");
+        }
         if (!allowedNext.contains(update.status())) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Cannot transition from " + order.getStatus() + " to " + update.status());
         }
@@ -136,9 +140,34 @@ public class OrderService {
 
     @Transactional(readOnly = true)
     public OrderResponse getOrder(UUID id) {
-        Order order = orderRepository.findById(id)
+        Order order = orderRepository.findByIdWithItems(id)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
         return mapToResponse(order);
+    }
+
+    @Transactional
+    public Order confirmPaidOrder(UUID orderId) {
+        Order order = orderRepository.findByIdWithItems(orderId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
+        if (order.getStatus() != OrderStatus.PENDING) {
+            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                    "Only pending orders can be confirmed by payment");
+        }
+        OrderStatusHistory history = new OrderStatusHistory();
+        history.setFromStatus(OrderStatus.PENDING);
+        history.setToStatus(OrderStatus.CONFIRMED);
+        history.setNote("Confirmed after verified payment");
+        order.addStatusHistory(history);
+        order.setStatus(OrderStatus.CONFIRMED);
+        order.setConfirmedAt(java.time.OffsetDateTime.now());
+        return orderRepository.save(order);
+    }
+
+    @Transactional(readOnly = true)
+    public User getCustomer(UUID orderId) {
+        return orderRepository.findByIdWithOwnership(orderId)
+                .map(Order::getCustomer)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
     }
 
     @Transactional(readOnly = true)

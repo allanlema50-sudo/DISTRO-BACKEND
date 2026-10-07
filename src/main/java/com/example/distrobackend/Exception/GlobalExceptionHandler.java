@@ -16,6 +16,7 @@ import org.springframework.web.ErrorResponse;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -70,7 +71,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
     public ResponseEntity<ApiError> handleUnsupportedMediaType(
             HttpMediaTypeNotSupportedException ex, HttpServletRequest request) {
-        return build(ErrorCode.BAD_REQUEST, "Unsupported request content type", request);
+        return build(ErrorCode.UNSUPPORTED_MEDIA_TYPE, ErrorCode.UNSUPPORTED_MEDIA_TYPE.defaultMessage(), request);
     }
 
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
@@ -100,7 +101,8 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(OptimisticLockingFailureException.class)
     public ResponseEntity<ApiError> handleOptimisticLock(
             OptimisticLockingFailureException ex, HttpServletRequest request) {
-        return build(ErrorCode.CONFLICT, "The resource was changed by another request. Refresh and try again.", request);
+        return build(ErrorCode.CONFLICT,
+                "The resource was changed by another request. Retry with the latest representation", request);
     }
 
     @ExceptionHandler(DataAccessException.class)

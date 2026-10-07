@@ -19,8 +19,7 @@ public record TripRequest(
         @NotEmpty @Size(max = 100) List<@Valid TripStopRequest> stops
 ) {
     public record TripStopRequest(
-            @NotNull @Min(1)
-            Integer sequence,
+            @NotNull @Min(1) Integer sequence,
             @NotNull @Valid TripLocation location,
             @Size(max = 100)
             String etaLabel,

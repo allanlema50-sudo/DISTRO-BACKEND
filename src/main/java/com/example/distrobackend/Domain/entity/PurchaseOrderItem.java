@@ -1,6 +1,5 @@
 package com.example.distrobackend.Domain.entity;
 
-
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -12,21 +11,24 @@ import org.hibernate.type.SqlTypes;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.UUID;
+
 @Entity
-@Table(name = "order_items")
+@Table(name = "purchase_order_items", uniqueConstraints = {
+        @UniqueConstraint(name = "uk_purchase_order_item_stock", columnNames = {"purchase_order_id", "stock_item_id"})
+})
 @Getter
 @Setter
 @NoArgsConstructor
+public class PurchaseOrderItem {
 
-public class OrderItem {
     @Id
     @GeneratedValue
     @JdbcTypeCode(SqlTypes.UUID)
     private UUID id;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "order_id", nullable = false)
-    private Order order;
+    @JoinColumn(name = "purchase_order_id", nullable = false)
+    private PurchaseOrder purchaseOrder;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "stock_item_id", nullable = false)
@@ -35,16 +37,11 @@ public class OrderItem {
     @Column(name = "quantity", nullable = false)
     private int quantity;
 
-    // snapshot of unit price at order time, independent of later stock_item price changes
     @Column(name = "unit_price", nullable = false, precision = 12, scale = 2)
     private BigDecimal unitPrice;
 
-    // PostgreSQL calculates this value from quantity * unit_price.
     @Column(name = "line_total", precision = 12, scale = 2, insertable = false, updatable = false)
     private BigDecimal lineTotal;
-
-    @Column(name = "stock_check_status", nullable = false, length = 20)
-    private String stockCheckStatus = "PENDING";
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

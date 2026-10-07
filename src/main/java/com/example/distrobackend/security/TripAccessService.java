@@ -4,32 +4,32 @@ import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.repository.TripRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.UUID;
 
-/**
- * Performs the authorization decision for a trip tracking subscription.
- * The caller receives only a boolean so an unauthorized user cannot use this
- * boundary to distinguish a missing trip from an inaccessible trip.
- */
+/** Centralized authorization for trip data and live tracking feeds. */
 @Service
 @RequiredArgsConstructor
 public class TripAccessService {
 
     private final TripRepository tripRepository;
 
-    public boolean canSubscribe(UUID tripId, AuthenticatedUser user) {
-        if (tripId == null || user == null) {
+    @Transactional(readOnly = true)
+    public boolean canAccess(AuthenticatedUser user, UUID tripId) {
+        if (user == null || user.isExpired() || tripId == null || user.role() == null) {
             return false;
         }
-
-        UserRole role = user.role();
-        return switch (role) {
+        return switch (user.role()) {
             case DRIVER -> tripRepository.existsByIdAndRider_Id(tripId, user.userId());
             case CUSTOMER -> tripRepository.existsByIdAndCustomerAccess(tripId, user.userId());
             case MANUFACTURER_ADMIN, MANUFACTURER_STAFF,
                     DISTRIBUTOR_ADMIN, DISTRIBUTOR_STAFF -> user.organizationId() != null
                     && tripRepository.existsByIdAndOrganization_Id(tripId, user.organizationId());
         };
+    }
+
+    public boolean canSubscribe(UUID tripId, AuthenticatedUser user) {
+        return canAccess(user, tripId);
     }
 }

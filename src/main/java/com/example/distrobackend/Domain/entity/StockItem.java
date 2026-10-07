@@ -16,6 +16,7 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "stock_items", indexes = {
+        @Index(name = "idx_stock_items_organization", columnList = "organization_id"),
         @Index(name = "idx_stock_items_organization_active", columnList = "organization_id,is_active")
 })
 @Getter
@@ -29,11 +30,11 @@ public class StockItem {
     @JdbcTypeCode(SqlTypes.UUID)
     private UUID id;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "organization_id")
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "organization_id", nullable = false)
     private Organization organization;
 
-    // SKU uniqueness is tenant-scoped in Flyway, not globally scoped by JPA.
+    // SKU uniqueness is tenant-scoped in Flyway, including case-insensitive matching.
     @Column(name = "sku", nullable = false, length = 50)
     private String sku;
 

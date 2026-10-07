@@ -12,6 +12,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import io.swagger.v3.oas.annotations.security.SecurityRequirements;
 
 import java.util.UUID;
 
@@ -23,30 +24,26 @@ public class PaymentController {
     private final PaymentService paymentService;
 
     @PostMapping("/initiate")
-    @PreAuthorize("hasAnyRole('CUSTOMER', 'DISTRIBUTOR_ADMIN')")
+    @PreAuthorize("hasAnyRole('CUSTOMER', 'DISTRIBUTOR_ADMIN', 'DISTRIBUTOR_STAFF')")
     public ResponseEntity<PaymentInitiateResponse> initiatePayment(
-            @AuthenticationPrincipal AuthenticatedUser user,
+            @AuthenticationPrincipal AuthenticatedUser actor,
             @Valid @RequestBody PaymentInitiateRequest request) {
-        return ResponseEntity.ok(paymentService.initiatePayment(request, user));
+        return ResponseEntity.ok(paymentService.initiatePayment(actor, request));
     }
 
+    /** Public by necessity; Daraja cannot present the platform JWT. */
     @PostMapping("/mpesa/callback")
-    // Daraja callbacks are sent from Safaricom's servers, which don't have your JWT tokens.
-    // In production, you might secure this by checking IP whitelists or a custom auth header Daraja supports.
-    // For now, we permit all (or you can exclude it in SecurityConfig).
-    public ResponseEntity<String> mpesaCallback(
-            @RequestHeader(value = "X-Mpesa-Callback-Secret", required = false) String callbackSecret,
-            @RequestBody MpesaCallbackRequest callbackRequest) {
-        paymentService.processMpesaCallback(callbackRequest, callbackSecret);
-        // Safaricom expects a generic success response so they don't retry the webhook
-        return ResponseEntity.ok("{\"ResultCode\":0, \"ResultDesc\":\"Success\"}");
+    @SecurityRequirements
+    public ResponseEntity<String> mpesaCallback(@RequestBody MpesaCallbackRequest callbackRequest) {
+        paymentService.processMpesaCallback(callbackRequest);
+        return ResponseEntity.ok("{\"ResultCode\":0,\"ResultDesc\":\"Accepted\"}");
     }
 
     @GetMapping("/{orderId}/status")
-    @PreAuthorize("hasAnyRole('CUSTOMER', 'DISTRIBUTOR_ADMIN')")
+    @PreAuthorize("hasAnyRole('CUSTOMER', 'DISTRIBUTOR_ADMIN', 'DISTRIBUTOR_STAFF')")
     public ResponseEntity<PaymentStatusResponse> getPaymentStatus(
-            @AuthenticationPrincipal AuthenticatedUser user,
+            @AuthenticationPrincipal AuthenticatedUser actor,
             @PathVariable UUID orderId) {
-        return ResponseEntity.ok(paymentService.getPaymentStatus(orderId, user));
+        return ResponseEntity.ok(paymentService.getPaymentStatus(actor, orderId));
     }
 }

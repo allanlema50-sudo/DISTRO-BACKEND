@@ -9,7 +9,7 @@ import jakarta.validation.constraints.Size;
 public record TripLocation(
         @NotBlank @Size(max = 150)
         String name,
-        @Size(max = 500)
+        @NotBlank @Size(max = 500)
         String address,
         @NotNull @DecimalMin("-90.0") @DecimalMax("90.0")
         Double latitude,

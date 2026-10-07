@@ -13,7 +13,7 @@ public record UpdateStockItemRequest(
         @Pattern(regexp = "(?s).*\\S.*", message = "name must contain a non-whitespace character")
         String name,
         @Size(max = 80) String category,
-        @DecimalMin("0.00") @Digits(integer = 10, fraction = 2) BigDecimal unitPrice,
+        @DecimalMin("0.01") @Digits(integer = 10, fraction = 2) BigDecimal unitPrice,
         @Min(0) Integer reorderThreshold,
         Boolean active
 ) {

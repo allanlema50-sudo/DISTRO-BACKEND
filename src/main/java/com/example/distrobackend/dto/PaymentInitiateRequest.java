@@ -11,5 +11,6 @@ public record PaymentInitiateRequest(
         @NotBlank @Size(max = 20)
         @Pattern(regexp = "(?:0|254|\\+254)7\\d{8}",
                 message = "phoneNumber must be a valid Kenyan mobile number")
-        String phoneNumber // The phone number to push the M-Pesa prompt to
+        String phoneNumber,
+        @Size(max = 100) String idempotencyKey
 ) {}

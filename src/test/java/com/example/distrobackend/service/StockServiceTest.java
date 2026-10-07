@@ -54,6 +54,37 @@ class StockServiceTest {
         verify(stockMovementRepository, never()).save(any());
     }
 
+    @Test
+    void restockCannotUseNegativeDelta() {
+        UUID organizationId = UUID.randomUUID();
+        UUID itemId = UUID.randomUUID();
+
+        assertThatThrownBy(() -> stockService.adjust(principal(organizationId), itemId,
+                new StockAdjustmentRequest(-1, StockMovementType.RESTOCK_IN, "invalid restock")))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("direction");
+        verifyNoInteractions(stockItemRepository, stockMovementRepository);
+    }
+
+    @Test
+    void adjustmentCannotOverflowIntegerQuantity() {
+        UUID organizationId = UUID.randomUUID();
+        UUID itemId = UUID.randomUUID();
+        StockItem item = new StockItem();
+        item.setId(itemId);
+        item.setOrganization(organization(organizationId));
+        item.setQuantityOnHand(Integer.MAX_VALUE);
+        when(stockItemRepository.findByIdAndOrganizationIdForUpdate(itemId, organizationId))
+                .thenReturn(Optional.of(item));
+
+        assertThatThrownBy(() -> stockService.adjust(principal(organizationId), itemId,
+                new StockAdjustmentRequest(1, StockMovementType.ADJUSTMENT, "overflow")))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("maximum");
+        verify(stockItemRepository, never()).save(any());
+        verify(stockMovementRepository, never()).save(any());
+    }
+
     private AuthenticatedUser principal(UUID organizationId) {
         return new AuthenticatedUser(UUID.randomUUID(), UserRole.DISTRIBUTOR_ADMIN,
                 organizationId, Organizationtype.DISTRIBUTOR, Instant.now().plus(Duration.ofMinutes(5)));

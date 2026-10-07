@@ -238,12 +238,18 @@ The initial migration is `V1__initial_schema.sql`. Add subsequent schema
 changes as new versioned migrations, for example:
 
 ```text
-V2__add_warehouse_table.sql
+V4__add_warehouse_table.sql
 ```
 
 Do not modify a migration that has already been applied to a shared database.
 Hibernate uses `ddl-auto=validate`; it validates the schema but does not create
 or alter tables automatically.
+
+For an existing database created before Flyway history was introduced, first
+verify that its schema matches `V1__initial_schema.sql`, then set
+`FLYWAY_BASELINE_ON_MIGRATE=true` and `FLYWAY_BASELINE_VERSION=1` for the
+one-time startup. This is an explicit compatibility decision, not a general
+production default; leave the setting false for new or unverified databases.
 
 ## Host-based development
 

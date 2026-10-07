@@ -39,8 +39,8 @@ public class OrderItem {
     @Column(name = "unit_price", nullable = false, precision = 12, scale = 2)
     private BigDecimal unitPrice;
 
-    // Calculated by the service on create (unitPrice * quantity). Not DB-generated.
-    @Column(name = "line_total", precision = 12, scale = 2)
+    // PostgreSQL calculates this value from quantity * unit_price.
+    @Column(name = "line_total", precision = 12, scale = 2, insertable = false, updatable = false)
     private BigDecimal lineTotal;
 
     @Column(name = "stock_check_status", nullable = false, length = 20)

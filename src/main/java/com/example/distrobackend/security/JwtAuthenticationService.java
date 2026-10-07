@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.UUID;
+import java.util.Date;
 
 /**
  * Converts a validated JWT into the same authenticated principal for both HTTP and STOMP.
@@ -40,10 +41,16 @@ public class JwtAuthenticationService {
         Organizationtype organizationType = optionalEnum(
                 claims.get("orgType", String.class), Organizationtype.class);
 
+        Date expiration = claims.getExpiration();
+        if (expiration == null) {
+            throw new IllegalArgumentException("Required JWT claim is missing: exp");
+        }
+
         validateOrganizationClaims(role, organizationId, organizationType);
 
         AuthenticatedUser principal = new AuthenticatedUser(
-                userId, role, organizationId, organizationType);
+                userId, role, organizationId, organizationType,
+                expiration.toInstant());
 
         return new UsernamePasswordAuthenticationToken(
                 principal,

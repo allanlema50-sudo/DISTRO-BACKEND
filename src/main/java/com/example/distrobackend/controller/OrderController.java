@@ -7,6 +7,8 @@ import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.dto.*;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.service.OrderService;
+import com.example.distrobackend.service.OtpService;
+import com.example.distrobackend.Domain.enums.OtpPurpose;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -25,6 +27,7 @@ import java.util.UUID;
 public class OrderController {
 
     private final OrderService orderService;
+    private final OtpService otpService;
 
     // -----------------------------------------------------------------------
     // GET /api/v1/orders
@@ -123,7 +126,8 @@ public class OrderController {
         // Order editing semantics (which fields are mutable, recalculation rules,
         // status constraints) are not yet confirmed. Throwing 501 so callers get
         // an explicit signal rather than a misleading 200 with unchanged data.
-        // TODO(ORDERS): implement OrderService.updateOrder() once edit semantics are confirmed.
+        // Order editing remains intentionally unsupported until its mutable fields,
+        // recalculation rules, and status constraints are confirmed.
         throw new ApiException(ErrorCode.NOT_IMPLEMENTED,
                 "Order editing is not yet supported. Use PATCH /{orderId}/status to transition order state.");
     }
@@ -168,6 +172,19 @@ public class OrderController {
         }
 
         return orderService.updateOrderStatus(orderId, me.userId(), update);
+    }
+
+    @PostMapping("/{orderId}/delivery-otp")
+    public void requestDeliveryOtp(@AuthenticationPrincipal AuthenticatedUser me,
+                                   @PathVariable UUID orderId) {
+        OrderResponse order = orderService.getOrder(orderId);
+        if (!order.customerId().equals(me.userId())) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        if (order.status() != OrderStatus.IN_TRANSIT) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Delivery OTP is available only for in-transit orders");
+        }
+        otpService.issue(orderService.getCustomer(orderId), OtpPurpose.DELIVERY_CONFIRMATION);
     }
 
     // -----------------------------------------------------------------------

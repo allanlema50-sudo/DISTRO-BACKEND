@@ -17,11 +17,15 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class StockDataSeeder implements CommandLineRunner {
 
+    private static final UUID DEMO_ORGANIZATION_ID =
+            UUID.fromString("b2f9f0e1-7a5d-4c2f-9d3a-1e6b8c4a2f70");
+
     private final StockItemRepository stockItemRepository;
 
     @Override
     public void run(String... args) {
         log.info("Checking if mock StockItems exist...");
+        ensureDemoOrganization();
 
         seedStockItem("4a11ac56-e282-4797-901c-19cfd347c5ce", "SKU-BAM-NGU", "Bamburi Nguvu", "cat-cement", new BigDecimal("750.00"));
         seedStockItem("58cd0c9e-cbca-402b-ad6d-87d19b4d124a", "SKU-BAM-TEM", "Bamburi Tembo", "cat-cement", new BigDecimal("770.00"));
@@ -55,13 +59,21 @@ public class StockDataSeeder implements CommandLineRunner {
 
     private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
+    private void ensureDemoOrganization() {
+        jdbcTemplate.update(
+                "INSERT INTO organizations (id, name, type, created_at, updated_at) "
+                        + "VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+                        + "ON CONFLICT (id) DO NOTHING",
+                DEMO_ORGANIZATION_ID, "Local Demo Distributor", "DISTRIBUTOR");
+    }
+
     private void seedStockItem(String idStr, String sku, String name, String category, BigDecimal price) {
         UUID id = UUID.fromString(idStr);
         if (!stockItemRepository.existsById(id)) {
             jdbcTemplate.update(
-                "INSERT INTO stock_items (id, sku, name, category, unit_price, quantity_on_hand, reorder_threshold, is_active, created_at, updated_at) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-                id, sku, name, category, price, 100, 10, true
+                "INSERT INTO stock_items (id, organization_id, sku, name, category, unit_price, quantity_on_hand, reorder_threshold, is_active, created_at, updated_at) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                id, DEMO_ORGANIZATION_ID, sku, name, category, price, 100, 10, true
             );
         }
     }

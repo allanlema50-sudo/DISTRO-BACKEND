@@ -57,6 +57,7 @@ class PaymentServiceTest {
         ReflectionTestUtils.setField(paymentService, "shortcode", "174379");
         ReflectionTestUtils.setField(paymentService, "passkey", "passkey");
         ReflectionTestUtils.setField(paymentService, "callbackUrl", "https://example/callback");
+        ReflectionTestUtils.setField(paymentService, "callbackSecret", "test-callback-secret");
         ReflectionTestUtils.setField(paymentService, "verifyCallback", true);
         customerId = UUID.randomUUID();
         orderId = UUID.randomUUID();
@@ -103,7 +104,7 @@ class PaymentServiceTest {
         body.setStkCallback(stk);
         callback.setBody(body);
 
-        assertThatThrownBy(() -> paymentService.processMpesaCallback(callback))
+        assertThatThrownBy(() -> paymentService.processMpesaCallback("test-callback-secret", callback))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("receipt");
         verify(paymentRepository, never()).save(any());
@@ -131,11 +132,20 @@ class PaymentServiceTest {
         body.setStkCallback(stk);
         callback.setBody(body);
 
-        assertThatThrownBy(() -> paymentService.processMpesaCallback(callback))
+        assertThatThrownBy(() -> paymentService.processMpesaCallback("test-callback-secret", callback))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("verification must remain enabled");
         verifyNoInteractions(restTemplate);
         verify(paymentRepository, never()).save(any());
+    }
+
+    @Test
+    void callbackWithInvalidSecretIsRejectedBeforeDatabaseLookup() {
+        assertThatThrownBy(() -> paymentService.processMpesaCallback(
+                "wrong-secret", new MpesaCallbackRequest()))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("Invalid M-Pesa callback credentials");
+        verifyNoInteractions(paymentRepository);
     }
 
     private Order order() {

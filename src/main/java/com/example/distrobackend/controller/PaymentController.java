@@ -34,8 +34,10 @@ public class PaymentController {
     /** Public by necessity; Daraja cannot present the platform JWT. */
     @PostMapping("/mpesa/callback")
     @SecurityRequirements
-    public ResponseEntity<String> mpesaCallback(@RequestBody MpesaCallbackRequest callbackRequest) {
-        paymentService.processMpesaCallback(callbackRequest);
+    public ResponseEntity<String> mpesaCallback(
+            @RequestHeader(value = "X-Mpesa-Callback-Secret", required = false) String callbackSecret,
+            @RequestBody MpesaCallbackRequest callbackRequest) {
+        paymentService.processMpesaCallback(callbackSecret, callbackRequest);
         return ResponseEntity.ok("{\"ResultCode\":0,\"ResultDesc\":\"Accepted\"}");
     }
 

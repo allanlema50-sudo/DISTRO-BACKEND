@@ -163,6 +163,15 @@ public class TripService {
                 || !customerId.equals(stop.getOrder().getCustomer().getId())) {
             throw new ApiException(ErrorCode.ACCESS_DENIED);
         }
+        if (trip.getStatus() == TripStatus.COMPLETED || trip.getStatus() == TripStatus.CANCELLED) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Delivery OTPs are unavailable for closed trips");
+        }
+        if (stop.getStatus() != StopStatus.IN_PROGRESS) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Delivery OTPs are only available for the active stop");
+        }
+        if (stop.getOrder().getStatus() != OrderStatus.IN_TRANSIT) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Order is not in transit");
+        }
         otpService.issue(stop.getOrder().getCustomer(), OtpPurpose.DELIVERY_CONFIRMATION);
     }
 

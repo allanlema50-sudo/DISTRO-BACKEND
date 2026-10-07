@@ -268,6 +268,14 @@ records owned by different organizations. This is an explicit compatibility
 decision, not a general production default; leave the setting false for new or
 unverified databases.
 
+`V7__refine_trip_batch_schema.sql` installs the positive stop-sequence check as
+`NOT VALID` so legacy rows do not block startup. After reviewing and repairing
+any existing non-positive values, validate it from the database service:
+
+```sql
+ALTER TABLE trip_stops VALIDATE CONSTRAINT ck_trip_stops_sequence_positive;
+```
+
 ## Host-based development
 
 This workflow runs PostgreSQL in Docker and the Spring Boot API through Maven.
@@ -289,7 +297,7 @@ $env:DATABASE_USERNAME='distro'
 $env:DATABASE_PASSWORD='<value of POSTGRES_PASSWORD in .env>'
 $env:JWT_SECRET='<generated JWT secret>'
 $env:CORS_ALLOWED_ORIGINS='http://localhost:4200'
-$env:API_SERVER_PORT='8080'
+$env:SERVER_PORT='8080'
 # Optional local/demo data only; omit in production.
 $env:SPRING_PROFILES_ACTIVE='local'
 ```
@@ -302,7 +310,7 @@ export DATABASE_USERNAME='distro'
 export DATABASE_PASSWORD='<value of POSTGRES_PASSWORD in .env>'
 export JWT_SECRET='<generated JWT secret>'
 export CORS_ALLOWED_ORIGINS='http://localhost:4200'
-export API_SERVER_PORT='8080'
+export SERVER_PORT='8080'
 # Optional local/demo data only; omit in production.
 export SPRING_PROFILES_ACTIVE='local'
 ```

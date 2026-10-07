@@ -20,8 +20,10 @@ public interface TripRepository extends JpaRepository<Trip, UUID> {
             select case when count(t) > 0 then true else false end
             from Trip t
             left join t.stops s
+            left join t.order tripOrder
+            left join s.order stopOrder
             where t.id = :tripId
-              and (t.order.customer.id = :customerId or s.order.customer.id = :customerId)
+              and (tripOrder.customer.id = :customerId or stopOrder.customer.id = :customerId)
             """)
     boolean existsByIdAndCustomerAccess(
             @Param("tripId") UUID tripId, @Param("customerId") UUID customerId);

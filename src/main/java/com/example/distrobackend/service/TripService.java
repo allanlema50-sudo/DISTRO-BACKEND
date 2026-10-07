@@ -14,7 +14,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -38,6 +37,7 @@ public class TripService {
         Organization organization = organizationRepository.findById(organizationId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Organization not found"));
 
+        validateStopSequences(request);
         Set<Integer> sequences = new HashSet<>();
         Trip trip = new Trip();
         trip.setOrganization(organization);
@@ -217,6 +217,20 @@ public class TripService {
             throw new ApiException(ErrorCode.ACCESS_DENIED, "An organization identity is required");
         }
         return actor.organizationId();
+    }
+
+    private void validateStopSequences(TripRequest request) {
+        List<Integer> sortedSequences = request.stops().stream()
+                .map(TripRequest.TripStopRequest::sequence)
+                .sorted()
+                .toList();
+        for (int index = 0; index < sortedSequences.size(); index++) {
+            int expected = index + 1;
+            if (sortedSequences.get(index) != expected) {
+                throw new ApiException(ErrorCode.BAD_REQUEST,
+                        "Trip stop sequence numbers must be consecutive starting at 1");
+            }
+        }
     }
 
     private void recordStatus(Trip trip, TripStatus from, TripStatus to,

@@ -93,11 +93,15 @@ public class StockService {
         if (request.quantityDelta() == 0) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "quantityDelta must not be zero");
         }
+        validateMovementDirection(request.quantityDelta(), request.movementType());
         StockItem item = stockItemRepository.findByIdAndOrganizationIdForUpdate(itemId, organizationId)
                 .orElseThrow(() -> new ApiException(ErrorCode.STOCK_NOT_FOUND));
         long resultingQuantity = (long) item.getQuantityOnHand() + request.quantityDelta();
         if (resultingQuantity < 0) {
             throw new InsufficientStockException("Stock quantity cannot become negative");
+        }
+        if (resultingQuantity > Integer.MAX_VALUE) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Stock quantity exceeds the supported maximum");
         }
         item.setQuantityOnHand((int) resultingQuantity);
         StockItem saved = stockItemRepository.save(item);
@@ -148,6 +152,21 @@ public class StockService {
         movement.setPerformedBy(userRepository.getReferenceById(actor.userId()));
         movement.setNote(note);
         stockMovementRepository.save(movement);
+    }
+
+    private void validateMovementDirection(int delta, StockMovementType type) {
+        if (type == null) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "movementType is required");
+        }
+        boolean invalid = switch (type) {
+            case RESTOCK_IN, RETURN -> delta < 0;
+            case SALE_OUT, DAMAGE -> delta > 0;
+            case ADJUSTMENT -> false;
+        };
+        if (invalid) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    "quantityDelta direction does not match movementType " + type);
+        }
     }
 
     private StockItemResponse toResponse(StockItem item) {

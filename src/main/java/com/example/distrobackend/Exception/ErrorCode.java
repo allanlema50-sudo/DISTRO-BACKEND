@@ -8,6 +8,7 @@ import org.springframework.http.HttpStatus;
 public enum ErrorCode {
     VALIDATION_FAILED(HttpStatus.BAD_REQUEST, "Validation failed"),
     BAD_REQUEST(HttpStatus.BAD_REQUEST, "Bad request"),
+    UNSUPPORTED_MEDIA_TYPE(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "Unsupported request content type"),
 
     INVALID_CREDENTIALS(HttpStatus.UNAUTHORIZED, "Invalid email/phone or password"),
     UNAUTHENTICATED(HttpStatus.UNAUTHORIZED, "Authentication is required"),

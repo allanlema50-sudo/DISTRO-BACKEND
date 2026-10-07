@@ -70,7 +70,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
     public ResponseEntity<ApiError> handleUnsupportedMediaType(HttpMediaTypeNotSupportedException ex,
                                                                 HttpServletRequest request) {
-        return build(ErrorCode.BAD_REQUEST, "Unsupported request content type", request);
+        return build(ErrorCode.UNSUPPORTED_MEDIA_TYPE, ErrorCode.UNSUPPORTED_MEDIA_TYPE.defaultMessage(), request);
     }
 
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)

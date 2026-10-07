@@ -28,6 +28,8 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -130,6 +132,44 @@ class StockServiceTest {
                 .isInstanceOf(ApiException.class)
                 .hasMessage("At least one product field must be supplied");
 
+        verifyNoInteractions(stockItemRepository);
+    }
+
+    @Test
+    void distributorCatalogIncludesManufacturersButNotOtherDistributors() {
+        var pageable = org.springframework.data.domain.PageRequest.of(0, 20);
+        when(stockItemRepository.findActiveCatalogForDistributor(
+                eq(organizationId), eq(Organizationtype.MANUFACTURER), isNull(String.class), eq(pageable)))
+                .thenReturn(org.springframework.data.domain.Page.empty());
+
+        stockService.catalog(user, null, pageable);
+
+        verify(stockItemRepository).findActiveCatalogForDistributor(
+                organizationId, Organizationtype.MANUFACTURER, null, pageable);
+    }
+
+    @Test
+    void customerCatalogCanBrowseAcrossOrganizations() {
+        var pageable = org.springframework.data.domain.PageRequest.of(0, 20);
+        AuthenticatedUser customer = new AuthenticatedUser(
+                UUID.randomUUID(), UserRole.CUSTOMER, null, null, Instant.now().plusSeconds(60));
+        when(stockItemRepository.findActiveCatalog(isNull(String.class), eq(pageable)))
+                .thenReturn(org.springframework.data.domain.Page.empty());
+
+        stockService.catalog(customer, null, pageable);
+
+        verify(stockItemRepository).findActiveCatalog(null, pageable);
+    }
+
+    @Test
+    void driverCannotBrowseTheProductCatalog() {
+        AuthenticatedUser driver = new AuthenticatedUser(
+                UUID.randomUUID(), UserRole.DRIVER, null, null, Instant.now().plusSeconds(60));
+
+        assertThatThrownBy(() -> stockService.catalog(
+                driver, null, org.springframework.data.domain.PageRequest.of(0, 20)))
+                .isInstanceOf(ApiException.class)
+                .hasMessage("You do not have permission to access this resource");
         verifyNoInteractions(stockItemRepository);
     }
 

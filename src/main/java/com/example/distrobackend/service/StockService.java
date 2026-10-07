@@ -60,16 +60,35 @@ public class StockService {
     }
 
     @Transactional(readOnly = true)
-    public Page<ProductResponse> catalog(String category, Pageable pageable) {
-        Page<StockItem> items = category == null || category.isBlank()
-                ? stockItemRepository.findByActiveTrue(pageable)
-                : stockItemRepository.findByActiveTrueAndCategoryIgnoreCase(category.trim(), pageable);
+    public Page<ProductResponse> catalog(AuthenticatedUser user, String category, Pageable pageable) {
+        requireCatalogRole(user);
+        String normalizedCategory = category == null || category.isBlank() ? null : category.trim();
+        Page<StockItem> items = switch (user.role()) {
+            case CUSTOMER -> stockItemRepository.findActiveCatalog(normalizedCategory, pageable);
+            case MANUFACTURER_ADMIN, MANUFACTURER_STAFF ->
+                    stockItemRepository.findActiveCatalogForOrganization(
+                            requiredCatalogOrganization(user), normalizedCategory, pageable);
+            case DISTRIBUTOR_ADMIN, DISTRIBUTOR_STAFF ->
+                    stockItemRepository.findActiveCatalogForDistributor(
+                            requiredCatalogOrganization(user), Organizationtype.MANUFACTURER,
+                            normalizedCategory, pageable);
+            default -> throw new ApiException(ErrorCode.ACCESS_DENIED);
+        };
         return items.map(ProductResponse::from);
     }
 
     @Transactional(readOnly = true)
-    public java.util.List<String> categories() {
-        return stockItemRepository.findActiveCategories();
+    public java.util.List<String> categories(AuthenticatedUser user) {
+        requireCatalogRole(user);
+        return switch (user.role()) {
+            case CUSTOMER -> stockItemRepository.findActiveCategories();
+            case MANUFACTURER_ADMIN, MANUFACTURER_STAFF ->
+                    stockItemRepository.findActiveCategoriesForOrganization(requiredCatalogOrganization(user));
+            case DISTRIBUTOR_ADMIN, DISTRIBUTOR_STAFF ->
+                    stockItemRepository.findActiveCategoriesForDistributor(
+                            requiredCatalogOrganization(user), Organizationtype.MANUFACTURER);
+            default -> throw new ApiException(ErrorCode.ACCESS_DENIED);
+        };
     }
 
     @Transactional(readOnly = true)
@@ -295,6 +314,19 @@ public class StockService {
             throw new ApiException(ErrorCode.ACCESS_DENIED);
         }
         return user.organizationId();
+    }
+
+    private static UUID requiredCatalogOrganization(AuthenticatedUser user) {
+        if (user == null || user.organizationId() == null) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        return user.organizationId();
+    }
+
+    private static void requireCatalogRole(AuthenticatedUser user) {
+        if (user == null || user.role() == null) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
     }
 
     private static void validateMovement(StockMovementType type, Integer delta) {

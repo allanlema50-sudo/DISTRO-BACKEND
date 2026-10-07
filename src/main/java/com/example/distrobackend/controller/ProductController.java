@@ -33,14 +33,15 @@ public class ProductController {
     @GetMapping
     @PreAuthorize("isAuthenticated()")
     public Page<ProductResponse> list(
+            @AuthenticationPrincipal AuthenticatedUser user,
             @RequestParam(required = false) String category, Pageable pageable) {
-        return stockService.catalog(category, pageable);
+        return stockService.catalog(user, category, pageable);
     }
 
     @GetMapping("/categories")
     @PreAuthorize("isAuthenticated()")
-    public List<String> categories() {
-        return stockService.categories();
+    public List<String> categories(@AuthenticationPrincipal AuthenticatedUser user) {
+        return stockService.categories(user);
     }
 
     @PostMapping

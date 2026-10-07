@@ -1,6 +1,7 @@
 package com.example.distrobackend.repository;
 
 import com.example.distrobackend.Domain.entity.StockItem;
+import com.example.distrobackend.Domain.enums.Organizationtype;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -16,14 +17,60 @@ import java.util.UUID;
 public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
     Page<StockItem> findByOrganization_Id(UUID organizationId, Pageable pageable);
 
-    Page<StockItem> findByActiveTrue(Pageable pageable);
+    @Query("""
+            select s from StockItem s
+            where s.active = true
+              and (:category is null or lower(s.category) = lower(:category))
+            """)
+    Page<StockItem> findActiveCatalog(@Param("category") String category, Pageable pageable);
 
-    Page<StockItem> findByActiveTrueAndCategoryIgnoreCase(String category, Pageable pageable);
+    @Query("""
+            select s from StockItem s
+            where s.active = true
+              and s.organization.id = :organizationId
+              and (:category is null or lower(s.category) = lower(:category))
+            """)
+    Page<StockItem> findActiveCatalogForOrganization(
+            @Param("organizationId") UUID organizationId,
+            @Param("category") String category,
+            Pageable pageable);
+
+    @Query("""
+            select s from StockItem s
+            where s.active = true
+              and (s.organization.type = :manufacturerType
+                   or s.organization.id = :organizationId)
+              and (:category is null or lower(s.category) = lower(:category))
+            """)
+    Page<StockItem> findActiveCatalogForDistributor(
+            @Param("organizationId") UUID organizationId,
+            @Param("manufacturerType") Organizationtype manufacturerType,
+            @Param("category") String category,
+            Pageable pageable);
 
     Page<StockItem> findByOrganization_IdAndActiveTrue(UUID organizationId, Pageable pageable);
 
     @Query("select distinct s.category from StockItem s where s.active = true and s.category is not null order by s.category")
     java.util.List<String> findActiveCategories();
+
+    @Query("""
+            select distinct s.category from StockItem s
+            where s.active = true and s.category is not null
+              and s.organization.id = :organizationId
+            order by s.category
+            """)
+    java.util.List<String> findActiveCategoriesForOrganization(@Param("organizationId") UUID organizationId);
+
+    @Query("""
+            select distinct s.category from StockItem s
+            where s.active = true and s.category is not null
+              and (s.organization.type = :manufacturerType
+                   or s.organization.id = :organizationId)
+            order by s.category
+            """)
+    java.util.List<String> findActiveCategoriesForDistributor(
+            @Param("organizationId") UUID organizationId,
+            @Param("manufacturerType") Organizationtype manufacturerType);
 
     Optional<StockItem> findByIdAndOrganization_Id(UUID id, UUID organizationId);
 

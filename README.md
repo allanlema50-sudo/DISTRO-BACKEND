@@ -289,10 +289,38 @@ HAVING COUNT(*) > 1;
 
 Do not edit an applied Flyway migration. The tenant-ownership migration V3 was
 corrected before this branch's first deployment; if an environment has already
-recorded a different V3 checksum, stop deployment and perform an approved
-Flyway checksum repair against the exact reviewed artifact after confirming the
-database schema. Never use `flyway repair` to conceal an unreviewed schema
-difference.
+recorded a different V3 checksum, stop deployment. Before any checksum repair,
+verify both the schema and the existing ownership data. At minimum, confirm
+that there are no unresolved organization references and no trip whose order,
+stock, and assigned organization disagree:
+
+```sql
+SELECT 'orders_without_organization' AS check_name, COUNT(*) AS violations
+FROM orders WHERE organization_id IS NULL
+UNION ALL
+SELECT 'stock_without_organization', COUNT(*)
+FROM stock_items WHERE organization_id IS NULL
+UNION ALL
+SELECT 'trips_without_organization', COUNT(*)
+FROM trips WHERE organization_id IS NULL;
+
+SELECT t.id AS trip_id
+FROM trips t
+LEFT JOIN orders o ON o.id = t.order_id
+LEFT JOIN stock_items s ON s.id = t.stock_item_id
+WHERE (o.organization_id IS NOT NULL AND s.organization_id IS NOT NULL
+       AND o.organization_id IS DISTINCT FROM s.organization_id)
+   OR (t.organization_id IS NOT NULL
+       AND ((o.organization_id IS NOT NULL
+             AND t.organization_id IS DISTINCT FROM o.organization_id)
+         OR (s.organization_id IS NOT NULL
+             AND t.organization_id IS DISTINCT FROM s.organization_id)));
+```
+
+Only after those checks return zero violations, and the reviewed schema is
+confirmed compatible, may an approved Flyway checksum repair be performed
+against the exact reviewed artifact. Never use `flyway repair` to conceal an
+unreviewed schema or ownership difference.
 
 ## Host-based development
 

@@ -26,7 +26,7 @@ public class TripAccessService {
         UserRole role = user.role();
         return switch (role) {
             case DRIVER -> tripRepository.existsByIdAndRider_Id(tripId, user.userId());
-            case CUSTOMER -> tripRepository.existsByIdAndOrder_Customer_Id(tripId, user.userId());
+            case CUSTOMER -> tripRepository.existsByIdAndCustomerAccess(tripId, user.userId());
             case MANUFACTURER_ADMIN, MANUFACTURER_STAFF,
                     DISTRIBUTOR_ADMIN, DISTRIBUTOR_STAFF -> user.organizationId() != null
                     && tripRepository.existsByIdAndOrganization_Id(tripId, user.organizationId());

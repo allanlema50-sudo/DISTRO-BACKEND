@@ -31,11 +31,15 @@ public enum ErrorCode {
     INSUFFICIENT_STOCK(HttpStatus.CONFLICT, "The requested stock movement exceeds available inventory"),
     INVALID_STOCK_ADJUSTMENT(HttpStatus.BAD_REQUEST, "The stock movement type and quantity delta are inconsistent"),
     INVALID_STATE_TRANSITION(HttpStatus.BAD_REQUEST, "The requested state transition is not allowed"),
+    DATABASE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "The data service is temporarily unavailable"),
+    PAYMENT_NOT_CONFIGURED(HttpStatus.SERVICE_UNAVAILABLE, "Payment service is not configured"),
 
     INVALID_OTP(HttpStatus.BAD_REQUEST, "The verification code is incorrect"),
     OTP_EXPIRED(HttpStatus.BAD_REQUEST, "The verification code has expired. Request a new one"),
     OTP_ATTEMPTS_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "Too many incorrect attempts. Request a new code"),
     OTP_COOLDOWN(HttpStatus.TOO_MANY_REQUESTS, "Please wait a moment before requesting another code"),
+
+    NOT_IMPLEMENTED(HttpStatus.NOT_IMPLEMENTED, "This feature is not yet implemented"),
 
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "Something went wrong. Please try again later");
 

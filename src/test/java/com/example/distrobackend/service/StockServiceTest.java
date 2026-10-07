@@ -30,6 +30,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -108,6 +109,28 @@ class StockServiceTest {
                 .hasMessage("The stock movement type and quantity delta are inconsistent");
 
         verify(stockItemRepository, never()).save(item);
+    }
+
+    @Test
+    void availabilityCannotBeReadAcrossOrganizations() {
+        UUID requestedOrganizationId = UUID.randomUUID();
+
+        assertThatThrownBy(() -> stockService.availability(user, requestedOrganizationId,
+                org.springframework.data.domain.PageRequest.of(0, 20)))
+                .isInstanceOf(ApiException.class)
+                .hasMessage("You do not have permission to access this resource");
+
+        verifyNoInteractions(organizationRepository, stockItemRepository);
+    }
+
+    @Test
+    void partialUpdateMustContainAtLeastOneField() {
+        assertThatThrownBy(() -> stockService.update(user, stockItemId,
+                new com.example.distrobackend.dto.UpdateStockItemRequest(null, null, null, null, null)))
+                .isInstanceOf(ApiException.class)
+                .hasMessage("At least one product field must be supplied");
+
+        verifyNoInteractions(stockItemRepository);
     }
 
     @Test

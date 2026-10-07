@@ -33,7 +33,8 @@ public class StockItem {
     @JoinColumn(name = "organization_id")
     private Organization organization;
 
-    @Column(name = "sku", nullable = false, unique = true, length = 50)
+    // SKU uniqueness is tenant-scoped in Flyway, not globally scoped by JPA.
+    @Column(name = "sku", nullable = false, length = 50)
     private String sku;
 
     @Column(name = "name", nullable = false, length = 150)

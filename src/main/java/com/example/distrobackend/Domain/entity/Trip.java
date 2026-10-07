@@ -3,7 +3,6 @@ package com.example.distrobackend.Domain.entity;
 import com.example.distrobackend.Domain.enums.TripStatus;
 import com.example.distrobackend.Domain.enums.TripType;
 import jakarta.persistence.*;
-
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -13,6 +12,8 @@ import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 @Entity
@@ -22,11 +23,14 @@ import java.util.UUID;
 @Getter
 @Setter
 @NoArgsConstructor
+public class Trip {
+    @Id
+    @GeneratedValue
+    @JdbcTypeCode(SqlTypes.UUID)
+    private UUID id;
 
-public class Trip { @Id
-@GeneratedValue
-@JdbcTypeCode(SqlTypes.UUID)
-private UUID id;
+    @Column(name = "trip_number", nullable = false, unique = true, length = 50)
+    private String tripNumber;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "trip_type", nullable = false)
@@ -34,14 +38,17 @@ private UUID id;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false)
-    private TripStatus status = TripStatus.UNASSIGNED;
+    private TripStatus status = TripStatus.SCHEDULED;
 
-    // populated for DELIVERY trips
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "rider_id")
+    private User rider;
+
+    /** Legacy direct delivery/restock links retained for tracking authorization. */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "order_id")
     private Order order;
 
-    // populated for RESTOCK trips
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "stock_item_id")
     private StockItem stockItem;
@@ -49,14 +56,16 @@ private UUID id;
     @Column(name = "restock_quantity")
     private Integer restockQuantity;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "rider_id")
-    private User rider;
-
     /** Organization responsible for the trip and its tracking feed. */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "organization_id")
     private Organization organization;
+
+    @Column(name = "origin_name")
+    private String originName;
+
+    @Column(name = "origin_address")
+    private String originAddress;
 
     @Column(name = "origin_lat")
     private Double originLat;
@@ -64,26 +73,15 @@ private UUID id;
     @Column(name = "origin_lng")
     private Double originLng;
 
-    @Column(name = "destination_lat")
-    private Double destinationLat;
+    @Column(name = "scheduled_start_label")
+    private String scheduledStartLabel;
 
-    @Column(name = "destination_lng")
-    private Double destinationLng;
+    @Column(name = "total_distance_km")
+    private Integer totalDistanceKm;
 
-    @Column(name = "estimated_eta")
-    private OffsetDateTime estimatedEta;
-
-    @Column(name = "assigned_at")
-    private OffsetDateTime assignedAt;
-
-    @Column(name = "started_at")
-    private OffsetDateTime startedAt;
-
-    @Column(name = "completed_at")
-    private OffsetDateTime completedAt;
-
-    @Column(name = "cancelled_at")
-    private OffsetDateTime cancelledAt;
+    @OneToMany(mappedBy = "trip", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("sequence ASC")
+    private List<TripStop> stops = new ArrayList<>();
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -92,4 +90,9 @@ private UUID id;
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
+
+    public void addStop(TripStop stop) {
+        stops.add(stop);
+        stop.setTrip(this);
+    }
 }

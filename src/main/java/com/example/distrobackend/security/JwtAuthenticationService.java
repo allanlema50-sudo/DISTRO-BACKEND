@@ -39,6 +39,9 @@ public class JwtAuthenticationService {
         UUID organizationId = optionalUuid(claims.get("orgId", String.class));
         Organizationtype organizationType = optionalEnum(
                 claims.get("orgType", String.class), Organizationtype.class);
+        if (claims.getExpiration() == null) {
+            throw new IllegalArgumentException("Required JWT claim is missing: exp");
+        }
 
         validateOrganizationClaims(role, organizationId, organizationType);
 

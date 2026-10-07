@@ -73,10 +73,14 @@ public class StockService {
     }
 
     @Transactional(readOnly = true)
-    public Page<StockItemResponse> availability(UUID organizationId, Pageable pageable) {
+    public Page<StockItemResponse> availability(AuthenticatedUser user, UUID organizationId, Pageable pageable) {
+        if (user == null || user.organizationId() == null
+                || !user.organizationId().equals(organizationId)) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
         Organization organization = organizationRepository.findById(organizationId)
                 .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.NOT_FOUND));
-        if (organization.getType() != com.example.distrobackend.Domain.enums.Organizationtype.DISTRIBUTOR) {
+        if (organization.getType() != Organizationtype.DISTRIBUTOR) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Availability is only supported for distributors");
         }
         return stockItemRepository.findByOrganization_IdAndActiveTrue(organizationId, pageable)
@@ -124,9 +128,17 @@ public class StockService {
 
     @Transactional
     public StockItemResponse update(AuthenticatedUser user, UUID id, UpdateStockItemRequest request) {
+        if (request.name() == null && request.category() == null && request.unitPrice() == null
+                && request.reorderThreshold() == null && request.active() == null) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "At least one product field must be supplied");
+        }
         StockItem item = findItem(user, id);
         if (request.name() != null) {
-            item.setName(request.name().trim());
+            String name = request.name().trim();
+            if (name.isEmpty()) {
+                throw new ApiException(ErrorCode.BAD_REQUEST, "Product name must not be blank");
+            }
+            item.setName(name);
         }
         if (request.category() != null) {
             item.setCategory(trimToNull(request.category()));
@@ -265,8 +277,12 @@ public class StockService {
 
     private Organization organization(AuthenticatedUser user) {
         UUID id = organizationId(user);
-        return organizationRepository.findById(id)
+        Organization organization = organizationRepository.findById(id)
                 .orElseThrow(() -> new ApiException(ErrorCode.ACCESS_DENIED));
+        if (user.organizationType() != null && organization.getType() != user.organizationType()) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        return organization;
     }
 
     private StockItem findItem(AuthenticatedUser user, UUID id) {

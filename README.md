@@ -159,10 +159,11 @@ Default Docker database configuration:
 |---|---|
 | Database | `distro_backend` |
 | Username | `distro` |
-| Host port | `5432` |
+| Host port | `POSTGRES_PORT` from `.env` (default `5432`) |
 | Container service | `db` |
 
-Connect to PostgreSQL from the repository root:
+Run the following from the repository root. Connect to PostgreSQL through the
+Compose service rather than the host port:
 
 ```bash
 docker compose exec db psql -U distro -d distro_backend
@@ -187,6 +188,10 @@ Do not modify a migration that has already been applied to a shared database.
 Hibernate uses `ddl-auto=validate`; it validates the schema but does not create
 or alter tables automatically.
 
+When switching between branches with different migration histories, use a
+separate local database or reset the disposable development volume. Do not use
+`flyway repair` to hide a checksum mismatch in a shared or production database.
+
 ## Host-based development
 
 This workflow runs PostgreSQL in Docker and the Spring Boot API through Maven.
@@ -207,6 +212,9 @@ $env:DATABASE_USERNAME='distro'
 $env:DATABASE_PASSWORD='<value of POSTGRES_PASSWORD in .env>'
 $env:JWT_SECRET='<generated JWT secret>'
 $env:CORS_ALLOWED_ORIGINS='http://localhost:4200'
+$env:API_SERVER_PORT='8080'
+# Optional local/demo data only; omit in production.
+$env:SPRING_PROFILES_ACTIVE='local'
 ```
 
 macOS/Linux:
@@ -217,6 +225,9 @@ export DATABASE_USERNAME='distro'
 export DATABASE_PASSWORD='<value of POSTGRES_PASSWORD in .env>'
 export JWT_SECRET='<generated JWT secret>'
 export CORS_ALLOWED_ORIGINS='http://localhost:4200'
+export API_SERVER_PORT='8080'
+# Optional local/demo data only; omit in production.
+export SPRING_PROFILES_ACTIVE='local'
 ```
 
 Start the API from the repository root:
@@ -224,6 +235,27 @@ Start the API from the repository root:
 ```bash
 mvn spring-boot:run
 ```
+
+### M-Pesa configuration
+
+Payment initiation is disabled until the Daraja credentials are supplied.
+Configure these variables in the local, deployment, or secret-management
+environment; do not commit them:
+
+```text
+MPESA_CONSUMER_KEY
+MPESA_CONSUMER_SECRET
+MPESA_SHORTCODE
+MPESA_PASSKEY
+MPESA_CALLBACK_URL
+MPESA_CALLBACK_SECRET
+MPESA_AUTH_URL
+MPESA_STK_PUSH_URL
+```
+
+The callback endpoint requires `X-Mpesa-Callback-Secret` to match
+`MPESA_CALLBACK_SECRET`. Configure that header at the payment gateway or
+integration layer before enabling live callbacks.
 
 ## Build and test
 

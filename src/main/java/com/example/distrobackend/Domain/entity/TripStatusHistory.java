@@ -10,12 +10,12 @@ import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
+
 @Entity
 @Table(name = "trip_status_history")
 @Getter
 @Setter
 @NoArgsConstructor
-
 public class TripStatusHistory {
     @Id
     @GeneratedValue

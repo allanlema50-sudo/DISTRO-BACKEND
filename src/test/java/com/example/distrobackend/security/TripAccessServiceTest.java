@@ -41,10 +41,10 @@ class TripAccessServiceTest {
         UUID tripId = UUID.randomUUID();
         UUID customerId = UUID.randomUUID();
         AuthenticatedUser user = user(customerId, UserRole.CUSTOMER, null);
-        when(tripRepository.existsByIdAndOrder_Customer_Id(tripId, customerId)).thenReturn(false);
+        when(tripRepository.existsByIdAndCustomerAccess(tripId, customerId)).thenReturn(false);
 
         assertThat(tripAccessService.canSubscribe(tripId, user)).isFalse();
-        verify(tripRepository).existsByIdAndOrder_Customer_Id(tripId, customerId);
+        verify(tripRepository).existsByIdAndCustomerAccess(tripId, customerId);
     }
 
     @Test

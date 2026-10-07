@@ -42,6 +42,7 @@ public class StockController {
     }
 
     @GetMapping("/restock-request")
+    @PreAuthorize("hasAnyRole('MANUFACTURER_ADMIN','MANUFACTURER_STAFF','DISTRIBUTOR_ADMIN','DISTRIBUTOR_STAFF') and @tenantAccess.hasOrganization(authentication)")
     public Page<RestockRequestResponse> restockRequests(
             @AuthenticationPrincipal AuthenticatedUser user, Pageable pageable) {
         return stockService.restockRequests(user, pageable);
@@ -64,10 +65,11 @@ public class StockController {
     }
 
     @GetMapping("/{organizationId}/availability")
-    @PreAuthorize("isAuthenticated()")
+    @PreAuthorize("hasAnyRole('DISTRIBUTOR_ADMIN','DISTRIBUTOR_STAFF') and @tenantAccess.hasOrganization(authentication)")
     public Page<StockItemResponse> availability(
+            @AuthenticationPrincipal AuthenticatedUser user,
             @PathVariable UUID organizationId, Pageable pageable) {
-        return stockService.availability(organizationId, pageable);
+        return stockService.availability(user, organizationId, pageable);
     }
 
     @GetMapping("/items")

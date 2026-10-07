@@ -53,6 +53,10 @@ MPESA_CALLBACK_URL=https://<public-host>/api/v1/payments/mpesa/callback
 MPESA_VERIFY_CALLBACK=true
 ```
 
+`MPESA_VERIFY_CALLBACK` must remain `true`. The API fails closed and rejects
+callbacks when provider-side verification is disabled; it never confirms an
+order from callback fields alone.
+
 Generate a JWT secret with PowerShell:
 
 ```powershell

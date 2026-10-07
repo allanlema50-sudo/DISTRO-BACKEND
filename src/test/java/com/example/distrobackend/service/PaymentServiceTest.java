@@ -19,12 +19,17 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.ResponseEntity;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.RestTemplate;
 
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.Duration;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -52,7 +57,7 @@ class PaymentServiceTest {
         ReflectionTestUtils.setField(paymentService, "shortcode", "174379");
         ReflectionTestUtils.setField(paymentService, "passkey", "passkey");
         ReflectionTestUtils.setField(paymentService, "callbackUrl", "https://example/callback");
-        ReflectionTestUtils.setField(paymentService, "verifyCallback", false);
+        ReflectionTestUtils.setField(paymentService, "verifyCallback", true);
         customerId = UUID.randomUUID();
         orderId = UUID.randomUUID();
     }
@@ -78,12 +83,22 @@ class PaymentServiceTest {
         payment.setAmount(new BigDecimal("100"));
         payment.setStatus(PaymentStatus.PENDING);
         payment.setMpesaCheckoutRequestId("ws_CO_123");
-        when(paymentRepository.findByMpesaCheckoutRequestId("ws_CO_123")).thenReturn(Optional.of(payment));
+        payment.setMpesaMerchantRequestId("merchant_123");
+        when(paymentRepository.findByMpesaCheckoutRequestIdForUpdate("ws_CO_123"))
+                .thenReturn(Optional.of(payment));
+
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.GET), any(HttpEntity.class),
+                org.mockito.ArgumentMatchers.<ParameterizedTypeReference<Map<String, Object>>>any()))
+                .thenReturn(ResponseEntity.ok(Map.of("access_token", "token")));
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class),
+                org.mockito.ArgumentMatchers.<ParameterizedTypeReference<Map<String, Object>>>any()))
+                .thenReturn(ResponseEntity.ok(Map.of("ResultCode", "0")));
 
         MpesaCallbackRequest callback = new MpesaCallbackRequest();
         MpesaCallbackRequest.Body body = new MpesaCallbackRequest.Body();
         MpesaCallbackRequest.StkCallback stk = new MpesaCallbackRequest.StkCallback();
         stk.setCheckoutRequestId("ws_CO_123");
+        stk.setMerchantRequestId("merchant_123");
         stk.setResultCode(0);
         body.setStkCallback(stk);
         callback.setBody(body);
@@ -91,6 +106,35 @@ class PaymentServiceTest {
         assertThatThrownBy(() -> paymentService.processMpesaCallback(callback))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("receipt");
+        verify(paymentRepository, never()).save(any());
+    }
+
+    @Test
+    void callbackVerificationCannotBeDisabled() {
+        ReflectionTestUtils.setField(paymentService, "verifyCallback", false);
+        Order order = order();
+        Payment payment = new Payment();
+        payment.setOrder(order);
+        payment.setAmount(new BigDecimal("100"));
+        payment.setStatus(PaymentStatus.PENDING);
+        payment.setMpesaCheckoutRequestId("ws_CO_123");
+        payment.setMpesaMerchantRequestId("merchant_123");
+        when(paymentRepository.findByMpesaCheckoutRequestIdForUpdate("ws_CO_123"))
+                .thenReturn(Optional.of(payment));
+
+        MpesaCallbackRequest callback = new MpesaCallbackRequest();
+        MpesaCallbackRequest.Body body = new MpesaCallbackRequest.Body();
+        MpesaCallbackRequest.StkCallback stk = new MpesaCallbackRequest.StkCallback();
+        stk.setCheckoutRequestId("ws_CO_123");
+        stk.setMerchantRequestId("merchant_123");
+        stk.setResultCode(0);
+        body.setStkCallback(stk);
+        callback.setBody(body);
+
+        assertThatThrownBy(() -> paymentService.processMpesaCallback(callback))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("verification must remain enabled");
+        verifyNoInteractions(restTemplate);
         verify(paymentRepository, never()).save(any());
     }
 

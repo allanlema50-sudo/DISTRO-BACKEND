@@ -131,9 +131,12 @@ public class PaymentService {
         try {
             MpesaStkPushResponse mpesaResponse = sendStkPush(order, phone, integerAmount);
             if (mpesaResponse == null || !"0".equals(mpesaResponse.getResponseCode())
-                    || mpesaResponse.getCheckoutRequestId() == null) {
+                    || isBlank(mpesaResponse.getCheckoutRequestId())
+                    || mpesaResponse.getCheckoutRequestId().length() > 100
+                    || isBlank(mpesaResponse.getMerchantRequestId())
+                    || mpesaResponse.getMerchantRequestId().length() > 100) {
                 throw new ApiException(ErrorCode.INTERNAL_ERROR,
-                        "Daraja did not accept the payment request");
+                        "Daraja returned an incomplete payment response");
             }
             payment.setMpesaCheckoutRequestId(mpesaResponse.getCheckoutRequestId());
             payment.setMpesaMerchantRequestId(mpesaResponse.getMerchantRequestId());
@@ -163,37 +166,41 @@ public class PaymentService {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Incomplete M-Pesa callback payload");
         }
 
-        Payment payment = paymentRepository.findByMpesaCheckoutRequestId(callback.getCheckoutRequestId())
+        Payment payment = paymentRepository.findByMpesaCheckoutRequestIdForUpdate(callback.getCheckoutRequestId())
                 .orElseThrow(() -> new ApiException(ErrorCode.PAYMENT_NOT_FOUND, "Payment not found"));
-        if (payment.getMpesaMerchantRequestId() != null && callback.getMerchantRequestId() != null
-                && !payment.getMpesaMerchantRequestId().equals(callback.getMerchantRequestId())) {
+        if (isBlank(payment.getMpesaMerchantRequestId())
+                || !payment.getMpesaMerchantRequestId().equals(callback.getMerchantRequestId())) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "M-Pesa callback correlation failed");
         }
 
-        payment.setCallbackRawPayload(rawPayload(callback));
         if (payment.getStatus() == PaymentStatus.CONFIRMED
                 || payment.getStatus() == PaymentStatus.RECONCILED
                 || payment.getStatus() == PaymentStatus.REVERSED) {
             return; // Idempotent replay handling.
         }
 
+        ensureCallbackVerificationEnabled();
+        verifyCallbackResult(callback.getCheckoutRequestId(), callback.getResultCode());
+        payment.setCallbackRawPayload(rawPayload(callback));
+
         if (callback.getResultCode() == 0) {
-            if (verifyCallback) {
-                verifyCallbackResult(callback.getCheckoutRequestId(), callback.getResultCode());
-            }
             String receipt = callbackValue(callback, "MpesaReceiptNumber");
             String callbackAmount = callbackValue(callback, "Amount");
             if (receipt == null || receipt.isBlank()) {
                 throw new ApiException(ErrorCode.BAD_REQUEST, "Successful callback has no receipt");
             }
-            if (callbackAmount != null) {
-                try {
-                    if (new BigDecimal(callbackAmount).compareTo(payment.getAmount()) != 0) {
-                        throw new ApiException(ErrorCode.BAD_REQUEST, "M-Pesa amount does not match the order");
-                    }
-                } catch (NumberFormatException ex) {
-                    throw new ApiException(ErrorCode.BAD_REQUEST, "Invalid M-Pesa amount");
+            if (!receipt.matches("[A-Za-z0-9]{1,50}")) {
+                throw new ApiException(ErrorCode.BAD_REQUEST, "Invalid M-Pesa receipt");
+            }
+            if (callbackAmount == null || callbackAmount.isBlank()) {
+                throw new ApiException(ErrorCode.BAD_REQUEST, "Successful callback has no amount");
+            }
+            try {
+                if (new BigDecimal(callbackAmount).compareTo(payment.getAmount()) != 0) {
+                    throw new ApiException(ErrorCode.BAD_REQUEST, "M-Pesa amount does not match the order");
                 }
+            } catch (NumberFormatException ex) {
+                throw new ApiException(ErrorCode.BAD_REQUEST, "Invalid M-Pesa amount");
             }
             if (payment.getOrder().getStatus() != OrderStatus.PENDING) {
                 throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
@@ -205,9 +212,6 @@ public class PaymentService {
             paymentRepository.save(payment);
             orderService.confirmPaidOrder(payment.getOrder().getId());
         } else {
-            if (verifyCallback) {
-                verifyCallbackResult(callback.getCheckoutRequestId(), callback.getResultCode());
-            }
             payment.setStatus(PaymentStatus.FAILED);
             payment.setFailureReason(callback.getResultDesc());
             paymentRepository.save(payment);
@@ -288,6 +292,13 @@ public class PaymentService {
         if (!response.getStatusCode().is2xxSuccessful() || resultCode == null
                 || !String.valueOf(expectedResultCode).equals(String.valueOf(resultCode))) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "M-Pesa callback could not be reconciled");
+        }
+    }
+
+    private void ensureCallbackVerificationEnabled() {
+        if (!verifyCallback) {
+            throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED,
+                    "M-Pesa callback verification must remain enabled");
         }
     }
 

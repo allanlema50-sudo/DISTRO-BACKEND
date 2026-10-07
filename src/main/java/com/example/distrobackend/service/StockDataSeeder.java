@@ -5,20 +5,28 @@ import com.example.distrobackend.repository.StockItemRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Value;
 
 import java.math.BigDecimal;
 import java.util.UUID;
 
 @Slf4j
 @Component
+@Profile("demo")
 @RequiredArgsConstructor
 public class StockDataSeeder implements CommandLineRunner {
 
     private final StockItemRepository stockItemRepository;
+    @Value("${app.seed.organization-id:}")
+    private String organizationId;
 
     @Override
     public void run(String... args) {
+        if (organizationId == null || organizationId.isBlank()) {
+            throw new IllegalStateException("app.seed.organization-id is required for the demo profile");
+        }
         log.info("Checking if mock StockItems exist...");
 
         seedStockItem("4a11ac56-e282-4797-901c-19cfd347c5ce", "SKU-BAM-NGU", "Bamburi Nguvu", "cat-cement", new BigDecimal("750.00"));
@@ -57,9 +65,9 @@ public class StockDataSeeder implements CommandLineRunner {
         UUID id = UUID.fromString(idStr);
         if (!stockItemRepository.existsById(id)) {
             jdbcTemplate.update(
-                "INSERT INTO stock_items (id, sku, name, category, unit_price, quantity_on_hand, reorder_threshold, is_active, created_at, updated_at) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-                id, sku, name, category, price, 100, 10, true
+                "INSERT INTO stock_items (id, organization_id, sku, name, category, unit_price, quantity_on_hand, reorder_threshold, is_active, version, created_at, updated_at) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                id, UUID.fromString(organizationId), sku, name, category, price, 100, 10, true
             );
         }
     }

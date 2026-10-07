@@ -15,7 +15,11 @@ import java.util.UUID;
 
 
 @Entity
-@Table(name = "stock_items")
+@Table(name = "stock_items", indexes = {
+        @Index(name = "idx_stock_items_organization", columnList = "organization_id")
+}, uniqueConstraints = {
+        @UniqueConstraint(name = "uk_stock_items_org_sku", columnNames = {"organization_id", "sku"})
+})
 @Getter
 @Setter
 @NoArgsConstructor
@@ -27,7 +31,11 @@ public class StockItem {
 @JdbcTypeCode(SqlTypes.UUID)
 private UUID id;
 
-    @Column(name = "sku", nullable = false, unique = true, length = 50)
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "organization_id", nullable = false)
+    private Organization organization;
+
+    @Column(name = "sku", nullable = false, length = 50)
     private String sku;
 
     @Column(name = "name", nullable = false, length = 150)
@@ -47,6 +55,10 @@ private UUID id;
 
     @Column(name = "is_active", nullable = false)
     private boolean active = true;
+
+    @Version
+    @Column(name = "version", nullable = false)
+    private long version;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

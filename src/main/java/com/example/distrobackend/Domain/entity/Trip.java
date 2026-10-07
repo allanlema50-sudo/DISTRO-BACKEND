@@ -17,7 +17,9 @@ import java.util.List;
 import java.util.UUID;
 
 @Entity
-@Table(name = "trips")
+@Table(name = "trips", indexes = {
+        @Index(name = "idx_trips_organization_status", columnList = "organization_id,status")
+})
 @Getter
 @Setter
 @NoArgsConstructor
@@ -41,6 +43,10 @@ public class Trip {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "rider_id")
     private User rider;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "organization_id", nullable = false)
+    private Organization organization;
 
     @Column(name = "origin_name")
     private String originName;
@@ -71,6 +77,10 @@ public class Trip {
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
+
+    @Version
+    @Column(name = "version", nullable = false)
+    private long version;
     
     public void addStop(TripStop stop) {
         stops.add(stop);

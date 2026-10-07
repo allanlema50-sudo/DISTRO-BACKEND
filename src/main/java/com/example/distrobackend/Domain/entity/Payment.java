@@ -18,7 +18,9 @@ import java.time.OffsetDateTime;
 import java.util.Map;
 import java.util.UUID;
 @Entity
-@Table(name = "payments")
+@Table(name = "payments", uniqueConstraints = {
+        @UniqueConstraint(name = "uk_payments_order_id", columnNames = "order_id")
+})
 @Getter
 @Setter
 @NoArgsConstructor
@@ -59,6 +61,9 @@ public class Payment {
     @Column(name = "phone_number", length = 20)
     private String phoneNumber;
 
+    @Column(name = "idempotency_key", unique = true, length = 100)
+    private String idempotencyKey;
+
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "callback_raw_payload", columnDefinition = "jsonb")
     private Map<String, Object> callbackRawPayload;
@@ -89,4 +94,8 @@ public class Payment {
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
+
+    @Version
+    @Column(name = "version", nullable = false)
+    private long version;
 }

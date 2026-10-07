@@ -1,4 +1,12 @@
 package com.example.distrobackend.repository;
 
-public interface StockMovementRepository {
+import com.example.distrobackend.Domain.entity.StockMovement;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+import java.util.List;
+import java.util.UUID;
+
+public interface StockMovementRepository extends JpaRepository<StockMovement, UUID> {
+    List<StockMovement> findByStockItemIdAndStockItemOrganizationIdOrderByCreatedAtDesc(
+            UUID stockItemId, UUID organizationId);
 }

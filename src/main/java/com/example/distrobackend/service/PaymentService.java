@@ -19,6 +19,7 @@ import com.example.distrobackend.security.AuthenticatedUser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -63,7 +64,7 @@ public class PaymentService {
     @Value("${mpesa.verify-callback:true}")
     private boolean verifyCallback;
 
-    @Transactional
+    @Transactional(noRollbackFor = ApiException.class)
     public PaymentInitiateResponse initiatePayment(AuthenticatedUser actor, PaymentInitiateRequest request) {
         Order order = orderRepository.findByIdWithOwnership(request.orderId())
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
@@ -178,7 +179,7 @@ public class PaymentService {
 
         if (callback.getResultCode() == 0) {
             if (verifyCallback) {
-                verifySuccessfulCallback(callback.getCheckoutRequestId());
+                verifyCallbackResult(callback.getCheckoutRequestId(), callback.getResultCode());
             }
             String receipt = callbackValue(callback, "MpesaReceiptNumber");
             String callbackAmount = callbackValue(callback, "Amount");
@@ -204,6 +205,9 @@ public class PaymentService {
             paymentRepository.save(payment);
             orderService.confirmPaidOrder(payment.getOrder().getId());
         } else {
+            if (verifyCallback) {
+                verifyCallbackResult(callback.getCheckoutRequestId(), callback.getResultCode());
+            }
             payment.setStatus(PaymentStatus.FAILED);
             payment.setFailureReason(callback.getResultDesc());
             paymentRepository.save(payment);
@@ -252,9 +256,10 @@ public class PaymentService {
                 (consumerKey + ":" + consumerSecret).getBytes(StandardCharsets.UTF_8));
         HttpHeaders headers = new HttpHeaders();
         headers.set("Authorization", "Basic " + basic);
-        ResponseEntity<Map> response = darajaRestTemplate.exchange(
+        ResponseEntity<Map<String, Object>> response = darajaRestTemplate.exchange(
                 baseUrl + "/oauth/v1/generate?grant_type=client_credentials",
-                HttpMethod.GET, new HttpEntity<>(headers), Map.class);
+                HttpMethod.GET, new HttpEntity<>(headers),
+                new ParameterizedTypeReference<>() {});
         if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null
                 || response.getBody().get("access_token") == null) {
             throw new ApiException(ErrorCode.INTERNAL_ERROR, "Daraja authentication failed");
@@ -262,8 +267,7 @@ public class PaymentService {
         return String.valueOf(response.getBody().get("access_token"));
     }
 
-    @SuppressWarnings("unchecked")
-    private void verifySuccessfulCallback(String checkoutRequestId) {
+    private void verifyCallbackResult(String checkoutRequestId, int expectedResultCode) {
         ensureConfigured();
         String timestamp = DARAJA_TIMESTAMP.format(java.time.Instant.now());
         String password = Base64.getEncoder().encodeToString(
@@ -276,12 +280,13 @@ public class PaymentService {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(getDarajaAccessToken());
         headers.setContentType(MediaType.APPLICATION_JSON);
-        ResponseEntity<Map> response = darajaRestTemplate.postForEntity(
+        ResponseEntity<Map<String, Object>> response = darajaRestTemplate.exchange(
                 baseUrl + "/mpesa/stkpushquery/v1/query",
-                new HttpEntity<>(request, headers), Map.class);
+                HttpMethod.POST, new HttpEntity<>(request, headers),
+                new ParameterizedTypeReference<>() {});
         Object resultCode = response.getBody() == null ? null : response.getBody().get("ResultCode");
         if (!response.getStatusCode().is2xxSuccessful() || resultCode == null
-                || !"0".equals(String.valueOf(resultCode))) {
+                || !String.valueOf(expectedResultCode).equals(String.valueOf(resultCode))) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "M-Pesa callback could not be reconciled");
         }
     }

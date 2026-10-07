@@ -32,7 +32,7 @@ public class TripController {
             throw new ApiException(ErrorCode.ACCESS_DENIED, "Role not authorized to create trips");
         }
 
-        return tripService.createTrip(request);
+        return tripService.createTrip(me, request);
     }
 
     @GetMapping("/active")
@@ -62,20 +62,34 @@ public class TripController {
             throw new ApiException(ErrorCode.ACCESS_DENIED, "Only drivers can confirm deliveries");
         }
 
-        return tripService.confirmStopDelivery(tripId, stopId, request);
+        return tripService.confirmStopDelivery(me, tripId, stopId, request);
+    }
+
+    @PostMapping("/{tripId}/location")
+    public LocationPingResponse recordLocation(
+            @AuthenticationPrincipal AuthenticatedUser me,
+            @PathVariable UUID tripId,
+            @Valid @RequestBody LocationPingRequest request) {
+        return tripService.recordLocation(me, tripId, request);
+    }
+
+    @GetMapping("/{tripId}/location")
+    public List<LocationPingResponse> locationHistory(
+            @AuthenticationPrincipal AuthenticatedUser me,
+            @PathVariable UUID tripId) {
+        return tripService.locationHistory(me, tripId);
     }
 
     @PatchMapping("/{tripId}/assign")
     public TripResponse assignRider(
             @AuthenticationPrincipal AuthenticatedUser me,
             @PathVariable UUID tripId,
-            @RequestBody java.util.Map<String, String> request) {
+            @Valid @RequestBody TripAssignRequest request) {
 
         if (me.role() == UserRole.CUSTOMER || me.role() == UserRole.DRIVER) {
             throw new ApiException(ErrorCode.ACCESS_DENIED, "Role not authorized to assign drivers");
         }
 
-        UUID riderId = UUID.fromString(request.get("riderId"));
-        return tripService.assignRider(tripId, riderId);
+        return tripService.assignRider(me, tripId, request.riderId());
     }
 }

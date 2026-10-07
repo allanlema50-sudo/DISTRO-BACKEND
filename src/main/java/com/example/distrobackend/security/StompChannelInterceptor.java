@@ -12,6 +12,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Component;
 
 import java.util.regex.Pattern;
+import java.util.UUID;
 
 @Component
 @RequiredArgsConstructor
@@ -21,6 +22,7 @@ public class StompChannelInterceptor implements ChannelInterceptor {
             "^/topic/trips/[0-9a-fA-F-]{36}/location$");
 
     private final JwtAuthenticationService authenticationService;
+    private final TripAccessService tripAccessService;
 
     @Override
     public Message<?> preSend(Message<?> message, MessageChannel channel) {
@@ -40,12 +42,41 @@ public class StompChannelInterceptor implements ChannelInterceptor {
             }
         }
 
+        if (accessor.getCommand() != StompCommand.CONNECT) {
+            if (!(accessor.getUser() instanceof Authentication authentication)
+                    || !(authentication.getPrincipal() instanceof AuthenticatedUser user)
+                    || user.isExpired()) {
+                throw new MessagingException("WebSocket authentication expired or missing");
+            }
+        }
+
+        if (accessor.getCommand() == StompCommand.SEND) {
+            String destination = accessor.getDestination();
+            if (destination == null || !destination.startsWith("/app/")) {
+                throw new MessagingException("Client messages must use an application destination");
+            }
+        }
+
         if (accessor.getCommand() == StompCommand.SUBSCRIBE) {
             String destination = accessor.getDestination();
             if (accessor.getUser() == null
                     || destination == null
                     || !TRIP_TOPIC.matcher(destination).matches()) {
                 throw new MessagingException("Unauthorized or invalid tracking subscription");
+            }
+
+            UUID tripId;
+            try {
+                tripId = UUID.fromString(destination.substring("/topic/trips/".length(),
+                        destination.length() - "/location".length()));
+            } catch (IllegalArgumentException ex) {
+                throw new MessagingException("Invalid trip tracking destination", ex);
+            }
+
+            Authentication authentication = (Authentication) accessor.getUser();
+            AuthenticatedUser user = (AuthenticatedUser) authentication.getPrincipal();
+            if (!tripAccessService.canAccess(user, tripId)) {
+                throw new MessagingException("Trip tracking access denied");
             }
         }
 

@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.UUID;
+import java.time.Instant;
 
 /**
  * Converts a validated JWT into the same authenticated principal for both HTTP and STOMP.
@@ -43,7 +44,8 @@ public class JwtAuthenticationService {
         validateOrganizationClaims(role, organizationId, organizationType);
 
         AuthenticatedUser principal = new AuthenticatedUser(
-                userId, role, organizationId, organizationType);
+                userId, role, organizationId, organizationType,
+                claims.getExpiration().toInstant());
 
         return new UsernamePasswordAuthenticationToken(
                 principal,

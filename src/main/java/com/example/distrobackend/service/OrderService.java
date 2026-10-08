@@ -189,13 +189,13 @@ public class OrderService {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Cannot transition from " + order.getStatus() + " to " + update.status());
         }
 
-        if (update.status() == OrderStatus.CANCELLED) {
+        if (update.status() == OrderStatus.CANCELLED || update.status() == OrderStatus.FAILED) {
             Payment payment = paymentRepository.findByOrderIdForUpdate(orderId).orElse(null);
             if (payment != null && payment.getStatus() == PaymentStatus.PENDING
                     && payment.getMpesaCheckoutRequestId() != null
                     && !payment.getMpesaCheckoutRequestId().isBlank()) {
                 throw new ApiException(ErrorCode.CONFLICT,
-                        "This order has an in-flight M-Pesa payment and cannot be cancelled until it is reconciled");
+                        "This order has an in-flight M-Pesa payment and cannot be cancelled or failed until it is reconciled");
             }
         }
 

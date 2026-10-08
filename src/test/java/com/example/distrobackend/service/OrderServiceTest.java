@@ -247,6 +247,30 @@ class OrderServiceTest {
         verify(stockItemRepository, never()).findByIdForUpdate(any());
     }
 
+    @Test
+    void orderWithAcceptedStkRequestCannotBeManuallyFailedBeforeCallback() {
+        Order order = new Order();
+        order.setId(UUID.randomUUID());
+        order.setStatus(com.example.distrobackend.Domain.enums.OrderStatus.PENDING);
+        Payment payment = new Payment();
+        payment.setStatus(com.example.distrobackend.Domain.enums.PaymentStatus.PENDING);
+        payment.setMpesaCheckoutRequestId("ws_CO_in_flight");
+
+        when(orderRepository.findByIdWithItemsForUpdate(order.getId())).thenReturn(Optional.of(order));
+        when(paymentRepository.findByOrderIdForUpdate(order.getId())).thenReturn(Optional.of(payment));
+
+        assertThatThrownBy(() -> orderService.updateOrderStatus(
+                order.getId(), distributorId,
+                new com.example.distrobackend.dto.OrderStatusUpdate(
+                        com.example.distrobackend.Domain.enums.OrderStatus.FAILED,
+                        "Warehouse rejected order")))
+                .isInstanceOf(com.example.distrobackend.Exception.ApiException.class)
+                .hasMessageContaining("cannot be cancelled or failed until it is reconciled");
+
+        verify(userRepository, never()).findById(any());
+        verify(stockItemRepository, never()).findByIdForUpdate(any());
+    }
+
     private OrderRequest request(int quantity) {
         return new OrderRequest(
                 distributorId,

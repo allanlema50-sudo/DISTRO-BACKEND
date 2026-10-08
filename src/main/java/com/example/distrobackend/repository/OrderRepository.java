@@ -35,13 +35,33 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
 
     long countByCustomer_IdAndStatus(UUID customerId, OrderStatus status);
 
-    @Query("SELECT o.id FROM Order o "
+    @Query("SELECT o.id AS id, o.reservationExpiresAt AS reservationExpiresAt FROM Order o "
             + "WHERE o.status = :status AND o.reservationExpiresAt IS NOT NULL "
-            + "AND o.reservationExpiresAt <= :now ORDER BY o.reservationExpiresAt")
-    List<UUID> findExpiredReservationOrderIds(
+            + "AND o.reservationExpiresAt <= :now "
+            + "ORDER BY o.reservationExpiresAt, o.id")
+    List<ExpiredReservationCandidate> findExpiredReservationCandidates(
             @Param("status") OrderStatus status,
             @Param("now") OffsetDateTime now,
             Pageable pageable);
+
+    @Query("SELECT o.id AS id, o.reservationExpiresAt AS reservationExpiresAt FROM Order o "
+            + "WHERE o.status = :status AND o.reservationExpiresAt IS NOT NULL "
+            + "AND o.reservationExpiresAt <= :now "
+            + "AND (o.reservationExpiresAt > :afterExpiresAt "
+            + "OR (o.reservationExpiresAt = :afterExpiresAt AND o.id > :afterId)) "
+            + "ORDER BY o.reservationExpiresAt, o.id")
+    List<ExpiredReservationCandidate> findExpiredReservationCandidatesAfter(
+            @Param("status") OrderStatus status,
+            @Param("now") OffsetDateTime now,
+            @Param("afterExpiresAt") OffsetDateTime afterExpiresAt,
+            @Param("afterId") UUID afterId,
+            Pageable pageable);
+
+    interface ExpiredReservationCandidate {
+        UUID getId();
+
+        OffsetDateTime getReservationExpiresAt();
+    }
 
     @Query(value = "SELECT o FROM Order o JOIN FETCH o.customer c JOIN FETCH o.organization org WHERE o.customer.id = :customerId",
            countQuery = "SELECT COUNT(o) FROM Order o WHERE o.customer.id = :customerId")

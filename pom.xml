@@ -163,6 +163,8 @@
                 <artifactId>maven-compiler-plugin</artifactId>
                 <configuration>
                     <proc>full</proc>
+                    <!-- This project is intentionally non-modular; keep test and main classes on the classpath. -->
+                    <useModulePath>false</useModulePath>
                 </configuration>
                 <executions>
                     <execution>

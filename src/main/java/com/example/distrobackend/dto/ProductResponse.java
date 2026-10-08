@@ -12,7 +12,11 @@ public record ProductResponse(
         String name,
         String category,
         BigDecimal unitPrice,
-        boolean active
+        boolean active,
+        UUID sourceStockItemId,
+        UUID manufacturerOrganizationId,
+        UUID warehouseId,
+        boolean inStock
 ) {
     public static ProductResponse from(StockItem item) {
         return new ProductResponse(
@@ -22,7 +26,12 @@ public record ProductResponse(
                 item.getName(),
                 item.getCategory(),
                 item.getUnitPrice(),
-                item.isActive());
+                item.isActive(),
+                item.getSourceStockItem() == null ? null : item.getSourceStockItem().getId(),
+                item.getSourceStockItem() == null || item.getSourceStockItem().getOrganization() == null
+                        ? null : item.getSourceStockItem().getOrganization().getId(),
+                item.getWarehouse() == null ? null : item.getWarehouse().getId(),
+                item.getAvailableQuantity() > 0);
     }
 
     public static ProductResponse from(StockItemResponse item) {
@@ -33,6 +42,10 @@ public record ProductResponse(
                 item.name(),
                 item.category(),
                 item.unitPrice(),
-                item.active());
+                item.active(),
+                item.sourceStockItemId(),
+                item.manufacturerOrganizationId(),
+                item.warehouseId(),
+                item.availableQuantity() > 0);
     }
 }

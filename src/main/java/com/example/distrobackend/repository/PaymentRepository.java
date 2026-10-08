@@ -18,9 +18,13 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID> {
     @Query("select p from Payment p join fetch p.order o join fetch o.customer c join fetch o.organization org where o.id = :orderId")
     Optional<Payment> findByOrderIdForUpdate(@Param("orderId") UUID orderId);
 
+    @Query("select p.id, o.id from Payment p join p.order o "
+            + "where p.mpesaCheckoutRequestId = :checkoutRequestId")
+    Optional<Object[]> findPaymentAndOrderIdsByMpesaCheckoutRequestId(
+            @Param("checkoutRequestId") String checkoutRequestId);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select p from Payment p join fetch p.order o join fetch o.customer c join fetch o.organization org "
-            + "where p.mpesaCheckoutRequestId = :checkoutRequestId")
-    Optional<Payment> findByMpesaCheckoutRequestIdForUpdate(
-            @Param("checkoutRequestId") String checkoutRequestId);
+            + "where p.id = :paymentId")
+    Optional<Payment> findByIdForUpdate(@Param("paymentId") UUID paymentId);
 }

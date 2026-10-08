@@ -16,6 +16,7 @@ import com.example.distrobackend.dto.mpesa.MpesaStkPushResponse;
 import com.example.distrobackend.repository.OrderRepository;
 import com.example.distrobackend.repository.PaymentRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -33,9 +34,12 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Base64;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -66,10 +70,32 @@ public class PaymentService {
     private String callbackSecret;
     @Value("${mpesa.verify-callback:true}")
     private boolean verifyCallback;
+    @Value("${mpesa.final-failure-result-codes:1032}")
+    private String finalFailureResultCodes;
+    private Set<Integer> terminalFailureResultCodeSet = Set.of();
+
+    @PostConstruct
+    void initializeFinalFailureResultCodes() {
+        if (isBlank(finalFailureResultCodes)) {
+            terminalFailureResultCodeSet = Set.of();
+            return;
+        }
+
+        try {
+            terminalFailureResultCodeSet = Arrays.stream(finalFailureResultCodes.split(",", -1))
+                    .map(String::trim)
+                    .filter(token -> !token.isEmpty())
+                    .map(this::parseFinalFailureResultCode)
+                    .collect(Collectors.toUnmodifiableSet());
+        } catch (NumberFormatException ex) {
+            throw new IllegalStateException(
+                    "MPESA_FINAL_FAILURE_RESULT_CODES contains an invalid result code", ex);
+        }
+    }
 
     @Transactional(noRollbackFor = ApiException.class)
     public PaymentInitiateResponse initiatePayment(AuthenticatedUser actor, PaymentInitiateRequest request) {
-        Order order = orderRepository.findByIdWithOwnership(request.orderId())
+        Order order = orderRepository.findByIdWithOwnershipForUpdate(request.orderId())
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
         requireOrderAccess(actor, order);
         if (order.getStatus() != OrderStatus.PENDING) {
@@ -147,11 +173,11 @@ public class PaymentService {
             paymentRepository.save(payment);
             return response(payment, mpesaResponse.getCustomerMessage());
         } catch (ApiException ex) {
-            markFailed(payment, ex.getMessage());
+            markInitiationFailed(payment, ex.getMessage());
             throw ex;
         } catch (RuntimeException ex) {
             log.error("Daraja STK push failed for order {}", order.getId(), ex);
-            markFailed(payment, "Payment provider unavailable");
+            markInitiationFailed(payment, "Payment provider unavailable");
             throw new ApiException(ErrorCode.INTERNAL_ERROR, "Payment provider unavailable");
         }
     }
@@ -170,8 +196,18 @@ public class PaymentService {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Incomplete M-Pesa callback payload");
         }
 
-        Payment payment = paymentRepository.findByMpesaCheckoutRequestIdForUpdate(callback.getCheckoutRequestId())
+        Object[] paymentAndOrderIds = paymentRepository
+                .findPaymentAndOrderIdsByMpesaCheckoutRequestId(callback.getCheckoutRequestId())
                 .orElseThrow(() -> new ApiException(ErrorCode.PAYMENT_NOT_FOUND, "Payment not found"));
+        UUID paymentId = (UUID) paymentAndOrderIds[0];
+        UUID orderId = (UUID) paymentAndOrderIds[1];
+        Order lockedOrder = orderRepository.findByIdWithOwnershipForUpdate(orderId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
+        Payment payment = paymentRepository.findByIdForUpdate(paymentId)
+                .orElseThrow(() -> new ApiException(ErrorCode.PAYMENT_NOT_FOUND, "Payment not found"));
+        if (!callback.getCheckoutRequestId().equals(payment.getMpesaCheckoutRequestId())) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "M-Pesa callback correlation failed");
+        }
         if (isBlank(payment.getMpesaMerchantRequestId())
                 || !payment.getMpesaMerchantRequestId().equals(callback.getMerchantRequestId())) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "M-Pesa callback correlation failed");
@@ -206,7 +242,7 @@ public class PaymentService {
             } catch (NumberFormatException ex) {
                 throw new ApiException(ErrorCode.BAD_REQUEST, "Invalid M-Pesa amount");
             }
-            if (payment.getOrder().getStatus() != OrderStatus.PENDING) {
+            if (lockedOrder.getStatus() != OrderStatus.PENDING) {
                 throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
                         "Payment cannot confirm an order in its current state");
             }
@@ -219,7 +255,67 @@ public class PaymentService {
             payment.setStatus(PaymentStatus.FAILED);
             payment.setFailureReason(callback.getResultDesc());
             paymentRepository.save(payment);
+            orderService.failPaymentAndReleaseOrder(
+                    payment.getOrder().getId(),
+                    callback.getResultDesc() == null ? "M-Pesa payment failed" : callback.getResultDesc());
         }
+    }
+
+    /**
+     * Reconciles an expired order whose accepted STK request has not produced
+     * a callback yet. The order lock is acquired before the payment lock, just
+     * like initiation and callback processing.
+     *
+     * @return true when an in-flight payment was handled; false when normal
+     *         reservation expiry should proceed
+     */
+    @Transactional
+    public boolean reconcileExpiredPayment(UUID orderId) {
+        Order order = orderRepository.findByIdWithOwnershipForUpdate(orderId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
+        if (order.getStatus() != OrderStatus.PENDING) {
+            return false;
+        }
+
+        Payment payment = paymentRepository.findByOrderIdForUpdate(orderId).orElse(null);
+        if (payment == null || payment.getStatus() != PaymentStatus.PENDING
+                || isBlank(payment.getMpesaCheckoutRequestId())) {
+            return false;
+        }
+
+        MpesaQueryResult result = queryMpesaPayment(payment.getMpesaCheckoutRequestId());
+        if (result.resultCode() == 0) {
+            OffsetDateTime reconciledAt = OffsetDateTime.now();
+            payment.setStatus(PaymentStatus.RECONCILED);
+            payment.setConfirmedAt(reconciledAt);
+            payment.setFailureReason(null);
+            payment.setReconciledAt(reconciledAt);
+            payment.setReconciledNote("Reconciled by Daraja STK query after callback deadline");
+            payment.setCallbackRawPayload(Map.of(
+                    "source", "DARAJA_STK_QUERY",
+                    "checkoutRequestId", payment.getMpesaCheckoutRequestId(),
+                    "resultCode", result.resultCode(),
+                    "resultDescription", result.resultDescription() == null
+                            ? "" : result.resultDescription()));
+            paymentRepository.save(payment);
+            orderService.confirmPaidOrder(orderId);
+        } else if (isConfiguredFinalFailureCode(result.resultCode())) {
+            String reason = isBlank(result.resultDescription())
+                    ? "M-Pesa payment did not complete"
+                    : result.resultDescription();
+            payment.setStatus(PaymentStatus.FAILED);
+            payment.setFailureReason(reason);
+            paymentRepository.save(payment);
+            orderService.failPaymentAndReleaseOrder(orderId, reason);
+        } else {
+            // A nonzero query result is not automatically a final payment
+            // outcome. Keep the payment and reservation pending until a
+            // verified callback or an explicitly configured terminal code is
+            // received.
+            throw new ApiException(ErrorCode.INTERNAL_ERROR,
+                    "M-Pesa payment status is not final; reconciliation will be retried");
+        }
+        return true;
     }
 
     @Transactional(readOnly = true)
@@ -276,6 +372,13 @@ public class PaymentService {
     }
 
     private void verifyCallbackResult(String checkoutRequestId, int expectedResultCode) {
+        MpesaQueryResult result = queryMpesaPayment(checkoutRequestId);
+        if (result.resultCode() != expectedResultCode) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "M-Pesa callback could not be reconciled");
+        }
+    }
+
+    private MpesaQueryResult queryMpesaPayment(String checkoutRequestId) {
         ensureConfigured();
         String timestamp = DARAJA_TIMESTAMP.format(java.time.Instant.now());
         String password = Base64.getEncoder().encodeToString(
@@ -292,11 +395,31 @@ public class PaymentService {
                 baseUrl + "/mpesa/stkpushquery/v1/query",
                 HttpMethod.POST, new HttpEntity<>(request, headers),
                 new ParameterizedTypeReference<>() {});
-        Object resultCode = response.getBody() == null ? null : response.getBody().get("ResultCode");
-        if (!response.getStatusCode().is2xxSuccessful() || resultCode == null
-                || !String.valueOf(expectedResultCode).equals(String.valueOf(resultCode))) {
-            throw new ApiException(ErrorCode.BAD_REQUEST, "M-Pesa callback could not be reconciled");
+        Map<String, Object> body = response.getBody();
+        Object resultCode = body == null ? null : body.get("ResultCode");
+        if (!response.getStatusCode().is2xxSuccessful() || resultCode == null) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "M-Pesa payment status could not be reconciled");
         }
+        try {
+            return new MpesaQueryResult(Integer.parseInt(String.valueOf(resultCode)),
+                    body.get("ResultDesc") == null ? null : String.valueOf(body.get("ResultDesc")));
+        } catch (NumberFormatException ex) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "M-Pesa returned an invalid payment status");
+        }
+    }
+
+    private record MpesaQueryResult(int resultCode, String resultDescription) {}
+
+    private boolean isConfiguredFinalFailureCode(int resultCode) {
+        return terminalFailureResultCodeSet.contains(resultCode);
+    }
+
+    private int parseFinalFailureResultCode(String token) {
+        int resultCode = Integer.parseInt(token);
+        if (resultCode < 0) {
+            throw new NumberFormatException("Result codes cannot be negative");
+        }
+        return resultCode;
     }
 
     private void ensureCallbackVerificationEnabled() {
@@ -339,7 +462,12 @@ public class PaymentService {
         }
     }
 
-    private void markFailed(Payment payment, String reason) {
+    /**
+     * An initiation failure is not a final payment outcome. Keep the order
+     * pending so the customer can retry; the reservation expiry job remains
+     * responsible for abandoned orders.
+     */
+    private void markInitiationFailed(Payment payment, String reason) {
         payment.setStatus(PaymentStatus.FAILED);
         payment.setFailureReason(reason);
         paymentRepository.save(payment);

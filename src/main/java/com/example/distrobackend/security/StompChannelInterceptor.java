@@ -21,6 +21,8 @@ public class StompChannelInterceptor implements ChannelInterceptor {
 
     private static final Pattern TRIP_TOPIC = Pattern.compile(
             "^/topic/trips/([0-9a-fA-F-]{36})/location$");
+    private static final Pattern ORGANIZATION_NOTIFICATION_TOPIC = Pattern.compile(
+            "^/topic/organizations/([0-9a-fA-F-]{36})/notifications$");
 
     private final JwtAuthenticationService authenticationService;
     private final TripAccessService tripAccessService;
@@ -63,20 +65,30 @@ public class StompChannelInterceptor implements ChannelInterceptor {
         if (accessor.getCommand() == StompCommand.SUBSCRIBE) {
             String destination = accessor.getDestination();
             Matcher matcher = destination == null ? null : TRIP_TOPIC.matcher(destination);
+            Matcher organizationMatcher = destination == null
+                    ? null : ORGANIZATION_NOTIFICATION_TOPIC.matcher(destination);
             if (!(accessor.getUser() instanceof Authentication currentAuthentication)
                     || !(currentAuthentication.getPrincipal() instanceof AuthenticatedUser user)
-                    || matcher == null
-                    || !matcher.matches()) {
+                    || (matcher == null || !matcher.matches())
+                    && (organizationMatcher == null || !organizationMatcher.matches())) {
                 throw new MessagingException("Unauthorized or invalid tracking subscription");
             }
 
             try {
-                UUID tripId = UUID.fromString(matcher.group(1));
-                if (!tripAccessService.canSubscribe(tripId, user)) {
-                    throw new MessagingException("Unauthorized or invalid tracking subscription");
+                if (matcher != null && matcher.matches()) {
+                    UUID tripId = UUID.fromString(matcher.group(1));
+                    if (!tripAccessService.canSubscribe(tripId, user)) {
+                        throw new MessagingException("Unauthorized or invalid tracking subscription");
+                    }
+                } else {
+                    UUID organizationId = UUID.fromString(organizationMatcher.group(1));
+                    if (user.organizationId() == null || user.role().organizationtype() == null
+                            || !organizationId.equals(user.organizationId())) {
+                        throw new MessagingException("Unauthorized or invalid tracking subscription");
+                    }
                 }
-            } catch (IllegalArgumentException ex) {
-                throw new MessagingException("Unauthorized or invalid tracking subscription", ex);
+            } catch (IllegalArgumentException | NullPointerException ex) {
+                throw new MessagingException("Unauthorized or invalid tracking subscription");
             }
         }
 

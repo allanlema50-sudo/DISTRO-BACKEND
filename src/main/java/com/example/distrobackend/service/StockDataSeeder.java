@@ -1,6 +1,5 @@
 package com.example.distrobackend.service;
 
-import com.example.distrobackend.Domain.entity.StockItem;
 import com.example.distrobackend.repository.StockItemRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -9,6 +8,7 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
 @Slf4j
@@ -17,15 +17,19 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class StockDataSeeder implements CommandLineRunner {
 
-    private static final UUID DEMO_ORGANIZATION_ID =
+    private static final UUID DEMO_MANUFACTURER_ID =
+            UUID.fromString("cc1b2e2f-8b6e-4d3f-ae4a-2f7c9d5b3a81");
+    private static final UUID DEMO_DISTRIBUTOR_ID =
             UUID.fromString("b2f9f0e1-7a5d-4c2f-9d3a-1e6b8c4a2f70");
+    private static final UUID DEMO_WAREHOUSE_ID =
+            UUID.fromString("d3a2c1b0-9f8e-4d7c-b6a5-3e2f1a0b9c82");
 
     private final StockItemRepository stockItemRepository;
 
     @Override
     public void run(String... args) {
         log.info("Checking if mock StockItems exist...");
-        ensureDemoOrganization();
+        ensureDemoOrganizationsAndWarehouse();
 
         seedStockItem("4a11ac56-e282-4797-901c-19cfd347c5ce", "SKU-BAM-NGU", "Bamburi Nguvu", "cat-cement", new BigDecimal("750.00"));
         seedStockItem("58cd0c9e-cbca-402b-ad6d-87d19b4d124a", "SKU-BAM-TEM", "Bamburi Tembo", "cat-cement", new BigDecimal("770.00"));
@@ -54,27 +58,66 @@ public class StockDataSeeder implements CommandLineRunner {
         seedStockItem("ac6f907d-a0a9-450b-845a-493482eb4539", "SKU-GEI-175G", "Geisha Bath Soap", "cat-bath", new BigDecimal("95.00"));
         seedStockItem("c0fafba2-f149-48bc-8f72-bde35d698934", "SKU-VIM-500G", "Vim Dishwashing Paste", "cat-dish", new BigDecimal("160.00"));
 
-        log.info("Mock StockItems initialized!");
+        log.info("Mock manufacturer products and distributor offers initialized!");
     }
 
     private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
-    private void ensureDemoOrganization() {
+    private void ensureDemoOrganizationsAndWarehouse() {
         jdbcTemplate.update(
                 "INSERT INTO organizations (id, name, type, created_at, updated_at) "
                         + "VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
                         + "ON CONFLICT (id) DO NOTHING",
-                DEMO_ORGANIZATION_ID, "Local Demo Distributor", "DISTRIBUTOR");
+                DEMO_MANUFACTURER_ID, "Local Demo Manufacturer", "MANUFACTURER");
+        jdbcTemplate.update(
+                "INSERT INTO organizations (id, name, type, created_at, updated_at) "
+                        + "VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+                        + "ON CONFLICT (id) DO NOTHING",
+                DEMO_DISTRIBUTOR_ID, "Local Demo Distributor", "DISTRIBUTOR");
+        jdbcTemplate.update(
+                "INSERT INTO warehouses (id, organization_id, code, name, active, version, created_at, updated_at) "
+                        + "VALUES (?, ?, ?, ?, TRUE, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+                        + "ON CONFLICT (id) DO NOTHING",
+                DEMO_WAREHOUSE_ID, DEMO_DISTRIBUTOR_ID, "MAIN", "Main Demo Warehouse");
     }
 
     private void seedStockItem(String idStr, String sku, String name, String category, BigDecimal price) {
         UUID id = UUID.fromString(idStr);
-        if (!stockItemRepository.existsById(id)) {
+        boolean created = !stockItemRepository.existsById(id);
+        if (created) {
             jdbcTemplate.update(
                 "INSERT INTO stock_items (id, organization_id, sku, name, category, unit_price, quantity_on_hand, reorder_threshold, is_active, created_at, updated_at) " +
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-                id, DEMO_ORGANIZATION_ID, sku, name, category, price, 100, 10, true
+                id, DEMO_MANUFACTURER_ID, sku, name, category, price, 100, 10, true
             );
         }
+        if (created || sourceBelongsToManufacturer(id)) {
+            seedDistributorOffer(id.toString(), sku, name, category, price);
+        }
+    }
+
+    private boolean sourceBelongsToManufacturer(UUID sourceId) {
+        Long count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM stock_items si "
+                        + "JOIN organizations o ON o.id = si.organization_id "
+                        + "WHERE si.id = ? AND o.type = 'MANUFACTURER'",
+                Long.class, sourceId);
+        return count != null && count == 1L;
+    }
+
+    private void seedDistributorOffer(String sourceId, String sourceSku, String name,
+                                      String category, BigDecimal price) {
+        UUID sourceIdValue = UUID.fromString(sourceId);
+        UUID offerId = UUID.nameUUIDFromBytes((sourceId + ":demo-offer").getBytes(StandardCharsets.UTF_8));
+        String offerSku = ("DEMO-" + sourceSku);
+        if (offerSku.length() > 50) {
+            offerSku = offerSku.substring(0, 50);
+        }
+        jdbcTemplate.update(
+                "INSERT INTO stock_items (id, organization_id, source_stock_item_id, warehouse_id, sku, name, category, unit_price, quantity_on_hand, reserved_quantity, reorder_threshold, is_active, created_at, updated_at) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) " +
+                        "ON CONFLICT (id) DO NOTHING",
+                offerId, DEMO_DISTRIBUTOR_ID, sourceIdValue, DEMO_WAREHOUSE_ID,
+                offerSku, name, category, price, 100, 0, 10, true);
     }
 }

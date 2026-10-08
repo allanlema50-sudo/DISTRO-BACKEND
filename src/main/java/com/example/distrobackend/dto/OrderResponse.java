@@ -20,6 +20,7 @@ public record OrderResponse(
         BigDecimal totalAmount,
         String cancellationReason,
         OffsetDateTime placedAt,
+        OffsetDateTime reservationExpiresAt,
         OffsetDateTime confirmedAt,
         OffsetDateTime deliveredAt,
         OffsetDateTime cancelledAt,

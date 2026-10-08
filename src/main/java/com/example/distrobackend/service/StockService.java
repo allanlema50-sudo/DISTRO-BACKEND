@@ -4,6 +4,7 @@ import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.RestockRequest;
 import com.example.distrobackend.Domain.entity.StockItem;
 import com.example.distrobackend.Domain.entity.StockMovement;
+import com.example.distrobackend.Domain.entity.Warehouse;
 import com.example.distrobackend.Domain.enums.StockMovementType;
 import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.RestockRequestStatus;
@@ -20,11 +21,14 @@ import com.example.distrobackend.dto.CreateRestockRequest;
 import com.example.distrobackend.dto.RestockRequestResponse;
 import com.example.distrobackend.dto.UpdateRestockRequestStatus;
 import com.example.distrobackend.dto.UpdateStockItemRequest;
+import com.example.distrobackend.dto.CreateDistributorOfferRequest;
+import com.example.distrobackend.dto.UpdateDistributorOfferRequest;
 import com.example.distrobackend.repository.OrganizationRepository;
 import com.example.distrobackend.repository.StockItemRepository;
 import com.example.distrobackend.repository.StockMovementRepository;
 import com.example.distrobackend.repository.RestockRequestRepository;
 import com.example.distrobackend.repository.UserRepository;
+import com.example.distrobackend.repository.WarehouseRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -44,6 +48,7 @@ public class StockService {
     private final OrganizationRepository organizationRepository;
     private final UserRepository userRepository;
     private final RestockRequestRepository restockRequestRepository;
+    private final WarehouseRepository warehouseRepository;
 
     @Transactional(readOnly = true)
     public Page<StockItemResponse> list(AuthenticatedUser user, Pageable pageable) {
@@ -113,16 +118,19 @@ public class StockService {
 
     @Transactional
     public StockItemResponse create(AuthenticatedUser user, CreateStockItemRequest request) {
-        UUID organizationId = organizationId(user);
+        Organization manufacturer = organization(user);
+        if (manufacturer.getType() != Organizationtype.MANUFACTURER) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED,
+                    "Only manufacturers can create source products");
+        }
+        UUID organizationId = manufacturer.getId();
         String sku = normalizeSku(request.sku());
         if (stockItemRepository.existsByOrganization_IdAndSkuIgnoreCase(organizationId, sku)) {
             throw new ApiException(ErrorCode.DUPLICATE_SKU);
         }
 
-        Organization organization = organizationRepository.findById(organizationId)
-                .orElseThrow(() -> new ApiException(ErrorCode.ACCESS_DENIED));
         StockItem item = new StockItem();
-        item.setOrganization(organization);
+        item.setOrganization(manufacturer);
         item.setSku(sku);
         item.setName(request.name().trim());
         item.setCategory(trimToNull(request.category()));
@@ -143,6 +151,71 @@ public class StockService {
             stockMovementRepository.save(openingMovement);
         }
         return StockItemResponse.from(item);
+    }
+
+    @Transactional
+    public StockItemResponse createDistributorOffer(
+            AuthenticatedUser user, CreateDistributorOfferRequest request) {
+        Organization distributor = organization(user);
+        if (distributor.getType() != Organizationtype.DISTRIBUTOR) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED,
+                    "Only distributors can create offers");
+        }
+
+        StockItem source = stockItemRepository.findById(request.sourceStockItemId())
+                .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.STOCK_ITEM_NOT_FOUND));
+        if (source.getOrganization() == null
+                || source.getOrganization().getType() != Organizationtype.MANUFACTURER
+                || source.getSourceStockItem() != null
+                || !source.isActive()) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    "The source stock item must be an active manufacturer product");
+        }
+
+        Warehouse warehouse = warehouseRepository
+                .findByIdAndOrganization_IdAndActiveTrue(request.warehouseId(), distributor.getId())
+                .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.NOT_FOUND,
+                        "Active warehouse not found for this distributor"));
+
+        String sku = normalizeSku(request.sku());
+        if (stockItemRepository.existsByOrganization_IdAndSkuIgnoreCase(distributor.getId(), sku)) {
+            throw new ApiException(ErrorCode.DUPLICATE_SKU);
+        }
+
+        StockItem offer = new StockItem();
+        offer.setOrganization(distributor);
+        offer.setSourceStockItem(source);
+        offer.setWarehouse(warehouse);
+        offer.setSku(sku);
+        offer.setName(source.getName());
+        offer.setCategory(source.getCategory());
+        offer.setUnitPrice(request.sellingPrice());
+        offer.setQuantityOnHand(0);
+        offer.setReservedQuantity(0);
+        offer.setReorderThreshold(request.reorderThreshold());
+        offer.setActive(true);
+        return StockItemResponse.from(stockItemRepository.saveAndFlush(offer));
+    }
+
+    @Transactional
+    public StockItemResponse updateDistributorOffer(
+            AuthenticatedUser user, UUID id, UpdateDistributorOfferRequest request) {
+        if (request.isEmpty()) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "At least one offer field must be supplied");
+        }
+        Organization distributor = organization(user);
+        if (distributor.getType() != Organizationtype.DISTRIBUTOR) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        StockItem offer = stockItemRepository.findByIdAndOrganizationIdForUpdate(id, distributor.getId())
+                .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.STOCK_ITEM_NOT_FOUND));
+        if (offer.getSourceStockItem() == null || offer.getWarehouse() == null) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "The selected stock item is not a distributor offer");
+        }
+        if (request.sellingPrice() != null) offer.setUnitPrice(request.sellingPrice());
+        if (request.reorderThreshold() != null) offer.setReorderThreshold(request.reorderThreshold());
+        if (request.active() != null) offer.setActive(request.active());
+        return StockItemResponse.from(stockItemRepository.save(offer));
     }
 
     @Transactional
@@ -188,7 +261,7 @@ public class StockService {
         } catch (ArithmeticException ex) {
             throw new ApiException(ErrorCode.INVALID_STOCK_ADJUSTMENT);
         }
-        if (newQuantity < 0) {
+        if (newQuantity < item.getReservedQuantity()) {
             throw new InsufficientStockException();
         }
 
@@ -227,10 +300,19 @@ public class StockService {
         StockItem stockItem = stockItemRepository.findByIdAndOrganization_Id(
                         request.stockItemId(), distributor.getId())
                 .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.STOCK_ITEM_NOT_FOUND));
+        if (stockItem.getSourceStockItem() == null
+                || stockItem.getSourceStockItem().getOrganization() == null) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    "Restock requests must target a distributor offer linked to a manufacturer product");
+        }
         Organization manufacturer = organizationRepository.findById(request.manufacturerOrganizationId())
                 .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.NOT_FOUND));
         if (manufacturer.getType() != Organizationtype.MANUFACTURER) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Restock requests must target a manufacturer");
+        }
+        if (!manufacturer.getId().equals(stockItem.getSourceStockItem().getOrganization().getId())) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED,
+                    "The requested manufacturer does not own the source product");
         }
 
         RestockRequest restockRequest = new RestockRequest();

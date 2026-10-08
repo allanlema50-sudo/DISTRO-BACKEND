@@ -51,11 +51,18 @@ MPESA_SHORTCODE=<daraja-shortcode>
 MPESA_PASSKEY=<daraja-passkey>
 MPESA_CALLBACK_URL=https://<public-host>/api/v1/payments/mpesa/callback
 MPESA_VERIFY_CALLBACK=true
+MPESA_FINAL_FAILURE_RESULT_CODES=1032
 ```
 
 `MPESA_VERIFY_CALLBACK` must remain `true`. The API fails closed and rejects
 callbacks when provider-side verification is disabled; it never confirms an
 order from callback fields alone.
+
+`MPESA_FINAL_FAILURE_RESULT_CODES` is a comma-separated allowlist of Daraja
+STK-query result codes that are confirmed terminal failures for the deployed
+integration. It defaults to `1032`. Nonzero result codes outside this allowlist
+remain pending and are retried; do not add a code until its finality has been
+verified with the provider.
 
 Generate a JWT secret with PowerShell:
 
@@ -182,6 +189,52 @@ Purchase-order settlement records are currently exposed as a read-only ledger.
 They are initialized as `PENDING`; provider reconciliation, refunds, and
 reversals remain part of the later platform payment-admin phase.
 
+## Product, offer, warehouse, and order flow
+
+The product catalog uses a hybrid model:
+
+- A manufacturer creates the source product under its organization.
+- A distributor creates an offer for that source product and assigns it to one
+  of the distributor's active warehouses. The offer owns its selling price and
+  physical quantity.
+- Customers browse active distributor offers and place orders against offer
+  IDs. Manufacturer source-product IDs are not orderable by customers.
+- Distributor staff can read the durable notification feed for rejected orders
+  and may also subscribe to `/topic/organizations/{organizationId}/notifications`.
+
+Typical API flow:
+
+```text
+POST /api/v1/warehouses
+GET  /api/v1/warehouses
+POST /api/stock/offers
+PATCH /api/stock/offers/{offerId}
+GET  /api/products
+POST /api/v1/orders
+GET  /api/v1/notifications
+```
+
+Order creation locks each requested offer in a deterministic order and reserves
+available quantity atomically. A request that exceeds available quantity is
+rejected with `INSUFFICIENT_STOCK` and a durable `ORDER_STOCK_REJECTED`
+notification is created for the distributor.
+
+Unpaid reservations are bounded by `ORDER_RESERVATION_TTL` (15 minutes by
+default), then a scheduled cleanup marks the order `FAILED` and releases the
+reserved quantity. Each customer is also limited by
+`ORDER_MAX_OPEN_PENDING_PER_CUSTOMER` (5 by default). A temporary STK-push
+initiation failure leaves the order pending and the payment retryable; only a
+verified final failed callback, cancellation, or reservation expiry releases
+the reservation. If an accepted STK request has no callback by the deadline,
+the expiry job queries Daraja first: a successful result reconciles the payment
+and confirms the order, while a definitive failed result releases the
+reservation. Provider connectivity errors leave the deadline eligible for a
+later reconciliation scan. Verified payment commits the reserved quantity.
+Customers may cancel only their own unpaid `PENDING` orders. Once an order is
+`IN_TRANSIT`, cancellation and automatic stock restoration require a separate
+warehouse/driver return workflow; a status update cannot mark dispatched stock
+as returned.
+
 All controller and security failures use the common `ApiError` response shape:
 
 ```json
@@ -240,11 +293,54 @@ src/main/resources/db/migration/
 ```
 
 The initial migration is `V1__initial_schema.sql`. Add subsequent schema
-changes as new versioned migrations, for example:
+changes as new versioned migrations. The warehouse/offer/reservation model was
+introduced by:
 
 ```text
-V8__add_warehouse_table.sql
+V8__distributor_offers_warehouses_and_reservations.sql
 ```
+
+Legacy inventory conversion is split into two migrations:
+
+```text
+V9__prepare_legacy_inventory_conversion.sql
+V10__convert_legacy_inventory_and_bound_reservations.sql
+```
+
+`V9` creates `legacy_stock_source_mappings` and automatically records only
+unambiguous, case-insensitive SKU matches between an existing distributor row
+and one manufacturer source product. `V10` creates a tenant-owned `LEGACY`
+warehouse where necessary, converts the rows into source-linked offers, and
+adds the unpaid-order reservation deadline. Existing orders with an accepted
+M-Pesa STK request receive a bounded, already-due deadline so the expiry job
+reconciles them with Daraja before releasing their reservation. It fails closed if any legacy distributor row has no
+mapping or has an invalid cross-tenant mapping; it does not guess a
+manufacturer owner.
+
+For a populated deployment, review the unresolved rows after V9 and before
+allowing V10 to complete:
+
+```sql
+SELECT si.id, si.organization_id, si.sku, si.name
+FROM stock_items si
+JOIN organizations o ON o.id = si.organization_id
+WHERE o.type = 'DISTRIBUTOR'
+  AND si.source_stock_item_id IS NULL;
+```
+
+For each unresolved row, identify the correct manufacturer source product and
+insert an explicit mapping while the API is stopped. Then restart the API so
+Flyway can complete V10:
+
+```sql
+INSERT INTO legacy_stock_source_mappings
+    (legacy_stock_item_id, manufacturer_source_stock_item_id)
+VALUES ('<legacy-distributor-stock-uuid>', '<manufacturer-source-uuid>');
+```
+
+The mapping must point to an active manufacturer source row, not another
+distributor offer. Back up the database and verify the resulting warehouse,
+source, and organization ownership before proceeding.
 
 Do not modify a migration that has already been applied to a shared database.
 Hibernate uses `ddl-auto=validate`; it validates the schema but does not create
@@ -255,7 +351,10 @@ separate local database or reset the disposable development volume. Do not use
 `flyway repair` to hide a checksum mismatch in a shared or production database.
 
 For an existing database created before Flyway history was introduced, first
-verify that its schema matches `V1__initial_schema.sql`, then set
+verify that its schema matches `V1__initial_schema.sql` and review existing
+ownership data. Confirm that every order, stock item, and trip has the intended
+organization owner and that no trip references records belonging to conflicting
+organizations. Only after those checks should you set
 `FLYWAY_BASELINE_ON_MIGRATE=true` and `FLYWAY_BASELINE_VERSION=1` in `.env`.
 The baseline only records the existing schema as V1; it does not perform the
 tenant ownership migration. On the first startup, V2 expands the schema and
@@ -380,6 +479,7 @@ MPESA_SHORTCODE
 MPESA_PASSKEY
 MPESA_CALLBACK_URL
 MPESA_CALLBACK_SECRET
+MPESA_FINAL_FAILURE_RESULT_CODES
 MPESA_AUTH_URL
 MPESA_STK_PUSH_URL
 ```

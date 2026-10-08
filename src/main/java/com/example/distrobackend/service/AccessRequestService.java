@@ -51,6 +51,11 @@ public class AccessRequestService {
 
     @Transactional
     public MessageResponse submit(AccessRequestCreateRequest req) {
+        if (req.organizationType() != Organizationtype.MANUFACTURER
+                && req.organizationType() != Organizationtype.DISTRIBUTOR) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    "Access requests must be for a manufacturer or distributor organization");
+        }
         String personalEmail = normalizeEmail(req.personalEmail());
         String phone = PhoneNormalizer.normalize(req.phoneNumber());
         if (users.existsByEmail(personalEmail) || requests.existsByPersonalEmail(personalEmail)) {
@@ -58,6 +63,12 @@ public class AccessRequestService {
         }
         if (users.existsByPhoneNumber(phone) || requests.existsByPhoneNumber(phone)) {
             throw new ApiException(ErrorCode.CONFLICT, "An account or request already uses this phone number");
+        }
+
+        List<User> adminRecipients = findPlatformAdminRecipients();
+        if (adminRecipients.isEmpty()) {
+            throw new ApiException(ErrorCode.INTERNAL_ERROR,
+                    "No Platform Admin or Super Admin account is configured to receive access requests");
         }
 
         AccessRequest request = new AccessRequest();
@@ -72,7 +83,7 @@ public class AccessRequestService {
         String body = saved.getFullName() + " requested " + saved.getOrganizationType()
                 + " access for " + saved.getOrganizationName() + ". Review request " + saved.getId() + ".";
         emailSender.notifySuperAdmins("New LogiFlow access request", body);
-        notifyPlatformAdmins(saved, body);
+        notifyPlatformAdmins(saved, body, adminRecipients);
         return new MessageResponse("Request submitted. A super administrator will review it.");
     }
 
@@ -174,9 +185,13 @@ public class AccessRequestService {
         return new MessageResponse("Account activated. You can now sign in.");
     }
 
-    private void notifyPlatformAdmins(AccessRequest request, String body) {
+    private List<User> findPlatformAdminRecipients() {
         List<User> admins = users.findByRole(UserRole.PLATFORM_ADMIN);
         admins.addAll(users.findByRole(UserRole.SUPER_ADMIN));
+        return admins;
+    }
+
+    private void notifyPlatformAdmins(AccessRequest request, String body, List<User> admins) {
         for (User admin : admins) {
             notificationService.create(admin, "New Organization Access Request", body,
                     NotificationType.ACCESS_REQUEST, NotificationPriority.HIGH,

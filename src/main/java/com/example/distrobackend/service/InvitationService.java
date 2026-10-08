@@ -1,6 +1,5 @@
 package com.example.distrobackend.service;
 
-import com.example.distrobackend.Domain.entity.AccessRequest;
 import com.example.distrobackend.Domain.entity.Invitation;
 import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.User;
@@ -155,43 +154,6 @@ public class InvitationService {
                 request.fullName(),
                 request.email(),
                 request.phoneNumber(),
-                invitedRole,
-                organization
-        );
-    }
-
-    // ================================================================
-    // CREATE INVITATION FROM ACCESS REQUEST
-    // ================================================================
-
-    @Transactional
-    public InvitationResponse createInvitationFromAccessRequest(
-            AccessRequest request,
-            Organization organization
-    ) {
-
-        UserRole invitedRole = request.getRequestedRole();
-
-        if (invitedRole != UserRole.MANUFACTURER_ADMIN
-                && invitedRole != UserRole.DISTRIBUTOR_ADMIN) {
-
-            throw new ApiException(
-                    ErrorCode.ROLE_NOT_ALLOWED,
-                    "Access requests can only create organization administrator invitations"
-            );
-        }
-
-        if (invitedRole.organizationtype() != organization.getType()) {
-            throw new ApiException(
-                    ErrorCode.ROLE_NOT_ALLOWED,
-                    "The requested role does not match the organization type"
-            );
-        }
-
-        return createInvitationForOrganization(
-                request.getFullName(),
-                request.getEmail(),
-                request.getPhoneNumber(),
                 invitedRole,
                 organization
         );

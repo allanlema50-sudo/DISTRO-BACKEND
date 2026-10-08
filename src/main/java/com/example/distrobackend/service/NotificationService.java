@@ -5,6 +5,8 @@ import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.NotificationPriority;
 import com.example.distrobackend.Domain.enums.NotificationStatus;
 import com.example.distrobackend.Domain.enums.NotificationType;
+import com.example.distrobackend.Exception.ApiException;
+import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.repository.NotificationRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -61,9 +63,7 @@ public class NotificationService {
         Notification notification =
                 notificationRepository.findById(notificationId)
                         .orElseThrow(() ->
-                                new IllegalArgumentException(
-                                        "Notification not found"
-                                )
+                                new ApiException(ErrorCode.NOT_FOUND, "Notification not found")
                         );
 
         if (!notification
@@ -71,9 +71,8 @@ public class NotificationService {
                 .getId()
                 .equals(userId)) {
 
-            throw new IllegalArgumentException(
-                    "Notification does not belong to this user"
-            );
+            throw new ApiException(ErrorCode.ACCESS_DENIED,
+                    "Notification does not belong to the authenticated user");
         }
 
         notification.setStatus(

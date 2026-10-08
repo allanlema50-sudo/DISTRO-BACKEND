@@ -1,6 +1,8 @@
 package com.example.distrobackend.controller.admin;
 
 import com.example.distrobackend.Domain.entity.User;
+import com.example.distrobackend.Exception.ApiException;
+import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.dto.AccessRequestResponse;
 import com.example.distrobackend.repository.UserRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
@@ -49,6 +51,7 @@ public class AdminAccessRequestController {
 
     private User getReviewer(AuthenticatedUser me) {
         return userRepository.findById(me.userId())
-                .orElseThrow(() -> new IllegalStateException("Authenticated user not found"));
+                .orElseThrow(() -> new ApiException(ErrorCode.UNAUTHENTICATED,
+                        "Authenticated admin account was not found"));
     }
 }

@@ -19,6 +19,10 @@ The backend owns request persistence, review state, invitation delivery, token v
 
 `organizationType` must be `MANUFACTURER` or `DISTRIBUTOR`. A successful response is `{"message":"Request submitted. A super administrator will review it."}`. Duplicate email or phone conflicts return HTTP 409. With SMTP disabled, the notification is written to backend logs; production must enable SMTP as described below.
 
+The public endpoint accepts the form's camelCase keys shown above. It also accepts snake_case keys (`organization_type`, `organization_name`, `full_name`, `phone_number`, `personal_email`, `organization_email`) and the legacy `email` key as an alias for `personalEmail`. `requestedRole` is not part of this request: the backend derives the administrator role from `organizationType`, so the client cannot select a different workspace role.
+
+The database stores the two email values separately as `personal_email` and `organization_email`; they are not separate frontend fields that need to be renamed. If the database was created from the admin branch's older schema (`email` and required `requested_role`), apply [`database/notifications_access_requests.sql`](../database/notifications_access_requests.sql) to migrate existing rows and make those legacy columns optional. `spring.jpa.hibernate.ddl-auto=update` adds columns but does not remove old `NOT NULL` constraints, so Hibernate alone may leave submissions failing with a database constraint error.
+
 ## Super-admin dashboard
 
 All routes below require `Authorization: Bearer <backend access token>`. The token must resolve to authority `ROLE_PLATFORM_ADMIN` (the admin portal's platform role) or legacy `ROLE_SUPER_ADMIN`; other roles receive HTTP 403.
@@ -54,6 +58,6 @@ The token expires after 24 hours and is consumed on successful activation. A suc
 
 ## Production configuration
 
-Configure these as deployment secrets/environment values. Do not commit SMTP credentials. For a typical SMTP STARTTLS provider, set `MAIL_ENABLED=true`, `MAIL_HOST`, `MAIL_PORT=587`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM`, `MAIL_SMTP_AUTH=true`, and `MAIL_SMTP_STARTTLS=true`. Set `SUPER_ADMIN_EMAILS` to the comma-separated notification recipients and `FRONTEND_BASE_URL` to the deployed frontend origin. Set `CORS_ALLOWED_ORIGINS` to the comma-separated frontend/dashboard origins allowed to call the API.
+Configure these as deployment secrets/environment values. Do not commit SMTP credentials. For a typical SMTP STARTTLS provider, set `MAIL_ENABLED=true`, `MAIL_HOST`, `MAIL_PORT=587`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM`, `MAIL_SMTP_AUTH=true`, and `MAIL_SMTP_STARTTLS=true`. Set `SUPER_ADMIN_EMAILS` to the comma-separated notification recipients and `FRONTEND_BASE_URL` to the deployed frontend origin. Set `CORS_ALLOWED_ORIGINS` to the comma-separated frontend/dashboard origins allowed to call the API. The local default permits `localhost` and `127.0.0.1` on any port; in production, provide exact trusted origins instead.
 
 Also configure production PostgreSQL and a secret JWT signing key. Use the deployed database's normal migration/backup process; the current local `ddl-auto=update` setting should not be used as the production schema migration strategy.

@@ -85,8 +85,8 @@ class PaymentServiceTest {
         payment.setStatus(PaymentStatus.PENDING);
         payment.setMpesaCheckoutRequestId("ws_CO_123");
         payment.setMpesaMerchantRequestId("merchant_123");
-        when(paymentRepository.findByMpesaCheckoutRequestId("ws_CO_123"))
-                .thenReturn(Optional.of(payment));
+        when(paymentRepository.findPaymentAndOrderIdsByMpesaCheckoutRequestId("ws_CO_123"))
+                .thenReturn(Optional.of(new Object[]{payment.getId(), orderId}));
         when(orderRepository.findByIdWithOwnershipForUpdate(orderId)).thenReturn(Optional.of(order));
         when(paymentRepository.findByIdForUpdate(any())).thenReturn(Optional.of(payment));
 
@@ -117,13 +117,14 @@ class PaymentServiceTest {
         ReflectionTestUtils.setField(paymentService, "verifyCallback", false);
         Order order = order();
         Payment payment = new Payment();
+        payment.setId(UUID.randomUUID());
         payment.setOrder(order);
         payment.setAmount(new BigDecimal("100"));
         payment.setStatus(PaymentStatus.PENDING);
         payment.setMpesaCheckoutRequestId("ws_CO_123");
         payment.setMpesaMerchantRequestId("merchant_123");
-        when(paymentRepository.findByMpesaCheckoutRequestId("ws_CO_123"))
-                .thenReturn(Optional.of(payment));
+        when(paymentRepository.findPaymentAndOrderIdsByMpesaCheckoutRequestId("ws_CO_123"))
+                .thenReturn(Optional.of(new Object[]{payment.getId(), orderId}));
         when(orderRepository.findByIdWithOwnershipForUpdate(orderId)).thenReturn(Optional.of(order));
         when(paymentRepository.findByIdForUpdate(any())).thenReturn(Optional.of(payment));
 
@@ -185,6 +186,30 @@ class PaymentServiceTest {
         org.assertj.core.api.Assertions.assertThat(payment.getStatus()).isEqualTo(PaymentStatus.FAILED);
         verify(orderService, never()).failPaymentAndReleaseOrder(any(), anyString());
         verify(paymentRepository).save(payment);
+    }
+
+    @Test
+    void expiredPendingPaymentIsReconciledWithDarajaBeforeOrderExpiry() {
+        Order order = order();
+        Payment payment = new Payment();
+        payment.setId(UUID.randomUUID());
+        payment.setOrder(order);
+        payment.setAmount(order.getTotalAmount());
+        payment.setStatus(PaymentStatus.PENDING);
+        payment.setMpesaCheckoutRequestId("ws_CO_expired");
+        when(orderRepository.findByIdWithOwnershipForUpdate(orderId)).thenReturn(Optional.of(order));
+        when(paymentRepository.findByOrderIdForUpdate(orderId)).thenReturn(Optional.of(payment));
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.GET), any(HttpEntity.class),
+                org.mockito.ArgumentMatchers.<ParameterizedTypeReference<Map<String, Object>>>any()))
+                .thenReturn(ResponseEntity.ok(Map.of("access_token", "token")));
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class),
+                org.mockito.ArgumentMatchers.<ParameterizedTypeReference<Map<String, Object>>>any()))
+                .thenReturn(ResponseEntity.ok(Map.of("ResultCode", "0", "ResultDesc", "The service request is processed successfully")));
+
+        org.assertj.core.api.Assertions.assertThat(paymentService.reconcileExpiredPayment(orderId)).isTrue();
+
+        org.assertj.core.api.Assertions.assertThat(payment.getStatus()).isEqualTo(PaymentStatus.RECONCILED);
+        verify(orderService).confirmPaidOrder(orderId);
     }
 
     private Order order() {

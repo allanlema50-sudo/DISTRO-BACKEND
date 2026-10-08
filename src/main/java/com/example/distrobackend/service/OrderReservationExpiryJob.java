@@ -20,6 +20,7 @@ public class OrderReservationExpiryJob {
 
     private final OrderRepository orderRepository;
     private final OrderService orderService;
+    private final PaymentService paymentService;
 
     @Value("${app.orders.reservation-expiry-batch-size:100}")
     private int batchSize;
@@ -31,10 +32,13 @@ public class OrderReservationExpiryJob {
         for (UUID orderId : orderRepository.findExpiredReservationOrderIds(
                 OrderStatus.PENDING, now, PageRequest.of(0, safeBatchSize))) {
             try {
-                orderService.expireReservationAndFailOrder(orderId, now);
+                if (!paymentService.reconcileExpiredPayment(orderId)) {
+                    orderService.expireReservationAndFailOrder(orderId, now);
+                }
             } catch (RuntimeException ex) {
-                // A later scan retries this order; one bad row must not stop the batch.
-                log.warn("Could not expire unpaid order {}", orderId, ex);
+                // The deadline remains expired, so a later scan retries
+                // provider reconciliation; one bad row must not stop the batch.
+                log.warn("Could not reconcile or expire unpaid order {}", orderId, ex);
             }
         }
     }

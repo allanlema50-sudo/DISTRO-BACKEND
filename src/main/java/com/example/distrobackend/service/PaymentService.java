@@ -170,11 +170,14 @@ public class PaymentService {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Incomplete M-Pesa callback payload");
         }
 
-        Payment locatedPayment = paymentRepository.findByMpesaCheckoutRequestId(callback.getCheckoutRequestId())
+        Object[] paymentAndOrderIds = paymentRepository
+                .findPaymentAndOrderIdsByMpesaCheckoutRequestId(callback.getCheckoutRequestId())
                 .orElseThrow(() -> new ApiException(ErrorCode.PAYMENT_NOT_FOUND, "Payment not found"));
-        Order lockedOrder = orderRepository.findByIdWithOwnershipForUpdate(locatedPayment.getOrder().getId())
+        UUID paymentId = (UUID) paymentAndOrderIds[0];
+        UUID orderId = (UUID) paymentAndOrderIds[1];
+        Order lockedOrder = orderRepository.findByIdWithOwnershipForUpdate(orderId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
-        Payment payment = paymentRepository.findByIdForUpdate(locatedPayment.getId())
+        Payment payment = paymentRepository.findByIdForUpdate(paymentId)
                 .orElseThrow(() -> new ApiException(ErrorCode.PAYMENT_NOT_FOUND, "Payment not found"));
         if (!callback.getCheckoutRequestId().equals(payment.getMpesaCheckoutRequestId())) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "M-Pesa callback correlation failed");
@@ -232,6 +235,56 @@ public class PaymentService {
         }
     }
 
+    /**
+     * Reconciles an expired order whose accepted STK request has not produced
+     * a callback yet. The order lock is acquired before the payment lock, just
+     * like initiation and callback processing.
+     *
+     * @return true when an in-flight payment was handled; false when normal
+     *         reservation expiry should proceed
+     */
+    @Transactional
+    public boolean reconcileExpiredPayment(UUID orderId) {
+        Order order = orderRepository.findByIdWithOwnershipForUpdate(orderId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
+        if (order.getStatus() != OrderStatus.PENDING) {
+            return false;
+        }
+
+        Payment payment = paymentRepository.findByOrderIdForUpdate(orderId).orElse(null);
+        if (payment == null || payment.getStatus() != PaymentStatus.PENDING
+                || isBlank(payment.getMpesaCheckoutRequestId())) {
+            return false;
+        }
+
+        MpesaQueryResult result = queryMpesaPayment(payment.getMpesaCheckoutRequestId());
+        if (result.resultCode() == 0) {
+            OffsetDateTime reconciledAt = OffsetDateTime.now();
+            payment.setStatus(PaymentStatus.RECONCILED);
+            payment.setConfirmedAt(reconciledAt);
+            payment.setFailureReason(null);
+            payment.setReconciledAt(reconciledAt);
+            payment.setReconciledNote("Reconciled by Daraja STK query after callback deadline");
+            payment.setCallbackRawPayload(Map.of(
+                    "source", "DARAJA_STK_QUERY",
+                    "checkoutRequestId", payment.getMpesaCheckoutRequestId(),
+                    "resultCode", result.resultCode(),
+                    "resultDescription", result.resultDescription() == null
+                            ? "" : result.resultDescription()));
+            paymentRepository.save(payment);
+            orderService.confirmPaidOrder(orderId);
+        } else {
+            String reason = isBlank(result.resultDescription())
+                    ? "M-Pesa payment did not complete"
+                    : result.resultDescription();
+            payment.setStatus(PaymentStatus.FAILED);
+            payment.setFailureReason(reason);
+            paymentRepository.save(payment);
+            orderService.failPaymentAndReleaseOrder(orderId, reason);
+        }
+        return true;
+    }
+
     @Transactional(readOnly = true)
     public PaymentStatusResponse getPaymentStatus(AuthenticatedUser actor, UUID orderId) {
         Payment payment = paymentRepository.findByOrderId(orderId)
@@ -286,6 +339,13 @@ public class PaymentService {
     }
 
     private void verifyCallbackResult(String checkoutRequestId, int expectedResultCode) {
+        MpesaQueryResult result = queryMpesaPayment(checkoutRequestId);
+        if (result.resultCode() != expectedResultCode) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "M-Pesa callback could not be reconciled");
+        }
+    }
+
+    private MpesaQueryResult queryMpesaPayment(String checkoutRequestId) {
         ensureConfigured();
         String timestamp = DARAJA_TIMESTAMP.format(java.time.Instant.now());
         String password = Base64.getEncoder().encodeToString(
@@ -302,12 +362,20 @@ public class PaymentService {
                 baseUrl + "/mpesa/stkpushquery/v1/query",
                 HttpMethod.POST, new HttpEntity<>(request, headers),
                 new ParameterizedTypeReference<>() {});
-        Object resultCode = response.getBody() == null ? null : response.getBody().get("ResultCode");
-        if (!response.getStatusCode().is2xxSuccessful() || resultCode == null
-                || !String.valueOf(expectedResultCode).equals(String.valueOf(resultCode))) {
-            throw new ApiException(ErrorCode.BAD_REQUEST, "M-Pesa callback could not be reconciled");
+        Map<String, Object> body = response.getBody();
+        Object resultCode = body == null ? null : body.get("ResultCode");
+        if (!response.getStatusCode().is2xxSuccessful() || resultCode == null) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "M-Pesa payment status could not be reconciled");
+        }
+        try {
+            return new MpesaQueryResult(Integer.parseInt(String.valueOf(resultCode)),
+                    body.get("ResultDesc") == null ? null : String.valueOf(body.get("ResultDesc")));
+        } catch (NumberFormatException ex) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "M-Pesa returned an invalid payment status");
         }
     }
+
+    private record MpesaQueryResult(int resultCode, String resultDescription) {}
 
     private void ensureCallbackVerificationEnabled() {
         if (!verifyCallback) {

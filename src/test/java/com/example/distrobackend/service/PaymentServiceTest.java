@@ -85,8 +85,10 @@ class PaymentServiceTest {
         payment.setStatus(PaymentStatus.PENDING);
         payment.setMpesaCheckoutRequestId("ws_CO_123");
         payment.setMpesaMerchantRequestId("merchant_123");
-        when(paymentRepository.findByMpesaCheckoutRequestIdForUpdate("ws_CO_123"))
+        when(paymentRepository.findByMpesaCheckoutRequestId("ws_CO_123"))
                 .thenReturn(Optional.of(payment));
+        when(orderRepository.findByIdWithOwnershipForUpdate(orderId)).thenReturn(Optional.of(order));
+        when(paymentRepository.findByIdForUpdate(any())).thenReturn(Optional.of(payment));
 
         when(restTemplate.exchange(anyString(), eq(HttpMethod.GET), any(HttpEntity.class),
                 org.mockito.ArgumentMatchers.<ParameterizedTypeReference<Map<String, Object>>>any()))
@@ -120,8 +122,10 @@ class PaymentServiceTest {
         payment.setStatus(PaymentStatus.PENDING);
         payment.setMpesaCheckoutRequestId("ws_CO_123");
         payment.setMpesaMerchantRequestId("merchant_123");
-        when(paymentRepository.findByMpesaCheckoutRequestIdForUpdate("ws_CO_123"))
+        when(paymentRepository.findByMpesaCheckoutRequestId("ws_CO_123"))
                 .thenReturn(Optional.of(payment));
+        when(orderRepository.findByIdWithOwnershipForUpdate(orderId)).thenReturn(Optional.of(order));
+        when(paymentRepository.findByIdForUpdate(any())).thenReturn(Optional.of(payment));
 
         MpesaCallbackRequest callback = new MpesaCallbackRequest();
         MpesaCallbackRequest.Body body = new MpesaCallbackRequest.Body();

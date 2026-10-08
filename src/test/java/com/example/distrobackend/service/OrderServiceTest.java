@@ -2,6 +2,8 @@ package com.example.distrobackend.service;
 
 import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.Order;
+import com.example.distrobackend.Domain.entity.OrderItem;
+import com.example.distrobackend.Domain.entity.Payment;
 import com.example.distrobackend.Domain.entity.StockItem;
 import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.entity.Warehouse;
@@ -11,6 +13,7 @@ import com.example.distrobackend.dto.OrderItemRequest;
 import com.example.distrobackend.dto.OrderRequest;
 import com.example.distrobackend.repository.OrderRepository;
 import com.example.distrobackend.repository.OrganizationRepository;
+import com.example.distrobackend.repository.PaymentRepository;
 import com.example.distrobackend.repository.StockItemRepository;
 import com.example.distrobackend.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,6 +34,9 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -42,6 +48,7 @@ class OrderServiceTest {
     @Mock private StockItemRepository stockItemRepository;
     @Mock private UserRepository userRepository;
     @Mock private OrganizationRepository organizationRepository;
+    @Mock private PaymentRepository paymentRepository;
     @Mock private OrganizationNotificationService notificationService;
 
     @InjectMocks private OrderService orderService;
@@ -90,7 +97,7 @@ class OrderServiceTest {
 
     @Test
     void orderCreationAtomicallyReservesAvailableStock() {
-        when(userRepository.findById(customerId)).thenReturn(Optional.of(customer));
+        when(userRepository.findByIdForUpdate(customerId)).thenReturn(Optional.of(customer));
         when(organizationRepository.findById(distributorId)).thenReturn(Optional.of(distributor));
         when(stockItemRepository.findByIdForUpdate(stockItemId)).thenReturn(Optional.of(offer));
         when(orderRepository.getNextOrderSequence()).thenReturn(42L);
@@ -107,7 +114,7 @@ class OrderServiceTest {
 
     @Test
     void insufficientStockRejectsOrderAndNotifiesDistributor() {
-        when(userRepository.findById(customerId)).thenReturn(Optional.of(customer));
+        when(userRepository.findByIdForUpdate(customerId)).thenReturn(Optional.of(customer));
         when(organizationRepository.findById(distributorId)).thenReturn(Optional.of(distributor));
         when(stockItemRepository.findByIdForUpdate(stockItemId)).thenReturn(Optional.of(offer));
 
@@ -117,12 +124,12 @@ class OrderServiceTest {
 
         assertThat(offer.getReservedQuantity()).isZero();
         verify(notificationService).notify(
-                distributor,
-                "ORDER_STOCK_REJECTED",
-                "Order rejected: insufficient stock",
-                org.mockito.ArgumentMatchers.contains("only 10 units were available"),
-                "CUSTOMER_ORDER_ATTEMPT",
-                null);
+                eq(distributor),
+                eq("ORDER_STOCK_REJECTED"),
+                eq("Order rejected: insufficient stock"),
+                contains("only 10 units were available"),
+                eq("CUSTOMER_ORDER_ATTEMPT"),
+                isNull());
         verify(orderRepository, never()).save(any(Order.class));
     }
 
@@ -140,6 +147,7 @@ class OrderServiceTest {
         offer.setReservedQuantity(4);
 
         when(orderRepository.findByIdWithItemsForUpdate(order.getId())).thenReturn(Optional.of(order));
+        when(paymentRepository.findByOrderIdForUpdate(order.getId())).thenReturn(Optional.empty());
         when(stockItemRepository.findByIdForUpdate(stockItemId)).thenReturn(Optional.of(offer));
         when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -149,6 +157,28 @@ class OrderServiceTest {
         assertThat(order.getReservationExpiresAt()).isNull();
         assertThat(offer.getReservedQuantity()).isZero();
         assertThat(orderItem.getStockCheckStatus()).isEqualTo("RELEASED");
+    }
+
+    @Test
+    void expiryKeepsOrderPendingWhenProviderAcceptedStkRequestIsInFlight() {
+        Order order = new Order();
+        order.setId(UUID.randomUUID());
+        order.setStatus(com.example.distrobackend.Domain.enums.OrderStatus.PENDING);
+        order.setReservationExpiresAt(OffsetDateTime.now().minusMinutes(1));
+        Payment payment = new Payment();
+        payment.setOrder(order);
+        payment.setStatus(com.example.distrobackend.Domain.enums.PaymentStatus.PENDING);
+        payment.setMpesaCheckoutRequestId("ws_CO_in_flight");
+
+        when(orderRepository.findByIdWithItemsForUpdate(order.getId())).thenReturn(Optional.of(order));
+        when(paymentRepository.findByOrderIdForUpdate(order.getId())).thenReturn(Optional.of(payment));
+
+        assertThat(orderService.expireReservationAndFailOrder(order.getId(), OffsetDateTime.now())).isFalse();
+
+        assertThat(order.getStatus()).isEqualTo(com.example.distrobackend.Domain.enums.OrderStatus.PENDING);
+        assertThat(order.getReservationExpiresAt()).isNull();
+        verify(stockItemRepository, never()).findByIdForUpdate(any());
+        verify(orderRepository).save(order);
     }
 
     private OrderRequest request(int quantity) {

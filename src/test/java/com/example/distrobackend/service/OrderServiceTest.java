@@ -176,6 +176,7 @@ class OrderServiceTest {
         assertThat(orderService.expireReservationAndFailOrder(order.getId(), OffsetDateTime.now())).isFalse();
 
         assertThat(order.getStatus()).isEqualTo(com.example.distrobackend.Domain.enums.OrderStatus.PENDING);
+        assertThat(order.getReservationExpiresAt()).isNotNull();
         assertThat(order.getReservationExpiresAt()).isBefore(OffsetDateTime.now());
         verify(stockItemRepository, never()).findByIdForUpdate(any());
         verify(orderRepository, never()).save(any(Order.class));

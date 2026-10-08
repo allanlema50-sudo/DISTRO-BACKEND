@@ -66,6 +66,8 @@ public class PaymentService {
     private String callbackSecret;
     @Value("${mpesa.verify-callback:true}")
     private boolean verifyCallback;
+    @Value("${mpesa.final-failure-result-codes:1032}")
+    private String finalFailureResultCodes;
 
     @Transactional(noRollbackFor = ApiException.class)
     public PaymentInitiateResponse initiatePayment(AuthenticatedUser actor, PaymentInitiateRequest request) {
@@ -273,7 +275,7 @@ public class PaymentService {
                             ? "" : result.resultDescription()));
             paymentRepository.save(payment);
             orderService.confirmPaidOrder(orderId);
-        } else {
+        } else if (isConfiguredFinalFailureCode(result.resultCode())) {
             String reason = isBlank(result.resultDescription())
                     ? "M-Pesa payment did not complete"
                     : result.resultDescription();
@@ -281,6 +283,13 @@ public class PaymentService {
             payment.setFailureReason(reason);
             paymentRepository.save(payment);
             orderService.failPaymentAndReleaseOrder(orderId, reason);
+        } else {
+            // A nonzero query result is not automatically a final payment
+            // outcome. Keep the payment and reservation pending until a
+            // verified callback or an explicitly configured terminal code is
+            // received.
+            throw new ApiException(ErrorCode.INTERNAL_ERROR,
+                    "M-Pesa payment status is not final; reconciliation will be retried");
         }
         return true;
     }
@@ -376,6 +385,23 @@ public class PaymentService {
     }
 
     private record MpesaQueryResult(int resultCode, String resultDescription) {}
+
+    private boolean isConfiguredFinalFailureCode(int resultCode) {
+        if (isBlank(finalFailureResultCodes)) {
+            return false;
+        }
+        for (String configuredCode : finalFailureResultCodes.split(",")) {
+            try {
+                if (Integer.parseInt(configuredCode.trim()) == resultCode) {
+                    return true;
+                }
+            } catch (NumberFormatException ex) {
+                throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED,
+                        "MPESA_FINAL_FAILURE_RESULT_CODES contains an invalid code");
+            }
+        }
+        return false;
+    }
 
     private void ensureCallbackVerificationEnabled() {
         if (!verifyCallback) {

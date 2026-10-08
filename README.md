@@ -51,11 +51,18 @@ MPESA_SHORTCODE=<daraja-shortcode>
 MPESA_PASSKEY=<daraja-passkey>
 MPESA_CALLBACK_URL=https://<public-host>/api/v1/payments/mpesa/callback
 MPESA_VERIFY_CALLBACK=true
+MPESA_FINAL_FAILURE_RESULT_CODES=1032
 ```
 
 `MPESA_VERIFY_CALLBACK` must remain `true`. The API fails closed and rejects
 callbacks when provider-side verification is disabled; it never confirms an
 order from callback fields alone.
+
+`MPESA_FINAL_FAILURE_RESULT_CODES` is a comma-separated allowlist of Daraja
+STK-query result codes that are confirmed terminal failures for the deployed
+integration. It defaults to `1032`. Nonzero result codes outside this allowlist
+remain pending and are retried; do not add a code until its finality has been
+verified with the provider.
 
 Generate a JWT secret with PowerShell:
 
@@ -472,6 +479,7 @@ MPESA_SHORTCODE
 MPESA_PASSKEY
 MPESA_CALLBACK_URL
 MPESA_CALLBACK_SECRET
+MPESA_FINAL_FAILURE_RESULT_CODES
 MPESA_AUTH_URL
 MPESA_STK_PUSH_URL
 ```

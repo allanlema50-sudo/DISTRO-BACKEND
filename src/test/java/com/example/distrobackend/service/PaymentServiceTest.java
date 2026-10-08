@@ -59,6 +59,7 @@ class PaymentServiceTest {
         ReflectionTestUtils.setField(paymentService, "callbackUrl", "https://example/callback");
         ReflectionTestUtils.setField(paymentService, "callbackSecret", "test-callback-secret");
         ReflectionTestUtils.setField(paymentService, "verifyCallback", true);
+        ReflectionTestUtils.setField(paymentService, "finalFailureResultCodes", "1032");
         customerId = UUID.randomUUID();
         orderId = UUID.randomUUID();
     }
@@ -210,6 +211,58 @@ class PaymentServiceTest {
 
         org.assertj.core.api.Assertions.assertThat(payment.getStatus()).isEqualTo(PaymentStatus.RECONCILED);
         verify(orderService).confirmPaidOrder(orderId);
+    }
+
+    @Test
+    void unknownNonzeroQueryResultRemainsPendingForRetry() {
+        Order order = order();
+        Payment payment = new Payment();
+        payment.setId(UUID.randomUUID());
+        payment.setOrder(order);
+        payment.setAmount(order.getTotalAmount());
+        payment.setStatus(PaymentStatus.PENDING);
+        payment.setMpesaCheckoutRequestId("ws_CO_unknown");
+        when(orderRepository.findByIdWithOwnershipForUpdate(orderId)).thenReturn(Optional.of(order));
+        when(paymentRepository.findByOrderIdForUpdate(orderId)).thenReturn(Optional.of(payment));
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.GET), any(HttpEntity.class),
+                org.mockito.ArgumentMatchers.<ParameterizedTypeReference<Map<String, Object>>>any()))
+                .thenReturn(ResponseEntity.ok(Map.of("access_token", "token")));
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class),
+                org.mockito.ArgumentMatchers.<ParameterizedTypeReference<Map<String, Object>>>any()))
+                .thenReturn(ResponseEntity.ok(Map.of("ResultCode", "1037", "ResultDesc", "Provider status is not final")));
+
+        assertThatThrownBy(() -> paymentService.reconcileExpiredPayment(orderId))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("status is not final");
+
+        org.assertj.core.api.Assertions.assertThat(payment.getStatus()).isEqualTo(PaymentStatus.PENDING);
+        verify(paymentRepository, never()).save(any());
+        verify(orderService, never()).failPaymentAndReleaseOrder(any(), anyString());
+        verify(orderService, never()).confirmPaidOrder(any());
+    }
+
+    @Test
+    void configuredTerminalQueryResultFailsPaymentAndReleasesReservation() {
+        Order order = order();
+        Payment payment = new Payment();
+        payment.setId(UUID.randomUUID());
+        payment.setOrder(order);
+        payment.setAmount(order.getTotalAmount());
+        payment.setStatus(PaymentStatus.PENDING);
+        payment.setMpesaCheckoutRequestId("ws_CO_cancelled");
+        when(orderRepository.findByIdWithOwnershipForUpdate(orderId)).thenReturn(Optional.of(order));
+        when(paymentRepository.findByOrderIdForUpdate(orderId)).thenReturn(Optional.of(payment));
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.GET), any(HttpEntity.class),
+                org.mockito.ArgumentMatchers.<ParameterizedTypeReference<Map<String, Object>>>any()))
+                .thenReturn(ResponseEntity.ok(Map.of("access_token", "token")));
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class),
+                org.mockito.ArgumentMatchers.<ParameterizedTypeReference<Map<String, Object>>>any()))
+                .thenReturn(ResponseEntity.ok(Map.of("ResultCode", "1032", "ResultDesc", "Request cancelled")));
+
+        org.assertj.core.api.Assertions.assertThat(paymentService.reconcileExpiredPayment(orderId)).isTrue();
+
+        org.assertj.core.api.Assertions.assertThat(payment.getStatus()).isEqualTo(PaymentStatus.FAILED);
+        verify(orderService).failPaymentAndReleaseOrder(orderId, "Request cancelled");
     }
 
     private Order order() {

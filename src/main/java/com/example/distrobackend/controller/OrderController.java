@@ -134,7 +134,7 @@ public class OrderController {
 
     // -----------------------------------------------------------------------
     // PATCH /api/v1/orders/{orderId}/status
-    // - CUSTOMER           → may only transition to CANCELLED on their own order
+    // - CUSTOMER           → may cancel only their own unpaid PENDING order
     // - DISTRIBUTOR_ADMIN,
     //   DISTRIBUTOR_STAFF  → may perform any ALLOWED_TRANSITIONS move on their org's orders
     // - everyone else      → 403
@@ -155,6 +155,10 @@ public class OrderController {
             if (update.status() != OrderStatus.CANCELLED) {
                 throw new ApiException(ErrorCode.ACCESS_DENIED,
                         "Customers may only cancel orders");
+            }
+            if (order.status() != OrderStatus.PENDING) {
+                throw new ApiException(ErrorCode.CONFLICT,
+                        "Customers may only cancel unpaid pending orders");
             }
         } else if (me.role() == UserRole.DISTRIBUTOR_ADMIN
                 || me.role() == UserRole.DISTRIBUTOR_STAFF) {

@@ -218,7 +218,15 @@ reserved quantity. Each customer is also limited by
 `ORDER_MAX_OPEN_PENDING_PER_CUSTOMER` (5 by default). A temporary STK-push
 initiation failure leaves the order pending and the payment retryable; only a
 verified final failed callback, cancellation, or reservation expiry releases
-the reservation. Verified payment commits the reserved quantity.
+the reservation. If an accepted STK request has no callback by the deadline,
+the expiry job queries Daraja first: a successful result reconciles the payment
+and confirms the order, while a definitive failed result releases the
+reservation. Provider connectivity errors leave the deadline eligible for a
+later reconciliation scan. Verified payment commits the reserved quantity.
+Customers may cancel only their own unpaid `PENDING` orders. Once an order is
+`IN_TRANSIT`, cancellation and automatic stock restoration require a separate
+warehouse/driver return workflow; a status update cannot mark dispatched stock
+as returned.
 
 All controller and security failures use the common `ApiError` response shape:
 
@@ -297,8 +305,8 @@ unambiguous, case-insensitive SKU matches between an existing distributor row
 and one manufacturer source product. `V10` creates a tenant-owned `LEGACY`
 warehouse where necessary, converts the rows into source-linked offers, and
 adds the unpaid-order reservation deadline. Existing orders with an accepted
-M-Pesa STK request remain outside the expiry backfill so their provider callback
-can still reconcile them. It fails closed if any legacy distributor row has no
+M-Pesa STK request receive a bounded, already-due deadline so the expiry job
+reconciles them with Daraja before releasing their reservation. It fails closed if any legacy distributor row has no
 mapping or has an invalid cross-tenant mapping; it does not guess a
 manufacturer owner.
 

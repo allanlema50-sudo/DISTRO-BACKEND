@@ -4,6 +4,7 @@ import com.example.distrobackend.Domain.entity.*;
 import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.OrderStatus;
 import com.example.distrobackend.Domain.enums.PaymentStatus;
+import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.Exception.InsufficientStockException;
@@ -53,7 +54,9 @@ public class OrderService {
             OrderStatus.CONFIRMED, Set.of(OrderStatus.PROCESSING, OrderStatus.CANCELLED),
             OrderStatus.PROCESSING, Set.of(OrderStatus.AWAITING_DISPATCH, OrderStatus.CANCELLED),
             OrderStatus.AWAITING_DISPATCH, Set.of(OrderStatus.IN_TRANSIT, OrderStatus.CANCELLED),
-            OrderStatus.IN_TRANSIT, Set.of(OrderStatus.DELIVERED, OrderStatus.CANCELLED, OrderStatus.FAILED),
+            // Dispatched inventory cannot be restored by an order status update.
+            // A return requires a separate warehouse/driver custody workflow.
+            OrderStatus.IN_TRANSIT, Set.of(OrderStatus.DELIVERED),
             OrderStatus.DELIVERED, Set.of(OrderStatus.REFUNDED),
             OrderStatus.CANCELLED, Set.of(),
             OrderStatus.FAILED, Set.of(),
@@ -186,8 +189,22 @@ public class OrderService {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Cannot transition from " + order.getStatus() + " to " + update.status());
         }
 
+        if (update.status() == OrderStatus.CANCELLED) {
+            Payment payment = paymentRepository.findByOrderIdForUpdate(orderId).orElse(null);
+            if (payment != null && payment.getStatus() == PaymentStatus.PENDING
+                    && payment.getMpesaCheckoutRequestId() != null
+                    && !payment.getMpesaCheckoutRequestId().isBlank()) {
+                throw new ApiException(ErrorCode.CONFLICT,
+                        "This order has an in-flight M-Pesa payment and cannot be cancelled until it is reconciled");
+            }
+        }
+
         User changedBy = userRepository.findById(changedById)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "User not found"));
+        if (changedBy.getRole() == UserRole.CUSTOMER && order.getStatus() != OrderStatus.PENDING) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "Customers may only cancel unpaid pending orders");
+        }
 
         OrderStatusHistory history = new OrderStatusHistory();
         history.setFromStatus(order.getStatus());
@@ -280,9 +297,8 @@ public class OrderService {
                 && payment.getMpesaCheckoutRequestId() != null
                 && !payment.getMpesaCheckoutRequestId().isBlank()) {
             // A provider-accepted STK request is still eligible for a late
-            // callback. Keep the order pending until it is reconciled.
-            order.setReservationExpiresAt(null);
-            orderRepository.save(order);
+            // callback. Keep the expired deadline so the reconciliation job
+            // retries the provider query on a later scan.
             return false;
         }
 

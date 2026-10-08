@@ -176,9 +176,75 @@ class OrderServiceTest {
         assertThat(orderService.expireReservationAndFailOrder(order.getId(), OffsetDateTime.now())).isFalse();
 
         assertThat(order.getStatus()).isEqualTo(com.example.distrobackend.Domain.enums.OrderStatus.PENDING);
-        assertThat(order.getReservationExpiresAt()).isNull();
+        assertThat(order.getReservationExpiresAt()).isBefore(OffsetDateTime.now());
         verify(stockItemRepository, never()).findByIdForUpdate(any());
-        verify(orderRepository).save(order);
+        verify(orderRepository, never()).save(any(Order.class));
+    }
+
+    @Test
+    void dispatchedOrderCannotBeCancelledThroughStatusEndpoint() {
+        Order order = new Order();
+        order.setId(UUID.randomUUID());
+        order.setStatus(com.example.distrobackend.Domain.enums.OrderStatus.IN_TRANSIT);
+
+        when(orderRepository.findByIdWithItemsForUpdate(order.getId())).thenReturn(Optional.of(order));
+
+        assertThatThrownBy(() -> orderService.updateOrderStatus(
+                order.getId(), customerId,
+                new com.example.distrobackend.dto.OrderStatusUpdate(
+                        com.example.distrobackend.Domain.enums.OrderStatus.CANCELLED,
+                        "Customer changed mind")))
+                .isInstanceOf(com.example.distrobackend.Exception.ApiException.class)
+                .hasMessageContaining("Cannot transition from IN_TRANSIT to CANCELLED");
+
+        verify(paymentRepository, never()).findByOrderIdForUpdate(any());
+        verify(userRepository, never()).findById(any());
+        verify(stockItemRepository, never()).findByIdForUpdate(any());
+    }
+
+    @Test
+    void customerCannotCancelOrderAfterItLeavesPendingState() {
+        Order order = new Order();
+        order.setId(UUID.randomUUID());
+        order.setStatus(com.example.distrobackend.Domain.enums.OrderStatus.CONFIRMED);
+
+        when(orderRepository.findByIdWithItemsForUpdate(order.getId())).thenReturn(Optional.of(order));
+        when(userRepository.findById(customerId)).thenReturn(Optional.of(customer));
+
+        assertThatThrownBy(() -> orderService.updateOrderStatus(
+                order.getId(), customerId,
+                new com.example.distrobackend.dto.OrderStatusUpdate(
+                        com.example.distrobackend.Domain.enums.OrderStatus.CANCELLED,
+                        "Customer changed mind")))
+                .isInstanceOf(com.example.distrobackend.Exception.ApiException.class)
+                .hasMessageContaining("Customers may only cancel unpaid pending orders");
+
+        verify(stockItemRepository, never()).findByIdForUpdate(any());
+        verify(orderRepository, never()).save(any(Order.class));
+    }
+
+    @Test
+    void orderWithAcceptedStkRequestCannotBeCancelledBeforeCallback() {
+        Order order = new Order();
+        order.setId(UUID.randomUUID());
+        order.setStatus(com.example.distrobackend.Domain.enums.OrderStatus.PENDING);
+        Payment payment = new Payment();
+        payment.setStatus(com.example.distrobackend.Domain.enums.PaymentStatus.PENDING);
+        payment.setMpesaCheckoutRequestId("ws_CO_in_flight");
+
+        when(orderRepository.findByIdWithItemsForUpdate(order.getId())).thenReturn(Optional.of(order));
+        when(paymentRepository.findByOrderIdForUpdate(order.getId())).thenReturn(Optional.of(payment));
+
+        assertThatThrownBy(() -> orderService.updateOrderStatus(
+                order.getId(), customerId,
+                new com.example.distrobackend.dto.OrderStatusUpdate(
+                        com.example.distrobackend.Domain.enums.OrderStatus.CANCELLED,
+                        "Cancel")))
+                .isInstanceOf(com.example.distrobackend.Exception.ApiException.class)
+                .hasMessageContaining("in-flight M-Pesa payment");
+
+        verify(userRepository, never()).findById(any());
+        verify(stockItemRepository, never()).findByIdForUpdate(any());
     }
 
     private OrderRequest request(int quantity) {

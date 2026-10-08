@@ -31,8 +31,10 @@ import java.time.Instant;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.*;
 
@@ -60,6 +62,7 @@ class PaymentServiceTest {
         ReflectionTestUtils.setField(paymentService, "callbackSecret", "test-callback-secret");
         ReflectionTestUtils.setField(paymentService, "verifyCallback", true);
         ReflectionTestUtils.setField(paymentService, "finalFailureResultCodes", "1032");
+        ReflectionTestUtils.invokeMethod(paymentService, "initializeFinalFailureResultCodes");
         customerId = UUID.randomUUID();
         orderId = UUID.randomUUID();
     }
@@ -165,6 +168,26 @@ class PaymentServiceTest {
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("Payment service is not configured");
         verifyNoInteractions(paymentRepository, restTemplate);
+    }
+
+    @Test
+    void finalFailureResultCodesAreParsedOnceAndEmptyTokensAreIgnored() {
+        ReflectionTestUtils.setField(paymentService, "finalFailureResultCodes", "1032,, 1033,");
+
+        ReflectionTestUtils.invokeMethod(paymentService, "initializeFinalFailureResultCodes");
+
+        assertThat(ReflectionTestUtils.getField(paymentService, "terminalFailureResultCodeSet"))
+                .isEqualTo(Set.of(1032, 1033));
+    }
+
+    @Test
+    void invalidFinalFailureResultCodeFailsInitialization() {
+        ReflectionTestUtils.setField(paymentService, "finalFailureResultCodes", "1032,not-a-code");
+
+        assertThatThrownBy(() -> ReflectionTestUtils.invokeMethod(
+                paymentService, "initializeFinalFailureResultCodes"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("invalid result code");
     }
 
     @Test

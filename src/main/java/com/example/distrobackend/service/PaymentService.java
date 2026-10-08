@@ -16,6 +16,7 @@ import com.example.distrobackend.dto.mpesa.MpesaStkPushResponse;
 import com.example.distrobackend.repository.OrderRepository;
 import com.example.distrobackend.repository.PaymentRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -33,9 +34,12 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Base64;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -68,6 +72,26 @@ public class PaymentService {
     private boolean verifyCallback;
     @Value("${mpesa.final-failure-result-codes:1032}")
     private String finalFailureResultCodes;
+    private Set<Integer> terminalFailureResultCodeSet = Set.of();
+
+    @PostConstruct
+    void initializeFinalFailureResultCodes() {
+        if (isBlank(finalFailureResultCodes)) {
+            terminalFailureResultCodeSet = Set.of();
+            return;
+        }
+
+        try {
+            terminalFailureResultCodeSet = Arrays.stream(finalFailureResultCodes.split(",", -1))
+                    .map(String::trim)
+                    .filter(token -> !token.isEmpty())
+                    .map(this::parseFinalFailureResultCode)
+                    .collect(Collectors.toUnmodifiableSet());
+        } catch (NumberFormatException ex) {
+            throw new IllegalStateException(
+                    "MPESA_FINAL_FAILURE_RESULT_CODES contains an invalid result code", ex);
+        }
+    }
 
     @Transactional(noRollbackFor = ApiException.class)
     public PaymentInitiateResponse initiatePayment(AuthenticatedUser actor, PaymentInitiateRequest request) {
@@ -387,20 +411,15 @@ public class PaymentService {
     private record MpesaQueryResult(int resultCode, String resultDescription) {}
 
     private boolean isConfiguredFinalFailureCode(int resultCode) {
-        if (isBlank(finalFailureResultCodes)) {
-            return false;
+        return terminalFailureResultCodeSet.contains(resultCode);
+    }
+
+    private int parseFinalFailureResultCode(String token) {
+        int resultCode = Integer.parseInt(token);
+        if (resultCode < 0) {
+            throw new NumberFormatException("Result codes cannot be negative");
         }
-        for (String configuredCode : finalFailureResultCodes.split(",")) {
-            try {
-                if (Integer.parseInt(configuredCode.trim()) == resultCode) {
-                    return true;
-                }
-            } catch (NumberFormatException ex) {
-                throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED,
-                        "MPESA_FINAL_FAILURE_RESULT_CODES contains an invalid code");
-            }
-        }
-        return false;
+        return resultCode;
     }
 
     private void ensureCallbackVerificationEnabled() {

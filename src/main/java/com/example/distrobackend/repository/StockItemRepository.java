@@ -20,6 +20,10 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
     @Query("""
             select s from StockItem s
             where s.active = true
+              and s.sourceStockItem is not null
+              and s.sourceStockItem.organization.type = com.example.distrobackend.Domain.enums.Organizationtype.MANUFACTURER
+              and s.organization.type = com.example.distrobackend.Domain.enums.Organizationtype.DISTRIBUTOR
+              and s.warehouse.active = true
               and (:category is null or lower(s.category) = lower(:category))
             """)
     Page<StockItem> findActiveCatalog(@Param("category") String category, Pageable pageable);
@@ -39,7 +43,10 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
             select s from StockItem s
             where s.active = true
               and (s.organization.type = :manufacturerType
-                   or s.organization.id = :organizationId)
+                   or (s.organization.id = :organizationId
+                       and s.sourceStockItem is not null
+                       and s.sourceStockItem.organization.type = :manufacturerType
+                       and s.warehouse.active = true))
               and (:category is null or lower(s.category) = lower(:category))
             """)
     Page<StockItem> findActiveCatalogForDistributor(
@@ -50,7 +57,15 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
 
     Page<StockItem> findByOrganization_IdAndActiveTrue(UUID organizationId, Pageable pageable);
 
-    @Query("select distinct s.category from StockItem s where s.active = true and s.category is not null order by s.category")
+    @Query("""
+            select distinct s.category from StockItem s
+            where s.active = true and s.category is not null
+              and s.sourceStockItem is not null
+              and s.sourceStockItem.organization.type = com.example.distrobackend.Domain.enums.Organizationtype.MANUFACTURER
+              and s.organization.type = com.example.distrobackend.Domain.enums.Organizationtype.DISTRIBUTOR
+              and s.warehouse.active = true
+            order by s.category
+            """)
     java.util.List<String> findActiveCategories();
 
     @Query("""
@@ -65,7 +80,10 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
             select distinct s.category from StockItem s
             where s.active = true and s.category is not null
               and (s.organization.type = :manufacturerType
-                   or s.organization.id = :organizationId)
+                   or (s.organization.id = :organizationId
+                       and s.sourceStockItem is not null
+                       and s.sourceStockItem.organization.type = :manufacturerType
+                       and s.warehouse.active = true))
             order by s.category
             """)
     java.util.List<String> findActiveCategoriesForDistributor(
@@ -84,11 +102,15 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
     @Query("select s from StockItem s where s.id = :id and s.organization.id = :organizationId")
     Optional<StockItem> findByIdAndOrganizationIdForUpdate(
             @Param("id") UUID id, @Param("organizationId") UUID organizationId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from StockItem s join fetch s.organization where s.id = :id")
+    Optional<StockItem> findByIdForUpdate(@Param("id") UUID id);
     @Query("""
             select s from StockItem s
             where s.organization.id = :organizationId
               and s.active = true
-              and s.quantityOnHand <= s.reorderThreshold
+              and s.quantityOnHand - s.reservedQuantity <= s.reorderThreshold
             """)
     Page<StockItem> findLowStockByOrganizationId(
             @Param("organizationId") UUID organizationId, Pageable pageable);

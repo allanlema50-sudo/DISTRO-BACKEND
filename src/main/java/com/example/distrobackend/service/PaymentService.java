@@ -219,6 +219,9 @@ public class PaymentService {
             payment.setStatus(PaymentStatus.FAILED);
             payment.setFailureReason(callback.getResultDesc());
             paymentRepository.save(payment);
+            orderService.failPaymentAndReleaseOrder(
+                    payment.getOrder().getId(),
+                    callback.getResultDesc() == null ? "M-Pesa payment failed" : callback.getResultDesc());
         }
     }
 
@@ -343,6 +346,7 @@ public class PaymentService {
         payment.setStatus(PaymentStatus.FAILED);
         payment.setFailureReason(reason);
         paymentRepository.save(payment);
+        orderService.failPaymentAndReleaseOrder(payment.getOrder().getId(), reason);
     }
 
     private PaymentInitiateResponse response(Payment payment, String message) {

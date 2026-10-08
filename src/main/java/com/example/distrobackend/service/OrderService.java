@@ -1,9 +1,11 @@
 package com.example.distrobackend.service;
 
 import com.example.distrobackend.Domain.entity.*;
+import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.OrderStatus;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
+import com.example.distrobackend.Exception.InsufficientStockException;
 import com.example.distrobackend.dto.*;
 import com.example.distrobackend.repository.OrderRepository;
 import com.example.distrobackend.repository.OrganizationRepository;
@@ -14,6 +16,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -28,6 +31,7 @@ public class OrderService {
     private final StockItemRepository stockItemRepository;
     private final UserRepository userRepository;
     private final OrganizationRepository organizationRepository;
+    private final OrganizationNotificationService notificationService;
 
     // Placeholder until real distance/route-based pricing exists once Trips is built
     @Value("${app.orders.delivery-fee:0.00}")
@@ -52,6 +56,10 @@ public class OrderService {
 
         Organization org = organizationRepository.findById(request.organizationId())
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Organization not found"));
+        if (org.getType() != Organizationtype.DISTRIBUTOR) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    "Customers can only order from a distributor offer catalog");
+        }
 
         Order order = new Order();
         order.setCustomer(customer);
@@ -65,8 +73,18 @@ public class OrderService {
 
         BigDecimal subtotal = BigDecimal.ZERO;
 
-        for (OrderItemRequest itemReq : request.items()) {
-            StockItem stockItem = stockItemRepository.findById(itemReq.stockItemId())
+        Set<UUID> requestedItemIds = new HashSet<>();
+        List<OrderItemRequest> sortedItems = request.items().stream()
+                .sorted(java.util.Comparator.comparing(OrderItemRequest::stockItemId))
+                .toList();
+
+        for (OrderItemRequest itemReq : sortedItems) {
+            if (!requestedItemIds.add(itemReq.stockItemId())) {
+                throw new ApiException(ErrorCode.BAD_REQUEST,
+                        "Each stock item may appear only once in an order");
+            }
+
+            StockItem stockItem = stockItemRepository.findByIdForUpdate(itemReq.stockItemId())
                     .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Stock item not found: " + itemReq.stockItemId()));
 
             if (stockItem.getOrganization() == null
@@ -79,10 +97,44 @@ public class OrderService {
                 throw new ApiException(ErrorCode.BAD_REQUEST, "Stock item is not active: " + stockItem.getName());
             }
 
+            if (stockItem.getSourceStockItem() == null
+                    || stockItem.getSourceStockItem().getOrganization() == null
+                    || stockItem.getSourceStockItem().getOrganization().getType() != Organizationtype.MANUFACTURER
+                    || stockItem.getWarehouse() == null
+                    || !stockItem.getWarehouse().isActive()
+                    || !org.getId().equals(stockItem.getWarehouse().getOrganization().getId())) {
+                throw new ApiException(ErrorCode.BAD_REQUEST,
+                        "The selected stock item is not an active distributor offer");
+            }
+
+            int available = stockItem.getAvailableQuantity();
+            if (itemReq.quantity() > available) {
+                notificationService.notify(
+                        org,
+                        "ORDER_STOCK_REJECTED",
+                        "Order rejected: insufficient stock",
+                        "Customer " + customer.getId() + " requested " + itemReq.quantity()
+                                + " units of " + stockItem.getName() + " (" + stockItem.getSku()
+                                + "), but only " + available + " units were available.",
+                        "CUSTOMER_ORDER_ATTEMPT",
+                        null);
+                throw new InsufficientStockException(
+                        "Insufficient available stock for " + stockItem.getSku()
+                                + ": requested " + itemReq.quantity() + ", available " + available);
+            }
+
+            try {
+                stockItem.setReservedQuantity(Math.addExact(
+                        stockItem.getReservedQuantity(), itemReq.quantity()));
+            } catch (ArithmeticException ex) {
+                throw new InsufficientStockException("Requested stock reservation is too large");
+            }
+
             OrderItem orderItem = new OrderItem();
             orderItem.setStockItem(stockItem);
             orderItem.setQuantity(itemReq.quantity());
             orderItem.setUnitPrice(stockItem.getUnitPrice());
+            orderItem.setStockCheckStatus("RESERVED");
 
             BigDecimal lineTotal = stockItem.getUnitPrice().multiply(BigDecimal.valueOf(itemReq.quantity()));
             subtotal = subtotal.add(lineTotal);
@@ -132,6 +184,7 @@ public class OrderService {
 
         if (update.status() == OrderStatus.CANCELLED || update.status() == OrderStatus.FAILED) {
             order.setCancellationReason(update.note());
+            releaseOrRestoreInventory(order);
         }
 
         Order saved = orderRepository.save(order);
@@ -160,7 +213,72 @@ public class OrderService {
         order.addStatusHistory(history);
         order.setStatus(OrderStatus.CONFIRMED);
         order.setConfirmedAt(java.time.OffsetDateTime.now());
+        commitReservations(order);
         return orderRepository.save(order);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void failPaymentAndReleaseOrder(UUID orderId, String reason) {
+        Order order = orderRepository.findByIdWithItems(orderId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
+        if (order.getStatus() != OrderStatus.PENDING) {
+            return;
+        }
+        releaseOrRestoreInventory(order);
+        order.setStatus(OrderStatus.FAILED);
+        order.setCancellationReason(reason);
+        OrderStatusHistory history = new OrderStatusHistory();
+        history.setFromStatus(OrderStatus.PENDING);
+        history.setToStatus(OrderStatus.FAILED);
+        history.setNote(reason);
+        order.addStatusHistory(history);
+        orderRepository.save(order);
+    }
+
+    private void commitReservations(Order order) {
+        for (OrderItem item : order.getOrderItems()) {
+            StockItem stockItem = stockItemRepository.findByIdForUpdate(item.getStockItem().getId())
+                    .orElseThrow(() -> new ApiException(ErrorCode.STOCK_ITEM_NOT_FOUND,
+                            "Reserved stock item no longer exists"));
+            if ("RESERVED".equals(item.getStockCheckStatus())) {
+                if (stockItem.getReservedQuantity() < item.getQuantity()
+                        || stockItem.getQuantityOnHand() < item.getQuantity()) {
+                    throw new InsufficientStockException(
+                            "Reserved stock is no longer available for " + stockItem.getSku());
+                }
+                stockItem.setReservedQuantity(stockItem.getReservedQuantity() - item.getQuantity());
+                stockItem.setQuantityOnHand(stockItem.getQuantityOnHand() - item.getQuantity());
+                item.setStockCheckStatus("COMMITTED");
+                stockItemRepository.save(stockItem);
+            }
+        }
+    }
+
+    private void releaseOrRestoreInventory(Order order) {
+        for (OrderItem item : order.getOrderItems()) {
+            StockItem stockItem = stockItemRepository.findByIdForUpdate(item.getStockItem().getId())
+                    .orElseThrow(() -> new ApiException(ErrorCode.STOCK_ITEM_NOT_FOUND,
+                            "Order stock item no longer exists"));
+            if ("RESERVED".equals(item.getStockCheckStatus())) {
+                if (stockItem.getReservedQuantity() < item.getQuantity()) {
+                    throw new ApiException(ErrorCode.CONFLICT,
+                            "Order reservation is inconsistent and cannot be released safely");
+                }
+                stockItem.setReservedQuantity(stockItem.getReservedQuantity() - item.getQuantity());
+                item.setStockCheckStatus("RELEASED");
+                stockItemRepository.save(stockItem);
+            } else if ("COMMITTED".equals(item.getStockCheckStatus())) {
+                try {
+                    stockItem.setQuantityOnHand(Math.addExact(
+                            stockItem.getQuantityOnHand(), item.getQuantity()));
+                } catch (ArithmeticException ex) {
+                    throw new ApiException(ErrorCode.CONFLICT,
+                            "Stock quantity overflow while restoring cancelled order");
+                }
+                item.setStockCheckStatus("RETURNED");
+                stockItemRepository.save(stockItem);
+            }
+        }
     }
 
     @Transactional(readOnly = true)

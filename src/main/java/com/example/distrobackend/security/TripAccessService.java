@@ -1,6 +1,5 @@
 package com.example.distrobackend.security;
 
-import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.repository.TripRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;

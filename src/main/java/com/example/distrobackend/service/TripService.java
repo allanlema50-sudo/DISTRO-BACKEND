@@ -152,6 +152,30 @@ public class TripService {
     }
 
     @Transactional
+    public void issueDeliveryOtp(UUID customerId, UUID tripId, UUID stopId) {
+        Trip trip = tripRepository.findById(tripId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Trip not found"));
+        TripStop stop = trip.getStops().stream()
+                .filter(candidate -> stopId.equals(candidate.getId()))
+                .findFirst()
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Stop not found in this trip"));
+        if (stop.getOrder() == null || stop.getOrder().getCustomer() == null
+                || !customerId.equals(stop.getOrder().getCustomer().getId())) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        if (trip.getStatus() == TripStatus.COMPLETED || trip.getStatus() == TripStatus.CANCELLED) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Delivery OTPs are unavailable for closed trips");
+        }
+        if (stop.getStatus() != StopStatus.IN_PROGRESS) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Delivery OTPs are only available for the active stop");
+        }
+        if (stop.getOrder().getStatus() != OrderStatus.IN_TRANSIT) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Order is not in transit");
+        }
+        otpService.issue(stop.getOrder().getCustomer(), OtpPurpose.DELIVERY_CONFIRMATION);
+    }
+
+    @Transactional
     public LocationPingResponse recordLocation(AuthenticatedUser actor, UUID tripId,
                                                LocationPingRequest request) {
         Trip trip = getAssignedTrip(actor, tripId);

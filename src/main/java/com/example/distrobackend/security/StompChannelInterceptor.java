@@ -11,15 +11,16 @@ import org.springframework.messaging.support.MessageHeaderAccessor;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Component;
 
-import java.util.regex.Pattern;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Component
 @RequiredArgsConstructor
 public class StompChannelInterceptor implements ChannelInterceptor {
 
     private static final Pattern TRIP_TOPIC = Pattern.compile(
-            "^/topic/trips/[0-9a-fA-F-]{36}/location$");
+            "^/topic/trips/([0-9a-fA-F-]{36})/location$");
 
     private final JwtAuthenticationService authenticationService;
     private final TripAccessService tripAccessService;
@@ -52,31 +53,30 @@ public class StompChannelInterceptor implements ChannelInterceptor {
 
         if (accessor.getCommand() == StompCommand.SEND) {
             String destination = accessor.getDestination();
-            if (destination == null || !destination.startsWith("/app/")) {
-                throw new MessagingException("Client messages must use an application destination");
+            if (!(accessor.getUser() instanceof Authentication)
+                    || destination == null
+                    || !destination.startsWith("/app/")) {
+                throw new MessagingException("Client messages must target an application destination");
             }
         }
 
         if (accessor.getCommand() == StompCommand.SUBSCRIBE) {
             String destination = accessor.getDestination();
-            if (accessor.getUser() == null
-                    || destination == null
-                    || !TRIP_TOPIC.matcher(destination).matches()) {
+            Matcher matcher = destination == null ? null : TRIP_TOPIC.matcher(destination);
+            if (!(accessor.getUser() instanceof Authentication currentAuthentication)
+                    || !(currentAuthentication.getPrincipal() instanceof AuthenticatedUser user)
+                    || matcher == null
+                    || !matcher.matches()) {
                 throw new MessagingException("Unauthorized or invalid tracking subscription");
             }
 
-            UUID tripId;
             try {
-                tripId = UUID.fromString(destination.substring("/topic/trips/".length(),
-                        destination.length() - "/location".length()));
+                UUID tripId = UUID.fromString(matcher.group(1));
+                if (!tripAccessService.canSubscribe(tripId, user)) {
+                    throw new MessagingException("Unauthorized or invalid tracking subscription");
+                }
             } catch (IllegalArgumentException ex) {
-                throw new MessagingException("Invalid trip tracking destination", ex);
-            }
-
-            Authentication authentication = (Authentication) accessor.getUser();
-            AuthenticatedUser user = (AuthenticatedUser) authentication.getPrincipal();
-            if (!tripAccessService.canAccess(user, tripId)) {
-                throw new MessagingException("Trip tracking access denied");
+                throw new MessagingException("Unauthorized or invalid tracking subscription", ex);
             }
         }
 

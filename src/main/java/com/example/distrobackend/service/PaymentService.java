@@ -28,6 +28,7 @@ import org.springframework.web.client.RestTemplate;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -61,6 +62,8 @@ public class PaymentService {
     private String passkey;
     @Value("${mpesa.callback-url}")
     private String callbackUrl;
+    @Value("${mpesa.callback-secret:}")
+    private String callbackSecret;
     @Value("${mpesa.verify-callback:true}")
     private boolean verifyCallback;
 
@@ -154,7 +157,8 @@ public class PaymentService {
     }
 
     @Transactional
-    public void processMpesaCallback(MpesaCallbackRequest callbackRequest) {
+    public void processMpesaCallback(String suppliedCallbackSecret, MpesaCallbackRequest callbackRequest) {
+        verifyCallbackSecret(suppliedCallbackSecret);
         if (callbackRequest == null || callbackRequest.getBody() == null
                 || callbackRequest.getBody().getStkCallback() == null) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Invalid M-Pesa callback payload");
@@ -302,6 +306,19 @@ public class PaymentService {
         }
     }
 
+    private void verifyCallbackSecret(String suppliedCallbackSecret) {
+        if (isBlank(callbackSecret)) {
+            throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED,
+                    "M-Pesa callback secret is not configured");
+        }
+        if (isBlank(suppliedCallbackSecret)
+                || !MessageDigest.isEqual(
+                        callbackSecret.getBytes(StandardCharsets.UTF_8),
+                        suppliedCallbackSecret.getBytes(StandardCharsets.UTF_8))) {
+            throw new ApiException(ErrorCode.UNAUTHENTICATED, "Invalid M-Pesa callback credentials");
+        }
+    }
+
     private void requireOrderAccess(AuthenticatedUser actor, Order order) {
         if (actor == null || order == null) {
             throw new ApiException(ErrorCode.ACCESS_DENIED);
@@ -316,7 +333,8 @@ public class PaymentService {
 
     private void ensureConfigured() {
         if (isBlank(baseUrl) || isBlank(consumerKey) || isBlank(consumerSecret)
-                || isBlank(shortcode) || isBlank(passkey) || isBlank(callbackUrl)) {
+                || isBlank(shortcode) || isBlank(passkey) || isBlank(callbackUrl)
+                || isBlank(callbackSecret)) {
             throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED);
         }
     }

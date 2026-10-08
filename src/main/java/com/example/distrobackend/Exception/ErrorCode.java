@@ -22,6 +22,7 @@ public enum ErrorCode {
     ACCOUNT_DEACTIVATED(HttpStatus.FORBIDDEN, "Account is deactivated"),
 
     NOT_FOUND(HttpStatus.NOT_FOUND, "Resource not found"),
+    STOCK_ITEM_NOT_FOUND(HttpStatus.NOT_FOUND, "Stock item not found"),
     STOCK_NOT_FOUND(HttpStatus.NOT_FOUND, "Stock item not found"),
     PAYMENT_NOT_FOUND(HttpStatus.NOT_FOUND, "Payment not found"),
     METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, "HTTP method not supported for this endpoint"),
@@ -29,10 +30,13 @@ public enum ErrorCode {
     DUPLICATE_EMAIL(HttpStatus.CONFLICT, "An account with this email already exists"),
     DUPLICATE_PHONE(HttpStatus.CONFLICT, "An account with this phone number already exists"),
     CONFLICT(HttpStatus.CONFLICT, "The request conflicts with existing data"),
-    INSUFFICIENT_STOCK(HttpStatus.CONFLICT, "Insufficient stock available"),
+    DUPLICATE_SKU(HttpStatus.CONFLICT, "A stock item with this SKU already exists in the organization"),
+    INSUFFICIENT_STOCK(HttpStatus.CONFLICT, "The requested stock movement exceeds available inventory"),
+    INVALID_STOCK_ADJUSTMENT(HttpStatus.BAD_REQUEST, "The stock movement type and quantity delta are inconsistent"),
+    INVALID_STATE_TRANSITION(HttpStatus.BAD_REQUEST, "The requested state transition is not allowed"),
+    DATABASE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "The data service is temporarily unavailable"),
     PAYMENT_NOT_CONFIGURED(HttpStatus.SERVICE_UNAVAILABLE, "Payment service is not configured"),
     PAYMENT_STATE_CONFLICT(HttpStatus.CONFLICT, "Payment is already in a terminal state"),
-    DATABASE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "The data service is temporarily unavailable"),
 
     INVALID_OTP(HttpStatus.BAD_REQUEST, "The verification code is incorrect"),
     OTP_EXPIRED(HttpStatus.BAD_REQUEST, "The verification code has expired. Request a new one"),

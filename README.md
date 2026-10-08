@@ -224,7 +224,8 @@ Default Docker database configuration:
 | Host port | `POSTGRES_PORT` (defaults to `5433`; choose another free port if needed) |
 | Container service | `db` |
 
-Connect to PostgreSQL from the repository root:
+Run the following from the repository root. Connect to PostgreSQL through the
+Compose service rather than the host port:
 
 ```bash
 docker compose exec db psql -U distro -d distro_backend
@@ -242,12 +243,16 @@ The initial migration is `V1__initial_schema.sql`. Add subsequent schema
 changes as new versioned migrations, for example:
 
 ```text
-V5__add_warehouse_table.sql
+V8__add_warehouse_table.sql
 ```
 
 Do not modify a migration that has already been applied to a shared database.
 Hibernate uses `ddl-auto=validate`; it validates the schema but does not create
 or alter tables automatically.
+
+When switching between branches with different migration histories, use a
+separate local database or reset the disposable development volume. Do not use
+`flyway repair` to hide a checksum mismatch in a shared or production database.
 
 For an existing database created before Flyway history was introduced, first
 verify that its schema matches `V1__initial_schema.sql`, then set
@@ -258,8 +263,64 @@ V3 derives ownership where it is unambiguous. If V3 reports unresolved rows,
 stop the API, backfill `organization_id` on the affected orders, stock items,
 and trips using an approved data-migration procedure, then start the API again.
 Only after those rows are reviewed should V3 add the foreign keys and NOT NULL
-constraints. This is an explicit compatibility decision, not a general
-production default; leave the setting false for new or unverified databases.
+constraints. V3 also fails closed when a legacy trip references order and stock
+records owned by different organizations. This is an explicit compatibility
+decision, not a general production default; leave the setting false for new or
+unverified databases.
+
+`V7__refine_trip_batch_schema.sql` installs the positive stop-sequence check as
+`NOT VALID` so legacy rows do not block startup. After reviewing and repairing
+any existing non-positive values, validate it from the database service:
+
+```sql
+ALTER TABLE trip_stops VALIDATE CONSTRAINT ck_trip_stops_sequence_positive;
+```
+
+`V6__scope_stock_sku_uniqueness_to_organization.sql` fails closed when an
+existing organization contains SKUs that differ only by case. Review conflicts
+before retrying the migration; for example:
+
+```sql
+SELECT organization_id, UPPER(sku) AS normalized_sku, COUNT(*)
+FROM stock_items
+GROUP BY organization_id, UPPER(sku)
+HAVING COUNT(*) > 1;
+```
+
+Do not edit an applied Flyway migration. The tenant-ownership migration V3 was
+corrected before this branch's first deployment; if an environment has already
+recorded a different V3 checksum, stop deployment. Before any checksum repair,
+verify both the schema and the existing ownership data. At minimum, confirm
+that there are no unresolved organization references and no trip whose order,
+stock, and assigned organization disagree:
+
+```sql
+SELECT 'orders_without_organization' AS check_name, COUNT(*) AS violations
+FROM orders WHERE organization_id IS NULL
+UNION ALL
+SELECT 'stock_without_organization', COUNT(*)
+FROM stock_items WHERE organization_id IS NULL
+UNION ALL
+SELECT 'trips_without_organization', COUNT(*)
+FROM trips WHERE organization_id IS NULL;
+
+SELECT t.id AS trip_id
+FROM trips t
+LEFT JOIN orders o ON o.id = t.order_id
+LEFT JOIN stock_items s ON s.id = t.stock_item_id
+WHERE (o.organization_id IS NOT NULL AND s.organization_id IS NOT NULL
+       AND o.organization_id IS DISTINCT FROM s.organization_id)
+   OR (t.organization_id IS NOT NULL
+       AND ((o.organization_id IS NOT NULL
+             AND t.organization_id IS DISTINCT FROM o.organization_id)
+         OR (s.organization_id IS NOT NULL
+             AND t.organization_id IS DISTINCT FROM s.organization_id)));
+```
+
+Only after those checks return zero violations, and the reviewed schema is
+confirmed compatible, may an approved Flyway checksum repair be performed
+against the exact reviewed artifact. Never use `flyway repair` to conceal an
+unreviewed schema or ownership difference.
 
 ## Host-based development
 
@@ -282,6 +343,9 @@ $env:DATABASE_USERNAME='distro'
 $env:DATABASE_PASSWORD='<value of POSTGRES_PASSWORD in .env>'
 $env:JWT_SECRET='<generated JWT secret>'
 $env:CORS_ALLOWED_ORIGINS='http://localhost:4200'
+$env:SERVER_PORT='8080'
+# Optional local/demo data only; omit in production.
+$env:SPRING_PROFILES_ACTIVE='local'
 ```
 
 macOS/Linux:
@@ -292,6 +356,9 @@ export DATABASE_USERNAME='distro'
 export DATABASE_PASSWORD='<value of POSTGRES_PASSWORD in .env>'
 export JWT_SECRET='<generated JWT secret>'
 export CORS_ALLOWED_ORIGINS='http://localhost:4200'
+export SERVER_PORT='8080'
+# Optional local/demo data only; omit in production.
+export SPRING_PROFILES_ACTIVE='local'
 ```
 
 Start the API from the repository root:
@@ -299,6 +366,27 @@ Start the API from the repository root:
 ```bash
 mvn spring-boot:run
 ```
+
+### M-Pesa configuration
+
+Payment initiation is disabled until the Daraja credentials are supplied.
+Configure these variables in the local, deployment, or secret-management
+environment; do not commit them:
+
+```text
+MPESA_CONSUMER_KEY
+MPESA_CONSUMER_SECRET
+MPESA_SHORTCODE
+MPESA_PASSKEY
+MPESA_CALLBACK_URL
+MPESA_CALLBACK_SECRET
+MPESA_AUTH_URL
+MPESA_STK_PUSH_URL
+```
+
+The callback endpoint requires `X-Mpesa-Callback-Secret` to match
+`MPESA_CALLBACK_SECRET`. Configure that header at the payment gateway or
+integration layer before enabling live callbacks.
 
 ## Build and test
 

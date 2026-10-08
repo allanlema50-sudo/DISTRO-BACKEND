@@ -1,24 +1,38 @@
 package com.example.distrobackend.service;
 
 import com.example.distrobackend.Domain.entity.Organization;
+import com.example.distrobackend.Domain.entity.RestockRequest;
 import com.example.distrobackend.Domain.entity.StockItem;
 import com.example.distrobackend.Domain.entity.StockMovement;
 import com.example.distrobackend.Domain.enums.StockMovementType;
-import com.example.distrobackend.Domain.enums.UserRole;
+import com.example.distrobackend.Domain.enums.Organizationtype;
+import com.example.distrobackend.Domain.enums.RestockRequestStatus;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.Exception.InsufficientStockException;
-import com.example.distrobackend.dto.*;
+import com.example.distrobackend.Exception.ResourceNotFoundException;
+import com.example.distrobackend.dto.CreateStockItemRequest;
+import com.example.distrobackend.dto.ProductResponse;
+import com.example.distrobackend.dto.StockAdjustmentRequest;
+import com.example.distrobackend.dto.StockItemResponse;
+import com.example.distrobackend.dto.StockMovementResponse;
+import com.example.distrobackend.dto.CreateRestockRequest;
+import com.example.distrobackend.dto.RestockRequestResponse;
+import com.example.distrobackend.dto.UpdateRestockRequestStatus;
+import com.example.distrobackend.dto.UpdateStockItemRequest;
 import com.example.distrobackend.repository.OrganizationRepository;
 import com.example.distrobackend.repository.StockItemRepository;
 import com.example.distrobackend.repository.StockMovementRepository;
+import com.example.distrobackend.repository.RestockRequestRepository;
 import com.example.distrobackend.repository.UserRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 @Service
@@ -29,156 +43,311 @@ public class StockService {
     private final StockMovementRepository stockMovementRepository;
     private final OrganizationRepository organizationRepository;
     private final UserRepository userRepository;
+    private final RestockRequestRepository restockRequestRepository;
 
     @Transactional(readOnly = true)
-    public List<StockItemResponse> list(AuthenticatedUser actor, UUID organizationId, boolean activeOnly) {
-        requireCatalogAccess(actor, organizationId);
-        List<StockItem> items = activeOnly
-                ? stockItemRepository.findByOrganizationIdAndActiveTrueOrderByNameAsc(organizationId)
-                : stockItemRepository.findByOrganizationIdOrderByNameAsc(organizationId);
-        return items.stream().map(this::toResponse).toList();
+    public Page<StockItemResponse> list(AuthenticatedUser user, Pageable pageable) {
+        UUID organizationId = organizationId(user);
+        return stockItemRepository.findByOrganization_Id(organizationId, pageable)
+                .map(StockItemResponse::from);
     }
 
     @Transactional(readOnly = true)
-    public StockItemResponse get(AuthenticatedUser actor, UUID organizationId, UUID itemId) {
-        requireCatalogAccess(actor, organizationId);
-        return toResponse(stockItemRepository.findByIdAndOrganizationId(itemId, organizationId)
-                .orElseThrow(() -> new ApiException(ErrorCode.STOCK_NOT_FOUND)));
+    public Page<StockItemResponse> listLowStock(AuthenticatedUser user, Pageable pageable) {
+        UUID organizationId = organizationId(user);
+        return stockItemRepository.findLowStockByOrganizationId(organizationId, pageable)
+                .map(StockItemResponse::from);
+    }
+
+    @Transactional(readOnly = true)
+    public Page<ProductResponse> catalog(AuthenticatedUser user, String category, Pageable pageable) {
+        requireCatalogRole(user);
+        String normalizedCategory = category == null || category.isBlank() ? null : category.trim();
+        Page<StockItem> items = switch (user.role()) {
+            case CUSTOMER -> stockItemRepository.findActiveCatalog(normalizedCategory, pageable);
+            case MANUFACTURER_ADMIN, MANUFACTURER_STAFF ->
+                    stockItemRepository.findActiveCatalogForOrganization(
+                            requiredCatalogOrganization(user), normalizedCategory, pageable);
+            case DISTRIBUTOR_ADMIN, DISTRIBUTOR_STAFF ->
+                    stockItemRepository.findActiveCatalogForDistributor(
+                            requiredCatalogOrganization(user), Organizationtype.MANUFACTURER,
+                            normalizedCategory, pageable);
+            default -> throw new ApiException(ErrorCode.ACCESS_DENIED);
+        };
+        return items.map(ProductResponse::from);
+    }
+
+    @Transactional(readOnly = true)
+    public java.util.List<String> categories(AuthenticatedUser user) {
+        requireCatalogRole(user);
+        return switch (user.role()) {
+            case CUSTOMER -> stockItemRepository.findActiveCategories();
+            case MANUFACTURER_ADMIN, MANUFACTURER_STAFF ->
+                    stockItemRepository.findActiveCategoriesForOrganization(requiredCatalogOrganization(user));
+            case DISTRIBUTOR_ADMIN, DISTRIBUTOR_STAFF ->
+                    stockItemRepository.findActiveCategoriesForDistributor(
+                            requiredCatalogOrganization(user), Organizationtype.MANUFACTURER);
+            default -> throw new ApiException(ErrorCode.ACCESS_DENIED);
+        };
+    }
+
+    @Transactional(readOnly = true)
+    public Page<StockItemResponse> availability(AuthenticatedUser user, UUID organizationId, Pageable pageable) {
+        if (user == null || user.organizationId() == null
+                || !user.organizationId().equals(organizationId)) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        Organization organization = organizationRepository.findById(organizationId)
+                .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.NOT_FOUND));
+        if (organization.getType() != Organizationtype.DISTRIBUTOR) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Availability is only supported for distributors");
+        }
+        return stockItemRepository.findByOrganization_IdAndActiveTrue(organizationId, pageable)
+                .map(StockItemResponse::from);
+    }
+
+    @Transactional(readOnly = true)
+    public StockItemResponse get(AuthenticatedUser user, UUID id) {
+        return StockItemResponse.from(findItem(user, id));
     }
 
     @Transactional
-    public StockItemResponse create(AuthenticatedUser actor, CreateStockItemRequest request) {
-        UUID organizationId = requireOrganization(actor);
-        String sku = request.sku().trim();
-        if (stockItemRepository.existsByOrganizationIdAndSku(organizationId, sku)) {
-            throw new ApiException(ErrorCode.CONFLICT, "SKU already exists in this organization");
+    public StockItemResponse create(AuthenticatedUser user, CreateStockItemRequest request) {
+        UUID organizationId = organizationId(user);
+        String sku = normalizeSku(request.sku());
+        if (stockItemRepository.existsByOrganization_IdAndSkuIgnoreCase(organizationId, sku)) {
+            throw new ApiException(ErrorCode.DUPLICATE_SKU);
         }
 
         Organization organization = organizationRepository.findById(organizationId)
-                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Organization not found"));
+                .orElseThrow(() -> new ApiException(ErrorCode.ACCESS_DENIED));
         StockItem item = new StockItem();
         item.setOrganization(organization);
         item.setSku(sku);
         item.setName(request.name().trim());
-        item.setCategory(request.category());
+        item.setCategory(trimToNull(request.category()));
         item.setUnitPrice(request.unitPrice());
-        item.setQuantityOnHand(request.quantityOnHand());
+        item.setQuantityOnHand(request.initialQuantity());
         item.setReorderThreshold(request.reorderThreshold());
         item.setActive(true);
-        StockItem saved = stockItemRepository.save(item);
+        stockItemRepository.saveAndFlush(item);
 
-        if (request.quantityOnHand() > 0) {
-            saveMovement(saved, actor, request.quantityOnHand(), StockMovementType.RESTOCK_IN,
-                    "INITIAL_STOCK", "Initial stock");
+        if (request.initialQuantity() > 0) {
+            StockMovement openingMovement = new StockMovement();
+            openingMovement.setStockItem(item);
+            openingMovement.setMovementType(StockMovementType.RESTOCK_IN);
+            openingMovement.setQuantityDelta(request.initialQuantity());
+            openingMovement.setReferenceType("OPENING_BALANCE");
+            openingMovement.setPerformedBy(userRepository.getReferenceById(user.userId()));
+            openingMovement.setNote("Opening stock");
+            stockMovementRepository.save(openingMovement);
         }
-        return toResponse(saved);
+        return StockItemResponse.from(item);
     }
 
     @Transactional
-    public StockItemResponse update(AuthenticatedUser actor, UUID itemId, UpdateStockItemRequest request) {
-        UUID organizationId = requireOrganization(actor);
-        StockItem item = stockItemRepository.findByIdAndOrganizationIdForUpdate(itemId, organizationId)
-                .orElseThrow(() -> new ApiException(ErrorCode.STOCK_NOT_FOUND));
-        item.setName(request.name().trim());
-        item.setCategory(request.category());
-        item.setUnitPrice(request.unitPrice());
-        item.setReorderThreshold(request.reorderThreshold());
-        item.setActive(request.active());
-        return toResponse(stockItemRepository.save(item));
+    public StockItemResponse update(AuthenticatedUser user, UUID id, UpdateStockItemRequest request) {
+        if (request.name() == null && request.category() == null && request.unitPrice() == null
+                && request.reorderThreshold() == null && request.active() == null) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "At least one product field must be supplied");
+        }
+        StockItem item = findItem(user, id);
+        if (request.name() != null) {
+            String name = request.name().trim();
+            if (name.isEmpty()) {
+                throw new ApiException(ErrorCode.BAD_REQUEST, "Product name must not be blank");
+            }
+            item.setName(name);
+        }
+        if (request.category() != null) {
+            item.setCategory(trimToNull(request.category()));
+        }
+        if (request.unitPrice() != null) {
+            item.setUnitPrice(request.unitPrice());
+        }
+        if (request.reorderThreshold() != null) {
+            item.setReorderThreshold(request.reorderThreshold());
+        }
+        if (request.active() != null) {
+            item.setActive(request.active());
+        }
+        return StockItemResponse.from(stockItemRepository.save(item));
     }
 
     @Transactional
-    public StockItemResponse adjust(AuthenticatedUser actor, UUID itemId, StockAdjustmentRequest request) {
-        UUID organizationId = requireOrganization(actor);
-        if (request.quantityDelta() == 0) {
-            throw new ApiException(ErrorCode.BAD_REQUEST, "quantityDelta must not be zero");
+    public StockMovementResponse adjust(
+            AuthenticatedUser user, UUID id, StockAdjustmentRequest request) {
+        UUID organizationId = organizationId(user);
+        StockItem item = stockItemRepository.findByIdAndOrganizationIdForUpdate(id, organizationId)
+                .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.STOCK_ITEM_NOT_FOUND));
+        validateMovement(request.movementType(), request.quantityDelta());
+
+        int newQuantity;
+        try {
+            newQuantity = Math.addExact(item.getQuantityOnHand(), request.quantityDelta());
+        } catch (ArithmeticException ex) {
+            throw new ApiException(ErrorCode.INVALID_STOCK_ADJUSTMENT);
         }
-        validateMovementDirection(request.quantityDelta(), request.movementType());
-        StockItem item = stockItemRepository.findByIdAndOrganizationIdForUpdate(itemId, organizationId)
-                .orElseThrow(() -> new ApiException(ErrorCode.STOCK_NOT_FOUND));
-        long resultingQuantity = (long) item.getQuantityOnHand() + request.quantityDelta();
-        if (resultingQuantity < 0) {
-            throw new InsufficientStockException("Stock quantity cannot become negative");
+        if (newQuantity < 0) {
+            throw new InsufficientStockException();
         }
-        if (resultingQuantity > Integer.MAX_VALUE) {
-            throw new ApiException(ErrorCode.BAD_REQUEST, "Stock quantity exceeds the supported maximum");
-        }
-        item.setQuantityOnHand((int) resultingQuantity);
-        StockItem saved = stockItemRepository.save(item);
-        saveMovement(saved, actor, request.quantityDelta(), request.movementType(),
-                "MANUAL", request.note().trim());
-        return toResponse(saved);
+
+        item.setQuantityOnHand(newQuantity);
+        stockItemRepository.save(item);
+
+        StockMovement movement = new StockMovement();
+        movement.setStockItem(item);
+        movement.setMovementType(request.movementType());
+        movement.setQuantityDelta(request.quantityDelta());
+        movement.setReferenceType(trimToNull(request.referenceType()));
+        movement.setReferenceId(request.referenceId());
+        movement.setPerformedBy(userRepository.getReferenceById(user.userId()));
+        movement.setNote(trimToNull(request.note()));
+        return StockMovementResponse.from(stockMovementRepository.saveAndFlush(movement));
     }
 
     @Transactional(readOnly = true)
-    public List<StockMovementResponse> movements(AuthenticatedUser actor, UUID itemId) {
-        UUID organizationId = requireOrganization(actor);
-        if (stockItemRepository.findByIdAndOrganizationId(itemId, organizationId).isEmpty()) {
-            throw new ApiException(ErrorCode.STOCK_NOT_FOUND);
-        }
+    public Page<StockMovementResponse> movements(
+            AuthenticatedUser user, UUID id, Pageable pageable) {
+        UUID organizationId = organizationId(user);
+        findItem(user, id);
         return stockMovementRepository
-                .findByStockItemIdAndStockItemOrganizationIdOrderByCreatedAtDesc(itemId, organizationId)
-                .stream().map(this::toMovementResponse).toList();
+                .findByStockItem_IdAndStockItem_Organization_IdOrderByCreatedAtDesc(id, organizationId, pageable)
+                .map(StockMovementResponse::from);
     }
 
-    private UUID requireOrganization(AuthenticatedUser actor) {
-        if (actor == null || actor.organizationId() == null
-                || actor.role() == UserRole.CUSTOMER || actor.role() == UserRole.DRIVER) {
-            throw new ApiException(ErrorCode.ACCESS_DENIED, "An organization staff identity is required");
-        }
-        return actor.organizationId();
-    }
-
-    private void requireCatalogAccess(AuthenticatedUser actor, UUID organizationId) {
-        if (actor == null || organizationId == null) {
+    @Transactional
+    public RestockRequestResponse createRestockRequest(
+            AuthenticatedUser user, CreateRestockRequest request) {
+        Organization distributor = organization(user);
+        if (distributor.getType() != Organizationtype.DISTRIBUTOR) {
             throw new ApiException(ErrorCode.ACCESS_DENIED);
         }
-        // Customers may browse a distributor catalog in order to place an
-        // order. Every organization-bound identity remains tenant-scoped.
-        if (actor.role() != UserRole.CUSTOMER
-                && !organizationId.equals(actor.organizationId())) {
-            throw new ApiException(ErrorCode.ACCESS_DENIED,
-                    "You do not have access to this organization's catalog");
+
+        StockItem stockItem = stockItemRepository.findByIdAndOrganization_Id(
+                        request.stockItemId(), distributor.getId())
+                .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.STOCK_ITEM_NOT_FOUND));
+        Organization manufacturer = organizationRepository.findById(request.manufacturerOrganizationId())
+                .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.NOT_FOUND));
+        if (manufacturer.getType() != Organizationtype.MANUFACTURER) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Restock requests must target a manufacturer");
+        }
+
+        RestockRequest restockRequest = new RestockRequest();
+        restockRequest.setDistributorOrganization(distributor);
+        restockRequest.setManufacturerOrganization(manufacturer);
+        restockRequest.setStockItem(stockItem);
+        restockRequest.setRequestedQuantity(request.requestedQuantity());
+        restockRequest.setRequestedBy(userRepository.getReferenceById(user.userId()));
+        restockRequest.setNote(trimToNull(request.note()));
+        return RestockRequestResponse.from(restockRequestRepository.saveAndFlush(restockRequest));
+    }
+
+    @Transactional(readOnly = true)
+    public Page<RestockRequestResponse> restockRequests(
+            AuthenticatedUser user, Pageable pageable) {
+        UUID organizationId = organizationId(user);
+        Page<RestockRequestResponse> requests;
+        if (user.role().organizationtype() == Organizationtype.MANUFACTURER) {
+            requests = restockRequestRepository
+                    .findByManufacturerOrganization_IdOrderByCreatedAtDesc(organizationId, pageable)
+                    .map(RestockRequestResponse::from);
+        } else if (user.role().organizationtype() == Organizationtype.DISTRIBUTOR) {
+            requests = restockRequestRepository
+                    .findByDistributorOrganization_IdOrderByCreatedAtDesc(organizationId, pageable)
+                    .map(RestockRequestResponse::from);
+        } else {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        return requests;
+    }
+
+    @Transactional
+    public RestockRequestResponse updateRestockRequestStatus(
+            AuthenticatedUser user, UUID id, UpdateRestockRequestStatus request) {
+        UUID organizationId = organizationId(user);
+        RestockRequest restockRequest;
+        if (user.role().organizationtype() == Organizationtype.MANUFACTURER) {
+            restockRequest = restockRequestRepository.findByIdAndManufacturerOrganization_Id(id, organizationId)
+                    .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.NOT_FOUND));
+            if (request.status() != RestockRequestStatus.APPROVED
+                    && request.status() != RestockRequestStatus.REJECTED) {
+                throw new ApiException(ErrorCode.INVALID_STATE_TRANSITION);
+            }
+        } else if (user.role().organizationtype() == Organizationtype.DISTRIBUTOR) {
+            restockRequest = restockRequestRepository.findByIdAndDistributorOrganization_Id(id, organizationId)
+                    .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.NOT_FOUND));
+            if (request.status() != RestockRequestStatus.CANCELLED) {
+                throw new ApiException(ErrorCode.INVALID_STATE_TRANSITION);
+            }
+        } else {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+
+        if (restockRequest.getStatus() != RestockRequestStatus.PENDING) {
+            throw new ApiException(ErrorCode.INVALID_STATE_TRANSITION);
+        }
+        restockRequest.setStatus(request.status());
+        if (request.note() != null) {
+            restockRequest.setNote(trimToNull(request.note()));
+        }
+        return RestockRequestResponse.from(restockRequestRepository.save(restockRequest));
+    }
+
+    private Organization organization(AuthenticatedUser user) {
+        UUID id = organizationId(user);
+        Organization organization = organizationRepository.findById(id)
+                .orElseThrow(() -> new ApiException(ErrorCode.ACCESS_DENIED));
+        if (user.organizationType() != null && organization.getType() != user.organizationType()) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        return organization;
+    }
+
+    private StockItem findItem(AuthenticatedUser user, UUID id) {
+        return stockItemRepository.findByIdAndOrganization_Id(id, organizationId(user))
+                .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.STOCK_ITEM_NOT_FOUND));
+    }
+
+    private static UUID organizationId(AuthenticatedUser user) {
+        if (user == null || user.organizationId() == null) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        return user.organizationId();
+    }
+
+    private static UUID requiredCatalogOrganization(AuthenticatedUser user) {
+        if (user == null || user.organizationId() == null) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        return user.organizationId();
+    }
+
+    private static void requireCatalogRole(AuthenticatedUser user) {
+        if (user == null || user.role() == null) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
         }
     }
 
-    private void saveMovement(StockItem item, AuthenticatedUser actor, int delta,
-                              StockMovementType type, String referenceType, String note) {
-        StockMovement movement = new StockMovement();
-        movement.setStockItem(item);
-        movement.setMovementType(type);
-        movement.setQuantityDelta(delta);
-        movement.setReferenceType(referenceType);
-        movement.setPerformedBy(userRepository.getReferenceById(actor.userId()));
-        movement.setNote(note);
-        stockMovementRepository.save(movement);
-    }
-
-    private void validateMovementDirection(int delta, StockMovementType type) {
-        if (type == null) {
-            throw new ApiException(ErrorCode.BAD_REQUEST, "movementType is required");
-        }
-        boolean invalid = switch (type) {
-            case RESTOCK_IN, RETURN -> delta < 0;
-            case SALE_OUT, DAMAGE -> delta > 0;
-            case ADJUSTMENT -> false;
-        };
-        if (invalid) {
-            throw new ApiException(ErrorCode.BAD_REQUEST,
-                    "quantityDelta direction does not match movementType " + type);
+    private static void validateMovement(StockMovementType type, Integer delta) {
+        if (type == null || delta == null || delta == 0
+                || (type == StockMovementType.RESTOCK_IN && delta < 0)
+                || (type == StockMovementType.RETURN && delta < 0)
+                || (type == StockMovementType.SALE_OUT && delta > 0)
+                || (type == StockMovementType.DAMAGE && delta > 0)) {
+            throw new ApiException(ErrorCode.INVALID_STOCK_ADJUSTMENT);
         }
     }
 
-    private StockItemResponse toResponse(StockItem item) {
-        return new StockItemResponse(item.getId(), item.getOrganization().getId(), item.getSku(),
-                item.getName(), item.getCategory(), item.getUnitPrice(), item.getQuantityOnHand(),
-                item.getReorderThreshold(), item.isActive(), item.getCreatedAt(), item.getUpdatedAt());
+    private static String normalizeSku(String sku) {
+        return sku.trim().toUpperCase(Locale.ROOT);
     }
 
-    private StockMovementResponse toMovementResponse(StockMovement movement) {
-        return new StockMovementResponse(movement.getId(), movement.getStockItem().getId(),
-                movement.getMovementType(), movement.getQuantityDelta(), movement.getReferenceType(),
-                movement.getReferenceId(), movement.getPerformedBy() == null ? null : movement.getPerformedBy().getId(),
-                movement.getNote(), movement.getCreatedAt());
+    private static String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 }

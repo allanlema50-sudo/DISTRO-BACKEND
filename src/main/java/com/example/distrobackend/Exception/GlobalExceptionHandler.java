@@ -2,10 +2,11 @@ package com.example.distrobackend.Exception;
 
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
-import lombok.extern.slf4j.Slf4j;
 import jakarta.validation.ConstraintViolationException;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DataAccessException;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -13,9 +14,9 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.ErrorResponse;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
-import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -51,8 +52,8 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(ConstraintViolationException.class)
-    public ResponseEntity<ApiError> handleConstraintViolation(ConstraintViolationException ex,
-                                                               HttpServletRequest request) {
+    public ResponseEntity<ApiError> handleConstraintViolation(
+            ConstraintViolationException ex, HttpServletRequest request) {
         List<ApiError.FieldViolation> violations = ex.getConstraintViolations().stream()
                 .map(v -> new ApiError.FieldViolation(v.getPropertyPath().toString(), v.getMessage()))
                 .toList();
@@ -68,14 +69,14 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
-    public ResponseEntity<ApiError> handleUnsupportedMediaType(HttpMediaTypeNotSupportedException ex,
-                                                                HttpServletRequest request) {
+    public ResponseEntity<ApiError> handleUnsupportedMediaType(
+            HttpMediaTypeNotSupportedException ex, HttpServletRequest request) {
         return build(ErrorCode.UNSUPPORTED_MEDIA_TYPE, ErrorCode.UNSUPPORTED_MEDIA_TYPE.defaultMessage(), request);
     }
 
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
-    public ResponseEntity<ApiError> handleUnsupportedMethod(HttpRequestMethodNotSupportedException ex,
-                                                             HttpServletRequest request) {
+    public ResponseEntity<ApiError> handleUnsupportedMethod(
+            HttpRequestMethodNotSupportedException ex, HttpServletRequest request) {
         return build(ErrorCode.METHOD_NOT_ALLOWED, ErrorCode.METHOD_NOT_ALLOWED.defaultMessage(), request);
     }
 
@@ -98,8 +99,15 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(OptimisticLockingFailureException.class)
-    public ResponseEntity<ApiError> handleOptimisticLock(OptimisticLockingFailureException ex,
-                                                         HttpServletRequest request) {
+    public ResponseEntity<ApiError> handleOptimisticLock(
+            OptimisticLockingFailureException ex, HttpServletRequest request) {
+        return build(ErrorCode.CONFLICT,
+                "The resource was changed by another request. Retry with the latest representation", request);
+    }
+
+    @ExceptionHandler(ObjectOptimisticLockingFailureException.class)
+    public ResponseEntity<ApiError> handleObjectOptimisticLock(
+            ObjectOptimisticLockingFailureException ex, HttpServletRequest request) {
         return build(ErrorCode.CONFLICT,
                 "The resource was changed by another request. Retry with the latest representation", request);
     }
@@ -125,8 +133,8 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(NoResourceFoundException.class)
-    public ResponseEntity<ApiError> handleMissingResource(NoResourceFoundException ex,
-                                                          HttpServletRequest request) {
+    public ResponseEntity<ApiError> handleMissingResource(
+            NoResourceFoundException ex, HttpServletRequest request) {
         return build(ErrorCode.NOT_FOUND, ErrorCode.NOT_FOUND.defaultMessage(), request);
     }
 

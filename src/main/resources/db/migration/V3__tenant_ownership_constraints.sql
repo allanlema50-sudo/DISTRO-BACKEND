@@ -14,15 +14,44 @@ WHERE o.organization_id IS NULL
 UPDATE stock_items si
 SET organization_id = derived.organization_id
 FROM (
-    SELECT oi.stock_item_id, MIN(o.organization_id) AS organization_id
+    SELECT oi.stock_item_id, o.organization_id
     FROM order_items oi
     JOIN orders o ON o.id = oi.order_id
     WHERE o.organization_id IS NOT NULL
+      AND NOT EXISTS (
+          SELECT 1
+          FROM order_items oi_conflict
+          JOIN orders o_conflict ON o_conflict.id = oi_conflict.order_id
+          WHERE oi_conflict.stock_item_id = oi.stock_item_id
+            AND o_conflict.organization_id IS NOT NULL
+            AND o_conflict.organization_id IS DISTINCT FROM o.organization_id
+      )
     GROUP BY oi.stock_item_id
-    HAVING COUNT(DISTINCT o.organization_id) = 1
+           , o.organization_id
 ) derived
 WHERE si.id = derived.stock_item_id
   AND si.organization_id IS NULL;
+
+-- Reject ambiguous legacy ownership before assigning an authorization tenant.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM trips t
+        LEFT JOIN orders o ON o.id = t.order_id
+        LEFT JOIN stock_items si ON si.id = t.stock_item_id
+        WHERE (o.organization_id IS NOT NULL
+               AND si.organization_id IS NOT NULL
+               AND o.organization_id IS DISTINCT FROM si.organization_id)
+           OR (t.organization_id IS NOT NULL
+               AND ((o.organization_id IS NOT NULL
+                     AND t.organization_id IS DISTINCT FROM o.organization_id)
+                 OR (si.organization_id IS NOT NULL
+                     AND t.organization_id IS DISTINCT FROM si.organization_id)))
+    ) THEN
+        RAISE EXCEPTION 'V3 found trips with conflicting legacy organization ownership; resolve trip references before migration';
+    END IF;
+END $$;
 
 -- Derive trip ownership from its existing order or stock reference.
 UPDATE trips t

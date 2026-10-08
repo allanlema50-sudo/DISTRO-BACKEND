@@ -65,6 +65,17 @@ public class TripController {
         return tripService.confirmStopDelivery(me, tripId, stopId, request);
     }
 
+    @PostMapping("/{tripId}/stops/{stopId}/delivery-otp")
+    public void issueDeliveryOtp(
+            @AuthenticationPrincipal AuthenticatedUser me,
+            @PathVariable UUID tripId,
+            @PathVariable UUID stopId) {
+        if (me.role() != UserRole.CUSTOMER) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED, "Only customers may request delivery OTPs");
+        }
+        tripService.issueDeliveryOtp(me.userId(), tripId, stopId);
+    }
+
     @PostMapping("/{tripId}/location")
     public LocationPingResponse recordLocation(
             @AuthenticationPrincipal AuthenticatedUser me,

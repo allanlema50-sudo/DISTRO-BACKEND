@@ -23,13 +23,13 @@ import java.util.UUID;
 @Getter
 @Setter
 @NoArgsConstructor
-public class Trip { 
+public class Trip {
     @Id
     @GeneratedValue
     @JdbcTypeCode(SqlTypes.UUID)
     private UUID id;
 
-    @Column(name = "trip_number", nullable = false, unique = true)
+    @Column(name = "trip_number", nullable = false, unique = true, length = 36)
     private String tripNumber;
 
     @Enumerated(EnumType.STRING)
@@ -44,6 +44,19 @@ public class Trip {
     @JoinColumn(name = "rider_id")
     private User rider;
 
+    /** Legacy direct delivery/restock links retained for tracking authorization. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "order_id")
+    private Order order;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "stock_item_id")
+    private StockItem stockItem;
+
+    @Column(name = "restock_quantity")
+    private Integer restockQuantity;
+
+    /** Organization responsible for the trip and its tracking feed. */
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "organization_id", nullable = false)
     private Organization organization;
@@ -81,7 +94,6 @@ public class Trip {
     @Version
     @Column(name = "version", nullable = false)
     private long version;
-    
     public void addStop(TripStop stop) {
         stops.add(stop);
         stop.setTrip(this);

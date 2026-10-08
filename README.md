@@ -182,6 +182,38 @@ Purchase-order settlement records are currently exposed as a read-only ledger.
 They are initialized as `PENDING`; provider reconciliation, refunds, and
 reversals remain part of the later platform payment-admin phase.
 
+## Product, offer, warehouse, and order flow
+
+The product catalog uses a hybrid model:
+
+- A manufacturer creates the source product under its organization.
+- A distributor creates an offer for that source product and assigns it to one
+  of the distributor's active warehouses. The offer owns its selling price and
+  physical quantity.
+- Customers browse active distributor offers and place orders against offer
+  IDs. Manufacturer source-product IDs are not orderable by customers.
+- Distributor staff can read the durable notification feed for rejected orders
+  and may also subscribe to `/topic/organizations/{organizationId}/notifications`.
+
+Typical API flow:
+
+```text
+POST /api/v1/warehouses
+GET  /api/v1/warehouses
+POST /api/stock/offers
+PATCH /api/stock/offers/{offerId}
+GET  /api/products
+POST /api/v1/orders
+GET  /api/v1/notifications
+```
+
+Order creation locks each requested offer in a deterministic order and reserves
+available quantity atomically. A request that exceeds available quantity is
+rejected with `INSUFFICIENT_STOCK` and a durable `ORDER_STOCK_REJECTED`
+notification is created for the distributor. Reservations are released when a
+pending payment fails or an order is cancelled; verified payment commits the
+reserved quantity.
+
 All controller and security failures use the common `ApiError` response shape:
 
 ```json
@@ -240,10 +272,11 @@ src/main/resources/db/migration/
 ```
 
 The initial migration is `V1__initial_schema.sql`. Add subsequent schema
-changes as new versioned migrations, for example:
+changes as new versioned migrations. The current warehouse/offer/reservation
+migration is:
 
 ```text
-V8__add_warehouse_table.sql
+V8__distributor_offers_warehouses_and_reservations.sql
 ```
 
 Do not modify a migration that has already been applied to a shared database.
@@ -255,7 +288,10 @@ separate local database or reset the disposable development volume. Do not use
 `flyway repair` to hide a checksum mismatch in a shared or production database.
 
 For an existing database created before Flyway history was introduced, first
-verify that its schema matches `V1__initial_schema.sql`, then set
+verify that its schema matches `V1__initial_schema.sql` and review existing
+ownership data. Confirm that every order, stock item, and trip has the intended
+organization owner and that no trip references records belonging to conflicting
+organizations. Only after those checks should you set
 `FLYWAY_BASELINE_ON_MIGRATE=true` and `FLYWAY_BASELINE_VERSION=1` in `.env`.
 The baseline only records the existing schema as V1; it does not perform the
 tenant ownership migration. On the first startup, V2 expands the schema and

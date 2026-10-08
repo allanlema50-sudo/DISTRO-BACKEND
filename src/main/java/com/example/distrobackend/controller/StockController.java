@@ -7,6 +7,8 @@ import com.example.distrobackend.dto.StockAdjustmentRequest;
 import com.example.distrobackend.dto.StockItemResponse;
 import com.example.distrobackend.dto.StockMovementResponse;
 import com.example.distrobackend.dto.UpdateStockItemRequest;
+import com.example.distrobackend.dto.CreateDistributorOfferRequest;
+import com.example.distrobackend.dto.UpdateDistributorOfferRequest;
 import com.example.distrobackend.dto.UpdateRestockRequestStatus;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.service.StockService;
@@ -93,15 +95,32 @@ public class StockController {
     }
 
     @PostMapping("/items")
-    @PreAuthorize("hasAnyRole('MANUFACTURER_ADMIN','MANUFACTURER_STAFF','DISTRIBUTOR_ADMIN','DISTRIBUTOR_STAFF') and @tenantAccess.hasOrganization(authentication)")
+    @PreAuthorize("hasAnyRole('MANUFACTURER_ADMIN','MANUFACTURER_STAFF') and @tenantAccess.hasOrganization(authentication)")
     public StockItemResponse create(
             @AuthenticationPrincipal AuthenticatedUser user,
             @Valid @RequestBody CreateStockItemRequest request) {
         return stockService.create(user, request);
     }
 
+    @PostMapping("/offers")
+    @PreAuthorize("hasAnyRole('DISTRIBUTOR_ADMIN','DISTRIBUTOR_STAFF') and @tenantAccess.hasOrganization(authentication)")
+    public StockItemResponse createOffer(
+            @AuthenticationPrincipal AuthenticatedUser user,
+            @Valid @RequestBody CreateDistributorOfferRequest request) {
+        return stockService.createDistributorOffer(user, request);
+    }
+
+    @PatchMapping("/offers/{id}")
+    @PreAuthorize("hasAnyRole('DISTRIBUTOR_ADMIN','DISTRIBUTOR_STAFF') and @tenantAccess.hasOrganization(authentication)")
+    public StockItemResponse updateOffer(
+            @AuthenticationPrincipal AuthenticatedUser user,
+            @PathVariable UUID id,
+            @Valid @RequestBody UpdateDistributorOfferRequest request) {
+        return stockService.updateDistributorOffer(user, id, request);
+    }
+
     @PatchMapping("/items/{id}")
-    @PreAuthorize("hasAnyRole('MANUFACTURER_ADMIN','MANUFACTURER_STAFF','DISTRIBUTOR_ADMIN','DISTRIBUTOR_STAFF') and @tenantAccess.hasOrganization(authentication)")
+    @PreAuthorize("hasAnyRole('MANUFACTURER_ADMIN','MANUFACTURER_STAFF') and @tenantAccess.hasOrganization(authentication)")
     public StockItemResponse update(
             @AuthenticationPrincipal AuthenticatedUser user,
             @PathVariable UUID id,

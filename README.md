@@ -1,23 +1,41 @@
 # Distro Backend
 
-Spring Boot backend for the LogiFlow distribution platform.
+Spring Boot backend for the LogiFlow distribution platform. It provides
+authentication, manufacturer products, distributor offers and warehouses,
+orders, M-Pesa payments, procurement, stock operations, delivery trips, and
+live location updates.
 
-Unless stated otherwise, commands in this document are executed from the
-repository root (`DISTRO-BACKEND`).
+Commands in this document are run from the repository root:
 
-## Requirements
+```text
+DISTRO-BACKEND/
+```
 
-- Docker Desktop with Docker Compose
+## Before you start
+
+Install the following locally:
+
 - Git
+- Docker Desktop with the Docker Compose plugin
 - Java 17 or later
-- Maven 3.9.x for host-based development
+- Maven 3.9.x if you want to run the API directly on your machine
+- An HTTP client such as Swagger UI, Postman, Insomnia, `curl`, or PowerShell
 
-The project is compiled for Java 17 and has been verified with Java 21.
+Docker Desktop must be open and its engine must be running before any
+`docker compose` command. Docker is the recommended workflow because it runs
+the API and PostgreSQL with the same configuration used by the project image.
 
-## Configuration
+The backend uses PostgreSQL 16, Flyway migrations, JWT bearer authentication,
+Spring WebSocket/STOMP, and OpenAPI/Swagger.
 
-Create a local environment file from the committed template. Run from the
-repository root.
+## Clone and configure
+
+```bash
+git clone <repository-url>
+cd DISTRO-BACKEND
+```
+
+Create the local environment file from the committed template.
 
 PowerShell:
 
@@ -31,38 +49,16 @@ macOS/Linux:
 cp .env.example .env
 ```
 
-Set the local database password and JWT signing secret in `.env`:
+At minimum, set these values in `.env` before starting Docker:
 
 ```dotenv
-POSTGRES_DB=distro_backend
-POSTGRES_USER=distro
-POSTGRES_PASSWORD=<local-database-password>
-JWT_SECRET=<base64-encoded-secret>
-API_PORT=8080
-OPENAPI_ENABLED=true
-
-# Use a free host port if 5432 is already occupied on your machine.
-POSTGRES_PORT=5433
-
-MPESA_BASE_URL=https://sandbox.safaricom.co.ke
-MPESA_CONSUMER_KEY=<daraja-consumer-key>
-MPESA_CONSUMER_SECRET=<daraja-consumer-secret>
-MPESA_SHORTCODE=<daraja-shortcode>
-MPESA_PASSKEY=<daraja-passkey>
-MPESA_CALLBACK_URL=https://<public-host>/api/v1/payments/mpesa/callback
-MPESA_VERIFY_CALLBACK=true
-MPESA_FINAL_FAILURE_RESULT_CODES=1032
+POSTGRES_PASSWORD=<strong-local-password>
+JWT_SECRET=<strong-base64-encoded-secret>
 ```
 
-`MPESA_VERIFY_CALLBACK` must remain `true`. The API fails closed and rejects
-callbacks when provider-side verification is disabled; it never confirms an
-order from callback fields alone.
-
-`MPESA_FINAL_FAILURE_RESULT_CODES` is a comma-separated allowlist of Daraja
-STK-query result codes that are confirmed terminal failures for the deployed
-integration. It defaults to `1032`. Nonzero result codes outside this allowlist
-remain pending and are retried; do not add a code until its finality has been
-verified with the provider.
+The template contains safe local defaults for the database name, database
+user, ports, CORS, reservation settings, and OpenAPI. `.env` is ignored by
+Git. Never commit it or place real credentials in `.env.example`.
 
 Generate a JWT secret with PowerShell:
 
@@ -76,48 +72,80 @@ Generate one with macOS/Linux:
 openssl rand -base64 64
 ```
 
-`.env` is ignored by Git. Do not commit local credentials. Use `.env.example`
-for shared configuration documentation.
+Important environment values:
 
-## Running with Docker
+| Variable | Local default | Purpose |
+|---|---:|---|
+| `POSTGRES_DB` | `distro_backend` | PostgreSQL database name |
+| `POSTGRES_USER` | `distro` | PostgreSQL username |
+| `POSTGRES_PASSWORD` | none | Required by Docker Compose |
+| `POSTGRES_PORT` | `5433` | PostgreSQL port exposed on the host |
+| `API_PORT` | `8080` | API port exposed on the host |
+| `JWT_SECRET` | none | Signs access tokens; required |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:4200` | Allowed browser origins |
+| `OPENAPI_ENABLED` | `false` | Enables Swagger UI and OpenAPI JSON |
+| `ORDER_RESERVATION_TTL` | `15m` | Unpaid stock-reservation lifetime |
+| `ORDER_MAX_OPEN_PENDING_PER_CUSTOMER` | `5` | Maximum open unpaid orders per customer |
+| `FLYWAY_BASELINE_ON_MIGRATE` | `false` | Only for a reviewed pre-Flyway database |
 
-### Start the full stack
+M-Pesa variables are optional for starting the API, but they must be configured
+before payment initiation or callback processing can work. Copy the complete
+list from `.env.example`; do not invent values for production credentials.
 
-Run from the repository root:
+## Start the backend with Docker
 
-```bash
-docker compose up --build
-```
-
-To run in detached mode:
+From the repository root, with Docker Desktop running:
 
 ```bash
 docker compose up --build -d
 ```
 
-The Compose stack contains:
-
-- `api`: Spring Boot application on container and host port `8080` by default
-- `db`: PostgreSQL 16 on container port `5432`; the host port is controlled by
-  `POSTGRES_PORT` and defaults to `5433`
-- `postgres_data`: persistent PostgreSQL volume
-
-Check service status:
+Check that both services are running:
 
 ```bash
 docker compose ps
 ```
 
-View API logs:
+Follow API logs when troubleshooting startup or migrations:
 
 ```bash
 docker compose logs -f api
 ```
 
-View database logs:
+Check the database logs separately:
 
 ```bash
 docker compose logs -f db
+```
+
+Confirm that the API is ready:
+
+PowerShell:
+
+```powershell
+Invoke-RestMethod http://localhost:8080/actuator/health
+```
+
+macOS/Linux:
+
+```bash
+curl http://localhost:8080/actuator/health
+```
+
+The expected response contains:
+
+```json
+{"status":"UP"}
+```
+
+The Compose stack exposes the API at `http://localhost:8080` and PostgreSQL at
+`localhost:5433` by default. The API and database ports are bound to the local
+machine for development. Change `API_PORT` or `POSTGRES_PORT` in `.env` if a
+port is already in use, then recreate the stack:
+
+```bash
+docker compose down
+docker compose up --build -d
 ```
 
 Stop the stack while preserving database data:
@@ -126,465 +154,431 @@ Stop the stack while preserving database data:
 docker compose down
 ```
 
-Rebuild and restart after code or dependency changes:
-
-```bash
-docker compose up --build -d
-```
-
-To remove the local database volume and recreate the database, run:
+To delete the disposable local database and run all migrations again:
 
 ```bash
 docker compose down --volumes
-docker compose up --build
+docker compose up --build -d
 ```
 
-The `--volumes` operation is destructive to local database data and should
-only be used when the data is disposable.
+`docker compose down --volumes` permanently removes the local PostgreSQL
+volume. Do not use it if the local data matters.
 
-## Application endpoints
+## API documentation and tools
 
-The following URLs are served by the API container. Open browser URLs in a
-browser; use the API URLs with an HTTP client or API tool.
+### OpenAPI and Swagger
 
-| Purpose | URL |
+OpenAPI is the machine-readable description of the HTTP API: paths, methods,
+request fields, response types, authentication, and validation rules. Other
+tools can import it to generate client code or collections.
+
+Swagger UI is the browser interface for exploring and calling an OpenAPI
+document. It is useful for checking a request before writing frontend or
+mobile integration code.
+
+Set this in `.env` for local development and restart the API:
+
+```dotenv
+OPENAPI_ENABLED=true
+```
+
+Then open:
+
+| Tool | URL |
 |---|---|
-| Health | <http://localhost:8080/actuator/health> |
 | Swagger UI | <http://localhost:8080/swagger-ui/index.html> |
 | OpenAPI JSON | <http://localhost:8080/v3/api-docs> |
-| WebSocket/STOMP handshake | `ws://localhost:8080/ws` |
+| OpenAPI YAML | <http://localhost:8080/v3/api-docs.yaml> |
+| Health | <http://localhost:8080/actuator/health> |
 
-Swagger UI is disabled by default. Enable it for local development with
-`OPENAPI_ENABLED=true`, then use **Authorize** in Swagger UI to provide a
-bearer JWT for secured endpoints.
+To call secured endpoints in Swagger UI:
 
-## Procurement API handoff
+1. Register and verify an account, or use an existing account.
+2. Call `POST /api/auth/login` and copy `accessToken` from the response.
+3. Select **Authorize** in Swagger UI.
+4. Enter the JWT token and authorize the session.
+5. Execute the endpoint you want to test.
 
-Distributor users can create purchase orders against manufacturer-owned stock:
+The OpenAPI document is also suitable for importing into Postman/Insomnia or
+generating a typed client. Do not enable the documentation publicly in a
+production deployment unless it is intentionally protected.
 
-```text
-POST /api/v1/purchase-orders
-GET  /api/v1/purchase-orders
-GET  /api/v1/purchase-orders/{purchaseOrderId}
-GET  /api/v1/purchase-orders/{purchaseOrderId}/settlements
+### Authentication and request conventions
+
+Most endpoints require:
+
+```http
+Authorization: Bearer <accessToken>
+Content-Type: application/json
 ```
 
-Manufacturer users can review only purchase orders addressed to their own
-organization:
+Access tokens are short-lived. Use `POST /api/auth/refresh` with the refresh
+token when an access token expires. IDs are UUIDs and timestamps are returned
+as ISO-8601 values. Paginated endpoints use Spring's format, for example:
 
 ```text
-GET   /api/v1/manufacturer/purchase-orders
-GET   /api/v1/manufacturer/purchase-orders/{purchaseOrderId}
-PATCH /api/v1/manufacturer/purchase-orders/{purchaseOrderId}/decision
-GET   /api/v1/manufacturer/purchase-orders/{purchaseOrderId}/settlements
+?page=0&size=20&sort=createdAt,desc
 ```
 
-Only `MANUFACTURER_ADMIN` may approve or reject a purchase order. The decision
-body is either `{"status":"APPROVED"}` or
-`{"status":"REJECTED","note":"reason"}`. Organization ownership is
-derived from the authenticated JWT; organization IDs in URLs are never trusted
-for authorization.
-
-Purchase-order settlement records are currently exposed as a read-only ledger.
-They are initialized as `PENDING`; provider reconciliation, refunds, and
-reversals remain part of the later platform payment-admin phase.
-
-## Product, offer, warehouse, and order flow
-
-The product catalog uses a hybrid model:
-
-- A manufacturer creates the source product under its organization.
-- A distributor creates an offer for that source product and assigns it to one
-  of the distributor's active warehouses. The offer owns its selling price and
-  physical quantity.
-- Customers browse active distributor offers and place orders against offer
-  IDs. Manufacturer source-product IDs are not orderable by customers.
-- Distributor staff can read the durable notification feed for rejected orders
-  and may also subscribe to `/topic/organizations/{organizationId}/notifications`.
-
-Typical API flow:
-
-```text
-POST /api/v1/warehouses
-GET  /api/v1/warehouses
-POST /api/stock/offers
-PATCH /api/stock/offers/{offerId}
-GET  /api/products
-POST /api/v1/orders
-GET  /api/v1/notifications
-```
-
-Order creation locks each requested offer in a deterministic order and reserves
-available quantity atomically. A request that exceeds available quantity is
-rejected with `INSUFFICIENT_STOCK` and a durable `ORDER_STOCK_REJECTED`
-notification is created for the distributor.
-
-Unpaid reservations are bounded by `ORDER_RESERVATION_TTL` (15 minutes by
-default), then a scheduled cleanup marks the order `FAILED` and releases the
-reserved quantity. Each customer is also limited by
-`ORDER_MAX_OPEN_PENDING_PER_CUSTOMER` (5 by default). A temporary STK-push
-initiation failure leaves the order pending and the payment retryable; only a
-verified final failed callback, cancellation, or reservation expiry releases
-the reservation. If an accepted STK request has no callback by the deadline,
-the expiry job queries Daraja first: a successful result reconciles the payment
-and confirms the order, while a definitive failed result releases the
-reservation. Provider connectivity errors leave the deadline eligible for a
-later reconciliation scan. Verified payment commits the reserved quantity.
-Customers may cancel only their own unpaid `PENDING` orders. Once an order is
-`IN_TRANSIT`, cancellation and automatic stock restoration require a separate
-warehouse/driver return workflow; a status update cannot mark dispatched stock
-as returned.
-
-All controller and security failures use the common `ApiError` response shape:
+The maximum page size is 100. Errors use a common structure:
 
 ```json
 {
   "timestamp": "2026-10-07T10:46:03Z",
   "status": 400,
   "code": "BAD_REQUEST",
-  "message": "Malformed request body or invalid field value",
-  "path": "/api/auth/login"
+  "message": "Request validation failed",
+  "path": "/api/v1/orders"
 }
 ```
 
-OpenAPI and Swagger UI are disabled by default. To enable them locally, set
-the following variable in `.env` and restart the API:
+Use the HTTP status and `code` rather than matching only on the human-readable
+message.
 
-```dotenv
-OPENAPI_ENABLED=true
-```
+## API inventory
 
-Health check from PowerShell:
-
-```powershell
-Invoke-RestMethod http://localhost:8080/actuator/health
-```
-
-Health check from macOS/Linux:
-
-```bash
-curl http://localhost:8080/actuator/health
-```
-
-## Database and migrations
-
-Default Docker database configuration:
-
-| Setting | Value |
-|---|---|
-| Database | `distro_backend` |
-| Username | `distro` |
-| Host port | `POSTGRES_PORT` (defaults to `5433`; choose another free port if needed) |
-| Container service | `db` |
-
-Run the following from the repository root. Connect to PostgreSQL through the
-Compose service rather than the host port:
-
-```bash
-docker compose exec db psql -U distro -d distro_backend
-```
-
-Useful `psql` commands include `\dt` to list tables and `\q` to exit.
-
-Flyway migrations are stored in:
+The base URL for local development is:
 
 ```text
-src/main/resources/db/migration/
+http://localhost:8080
 ```
 
-The initial migration is `V1__initial_schema.sql`. Add subsequent schema
-changes as new versioned migrations. The warehouse/offer/reservation model was
-introduced by:
+The access labels below describe the backend's current authorization rules.
+Organization-scoped users can access only data belonging to their own
+organization unless an endpoint explicitly says otherwise.
+
+### Authentication and profile
+
+| Method | Endpoint | Access | Purpose |
+|---|---|---|---|
+| `POST` | `/api/auth/register` | Public | Register a customer, manufacturer admin, or distributor admin |
+| `POST` | `/api/auth/verify-account` | Public | Verify the account OTP |
+| `POST` | `/api/auth/resend-verification` | Public | Resend account-verification OTP |
+| `POST` | `/api/auth/login` | Public | Obtain access and refresh tokens |
+| `POST` | `/api/auth/refresh` | Public | Rotate/refresh an access token |
+| `POST` | `/api/auth/logout` | Public with refresh token | Revoke the supplied refresh token |
+| `POST` | `/api/auth/forgot-password` | Public | Request a password-reset OTP |
+| `POST` | `/api/auth/reset-password` | Public | Reset a password with an OTP |
+| `GET` | `/api/users/me` | Authenticated | Return the current user and organization profile |
+
+Self-registration does not create staff or driver accounts. Those roles are
+organization-managed. Organization registration requires an organization name
+and email; customer accounts do not belong to an organization.
+
+### Product catalog, offers, warehouses, and stock
+
+| Method | Endpoint | Access | Purpose / integration note |
+|---|---|---|---|
+| `GET` | `/api/products` | Authenticated catalog roles | Browse active catalog products; supports `category` and pagination |
+| `GET` | `/api/products/categories` | Authenticated catalog roles | List categories visible to the caller |
+| `POST` | `/api/products` | Manufacturer admin/staff | Create a manufacturer source product |
+| `PATCH` | `/api/products/{id}` | Manufacturer admin/staff | Update a manufacturer source product |
+| `POST` | `/api/v1/warehouses` | Distributor admin | Create a distributor warehouse |
+| `GET` | `/api/v1/warehouses` | Distributor admin/staff | List the caller's warehouses |
+| `GET` | `/api/stock` | Manufacturer/distributor admin/staff | List organization stock records |
+| `GET` | `/api/stock/items` | Manufacturer/distributor admin/staff | Same organization stock listing under the inventory path |
+| `GET` | `/api/stock/items/{id}` | Manufacturer/distributor admin/staff | Get one organization stock record |
+| `GET` | `/api/stock/items/low-stock` | Manufacturer/distributor admin/staff | List low-stock records |
+| `POST` | `/api/stock/items` | Manufacturer admin/staff | Create a manufacturer source product with opening quantity |
+| `PATCH` | `/api/stock/items/{id}` | Manufacturer admin/staff | Update source-product fields |
+| `POST` | `/api/stock/offers` | Distributor admin/staff | Create an offer linked to a manufacturer product and warehouse |
+| `PATCH` | `/api/stock/offers/{id}` | Distributor admin/staff | Update offer price, threshold, or active state |
+| `GET` | `/api/stock/{organizationId}/availability` | Distributor admin/staff | View active inventory for the caller's distributor organization |
+| `POST` | `/api/stock/items/{id}/movements` | Manufacturer/distributor admin/staff | Record a stock movement |
+| `GET` | `/api/stock/items/{id}/movements` | Manufacturer/distributor admin/staff | Read movement history |
+
+The catalog uses the current hybrid model. Manufacturers own source products;
+distributors create warehouse-backed offers for those products; customers
+order against distributor offer IDs. `POST /api/v1/orders` therefore expects
+the selected offer ID in each item's `stockItemId`, not a manufacturer source
+product ID.
+
+Catalog visibility is role-aware: customers see active distributor offers,
+manufacturers see their own source products, and distributors see manufacturer
+source products plus their own eligible offers. Drivers do not use the catalog
+endpoints.
+
+Stock adjustments are validated against the movement type and are protected by
+organization ownership and database locking. Orders reserve offer quantity
+atomically; insufficient stock returns an error and creates a distributor
+notification.
+
+### Orders
+
+| Method | Endpoint | Access | Purpose / integration note |
+|---|---|---|---|
+| `GET` | `/api/v1/orders` | Customer or distributor admin/staff | Customer's orders or distributor organization's orders |
+| `POST` | `/api/v1/orders` | Customer | Create an order from distributor offer IDs |
+| `GET` | `/api/v1/orders/{orderId}` | Customer owner or distributor organization | Get order details |
+| `GET` | `/api/v1/orders/{orderId}/items` | Customer owner or distributor organization | Get order items |
+| `PATCH` | `/api/v1/orders/{orderId}/status` | Customer or distributor admin/staff | Customer may cancel only an unpaid pending order; distributor staff use valid operational transitions |
+| `POST` | `/api/v1/orders/{orderId}/delivery-otp` | Customer order owner | Request delivery OTP while the order is `IN_TRANSIT` |
+| `PUT` | `/api/v1/orders/{orderId}` | Distributor admin/staff | Reserved route; currently returns `501 NOT_IMPLEMENTED` |
+
+Order creation reserves stock immediately. An unpaid reservation expires after
+`ORDER_RESERVATION_TTL`; the scheduled cleanup releases it. If an accepted
+M-Pesa request is still in flight, cleanup reconciles the provider first so a
+successful payment is not stranded.
+
+### Payments
+
+| Method | Endpoint | Access | Purpose / integration note |
+|---|---|---|---|
+| `POST` | `/api/v1/payments/initiate` | Customer or distributor admin/staff with order access | Start an M-Pesa STK Push; send `orderId`, Kenyan `phoneNumber`, and optional idempotency key |
+| `GET` | `/api/v1/payments/{orderId}/status` | Customer owner or distributor organization | Read persisted payment status |
+| `POST` | `/api/v1/payments/mpesa/callback` | M-Pesa gateway only | Public HTTP route; requires `X-Mpesa-Callback-Secret` and provider verification |
+
+Payment initiation requires valid Daraja configuration. The callback URL must
+be reachable by Safaricom/Daraja; a localhost URL is not reachable from the
+provider. Callback confirmation also requires the shared secret and provider
+result verification. Never disable callback verification in an environment
+that handles real payments.
+
+Typical payment status values are `INITIATING`, `PENDING`, `CONFIRMED`,
+`RECONCILED`, `FAILED`, and `REVERSED`. A successful STK response means the
+request was accepted, not that the order has been paid; poll the status endpoint
+and rely on the verified callback/reconciliation flow.
+
+### Procurement and restocking
+
+| Method | Endpoint | Access | Purpose / integration note |
+|---|---|---|---|
+| `POST` | `/api/v1/purchase-orders` | Distributor admin/staff | Request manufacturer stock |
+| `GET` | `/api/v1/purchase-orders` | Distributor admin/staff | List purchase orders for the distributor organization |
+| `GET` | `/api/v1/purchase-orders/{purchaseOrderId}` | Distributor admin/staff | Get a distributor-owned purchase order |
+| `GET` | `/api/v1/purchase-orders/{purchaseOrderId}/settlements` | Authorized distributor/manufacturer party | Read settlement ledger entries |
+| `GET` | `/api/v1/manufacturer/purchase-orders` | Manufacturer admin/staff | List purchase orders addressed to the manufacturer organization |
+| `GET` | `/api/v1/manufacturer/purchase-orders/{purchaseOrderId}` | Manufacturer admin/staff | Get a manufacturer-owned purchase order |
+| `PATCH` | `/api/v1/manufacturer/purchase-orders/{purchaseOrderId}/decision` | Manufacturer admin | Approve or reject a submitted purchase order |
+| `GET` | `/api/v1/manufacturer/purchase-orders/{purchaseOrderId}/settlements` | Authorized manufacturer party | Read settlement ledger entries |
+| `POST` | `/api/stock/restock-request` | Distributor admin/staff | Create a restock request for a distributor offer |
+| `GET` | `/api/stock/restock-request` | Manufacturer/distributor admin/staff | List organization-visible restock requests |
+| `PATCH` | `/api/stock/restock-request/{id}/status` | Manufacturer/distributor admin/staff | Update a restock request status |
+
+Purchase-order settlements are currently a read-only `PENDING` ledger. Payment
+reconciliation, refunds, reversals, and platform-level settlement reporting are
+not part of the current integration surface.
+
+### Trips, delivery, and live tracking
+
+| Method | Endpoint | Access | Purpose / integration note |
+|---|---|---|---|
+| `POST` | `/api/v1/trips` | Organization operations users | Create a delivery or restock trip with stops |
+| `PATCH` | `/api/v1/trips/{tripId}/assign` | Organization operations users | Assign a driver belonging to the trip organization |
+| `GET` | `/api/v1/trips/active` | Driver | List the driver's active trips |
+| `GET` | `/api/v1/trips/history` | Driver | List the driver's completed/history trips |
+| `POST` | `/api/v1/trips/{tripId}/location` | Assigned driver | Record a latitude/longitude ping |
+| `GET` | `/api/v1/trips/{tripId}/location` | Authorized trip participant | Read persisted location history |
+| `POST` | `/api/v1/trips/{tripId}/stops/{stopId}/confirm` | Assigned driver | Confirm delivery using the customer's six-digit OTP |
+| `POST` | `/api/v1/trips/{tripId}/stops/{stopId}/delivery-otp` | Customer for the order | Request the delivery OTP |
+
+### Notifications and organization workspaces
+
+| Method | Endpoint | Access | Purpose |
+|---|---|---|---|
+| `GET` | `/api/v1/notifications` | Manufacturer/distributor admin/staff | Read the caller's organization notification feed |
+| `GET` | `/api/manufacturer/dashboard` | Manufacturer admin/staff | Current manufacturer workspace placeholder |
+| `GET` | `/api/manufacturer/staff` | Manufacturer admin | Current manufacturer staff placeholder |
+| `GET` | `/api/distributor/dashboard` | Distributor admin/staff | Current distributor workspace placeholder |
+| `GET` | `/api/distributor/staff` | Distributor admin | Current distributor staff placeholder |
+
+## WebSocket/STOMP live updates
+
+The WebSocket handshake is:
 
 ```text
-V8__distributor_offers_warehouses_and_reservations.sql
+ws://localhost:8080/ws
 ```
 
-Legacy inventory conversion is split into two migrations:
+The backend uses STOMP with:
+
+- application destination prefix: `/app`
+- broker destination prefix: `/topic`
+- user destination prefix: `/user`
+
+Clients must send a valid JWT in the STOMP `CONNECT` frame's `Authorization`
+header:
 
 ```text
-V9__prepare_legacy_inventory_conversion.sql
-V10__convert_legacy_inventory_and_bound_reservations.sql
+Authorization: Bearer <accessToken>
 ```
 
-`V9` creates `legacy_stock_source_mappings` and automatically records only
-unambiguous, case-insensitive SKU matches between an existing distributor row
-and one manufacturer source product. `V10` creates a tenant-owned `LEGACY`
-warehouse where necessary, converts the rows into source-linked offers, and
-adds the unpaid-order reservation deadline. Existing orders with an accepted
-M-Pesa STK request receive a bounded, already-due deadline so the expiry job
-reconciles them with Daraja before releasing their reservation. It fails closed if any legacy distributor row has no
-mapping or has an invalid cross-tenant mapping; it does not guess a
-manufacturer owner.
+The HTTP WebSocket upgrade itself is permitted so browser clients can connect;
+authorization is enforced when STOMP connects and subscribes.
 
-For a populated deployment, review the unresolved rows after V9 and before
-allowing V10 to complete:
+Available subscriptions include:
 
-```sql
-SELECT si.id, si.organization_id, si.sku, si.name
-FROM stock_items si
-JOIN organizations o ON o.id = si.organization_id
-WHERE o.type = 'DISTRIBUTOR'
-  AND si.source_stock_item_id IS NULL;
+```text
+/topic/trips/{tripId}/location
+/topic/organizations/{organizationId}/notifications
 ```
 
-For each unresolved row, identify the correct manufacturer source product and
-insert an explicit mapping while the API is stopped. Then restart the API so
-Flyway can complete V10:
+Trip and organization ownership is checked before subscription. Use the REST
+location-history endpoint when a client needs persisted history; use the
+WebSocket subscription for live updates.
 
-```sql
-INSERT INTO legacy_stock_source_mappings
-    (legacy_stock_item_id, manufacturer_source_stock_item_id)
-VALUES ('<legacy-distributor-stock-uuid>', '<manufacturer-source-uuid>');
-```
+## Host-based development without the API container
 
-The mapping must point to an active manufacturer source row, not another
-distributor offer. Back up the database and verify the resulting warehouse,
-source, and organization ownership before proceeding.
+This is optional. It runs PostgreSQL in Docker and Spring Boot through Maven.
+Do not run the Docker API service at the same time if both would use port 8080.
 
-Do not modify a migration that has already been applied to a shared database.
-Hibernate uses `ddl-auto=validate`; it validates the schema but does not create
-or alter tables automatically.
-
-When switching between branches with different migration histories, use a
-separate local database or reset the disposable development volume. Do not use
-`flyway repair` to hide a checksum mismatch in a shared or production database.
-
-For an existing database created before Flyway history was introduced, first
-verify that its schema matches `V1__initial_schema.sql` and review existing
-ownership data. Confirm that every order, stock item, and trip has the intended
-organization owner and that no trip references records belonging to conflicting
-organizations. Only after those checks should you set
-`FLYWAY_BASELINE_ON_MIGRATE=true` and `FLYWAY_BASELINE_VERSION=1` in `.env`.
-The baseline only records the existing schema as V1; it does not perform the
-tenant ownership migration. On the first startup, V2 expands the schema and
-V3 derives ownership where it is unambiguous. If V3 reports unresolved rows,
-stop the API, backfill `organization_id` on the affected orders, stock items,
-and trips using an approved data-migration procedure, then start the API again.
-Only after those rows are reviewed should V3 add the foreign keys and NOT NULL
-constraints. V3 also fails closed when a legacy trip references order and stock
-records owned by different organizations. This is an explicit compatibility
-decision, not a general production default; leave the setting false for new or
-unverified databases.
-
-`V7__refine_trip_batch_schema.sql` installs the positive stop-sequence check as
-`NOT VALID` so legacy rows do not block startup. After reviewing and repairing
-any existing non-positive values, validate it from the database service:
-
-```sql
-ALTER TABLE trip_stops VALIDATE CONSTRAINT ck_trip_stops_sequence_positive;
-```
-
-`V6__scope_stock_sku_uniqueness_to_organization.sql` fails closed when an
-existing organization contains SKUs that differ only by case. Review conflicts
-before retrying the migration; for example:
-
-```sql
-SELECT organization_id, UPPER(sku) AS normalized_sku, COUNT(*)
-FROM stock_items
-GROUP BY organization_id, UPPER(sku)
-HAVING COUNT(*) > 1;
-```
-
-Do not edit an applied Flyway migration. The tenant-ownership migration V3 was
-corrected before this branch's first deployment; if an environment has already
-recorded a different V3 checksum, stop deployment. Before any checksum repair,
-verify both the schema and the existing ownership data. At minimum, confirm
-that there are no unresolved organization references and no trip whose order,
-stock, and assigned organization disagree:
-
-```sql
-SELECT 'orders_without_organization' AS check_name, COUNT(*) AS violations
-FROM orders WHERE organization_id IS NULL
-UNION ALL
-SELECT 'stock_without_organization', COUNT(*)
-FROM stock_items WHERE organization_id IS NULL
-UNION ALL
-SELECT 'trips_without_organization', COUNT(*)
-FROM trips WHERE organization_id IS NULL;
-
-SELECT t.id AS trip_id
-FROM trips t
-LEFT JOIN orders o ON o.id = t.order_id
-LEFT JOIN stock_items s ON s.id = t.stock_item_id
-WHERE (o.organization_id IS NOT NULL AND s.organization_id IS NOT NULL
-       AND o.organization_id IS DISTINCT FROM s.organization_id)
-   OR (t.organization_id IS NOT NULL
-       AND ((o.organization_id IS NOT NULL
-             AND t.organization_id IS DISTINCT FROM o.organization_id)
-         OR (s.organization_id IS NOT NULL
-             AND t.organization_id IS DISTINCT FROM s.organization_id)));
-```
-
-Only after those checks return zero violations, and the reviewed schema is
-confirmed compatible, may an approved Flyway checksum repair be performed
-against the exact reviewed artifact. Never use `flyway repair` to conceal an
-unreviewed schema or ownership difference.
-
-## Host-based development
-
-This workflow runs PostgreSQL in Docker and the Spring Boot API through Maven.
-
-Start PostgreSQL from the repository root:
+Start only PostgreSQL:
 
 ```bash
 docker compose up -d db
 ```
 
-Set the API environment variables in the terminal that will run Maven. The
-host-based JDBC URL must use the host port configured in `.env`.
+The `.env` file is automatically read by Docker Compose, but Maven does not
+automatically load `.env`. Set the database and application variables in the
+terminal that starts Maven.
 
-PowerShell:
+PowerShell example:
 
 ```powershell
 $env:DATABASE_URL='jdbc:postgresql://localhost:5433/distro_backend'
 $env:DATABASE_USERNAME='distro'
-$env:DATABASE_PASSWORD='<value of POSTGRES_PASSWORD in .env>'
-$env:JWT_SECRET='<generated JWT secret>'
+$env:DATABASE_PASSWORD='<same value as POSTGRES_PASSWORD in .env>'
+$env:JWT_SECRET='<same generated JWT secret>'
 $env:CORS_ALLOWED_ORIGINS='http://localhost:4200'
 $env:SERVER_PORT='8080'
-# Optional local/demo data only; omit in production.
-$env:SPRING_PROFILES_ACTIVE='local'
-```
-
-macOS/Linux:
-
-```bash
-export DATABASE_URL='jdbc:postgresql://localhost:5433/distro_backend'
-export DATABASE_USERNAME='distro'
-export DATABASE_PASSWORD='<value of POSTGRES_PASSWORD in .env>'
-export JWT_SECRET='<generated JWT secret>'
-export CORS_ALLOWED_ORIGINS='http://localhost:4200'
-export SERVER_PORT='8080'
-# Optional local/demo data only; omit in production.
-export SPRING_PROFILES_ACTIVE='local'
-```
-
-Start the API from the repository root:
-
-```bash
 mvn spring-boot:run
 ```
 
-### M-Pesa configuration
+macOS/Linux uses the equivalent `export NAME=value` syntax. Run the command
+from the repository root.
 
-Payment initiation is disabled until the Daraja credentials are supplied.
-Configure these variables in the local, deployment, or secret-management
-environment; do not commit them:
+## Integration status
+
+Completed and available for frontend/mobile integration:
+
+- authentication, account verification, login, refresh, logout, and password reset;
+- current-user profile;
+- manufacturer product catalog and distributor offer catalog;
+- distributor warehouses and stock/movement APIs;
+- atomic order reservation and order status flow;
+- M-Pesa STK initiation, status lookup, verified callback, and reconciliation;
+- distributor/manufacturer purchase orders and restock requests;
+- trip assignment, driver delivery confirmation, OTP delivery flow, and location tracking;
+- organization notifications and WebSocket subscriptions.
+
+Known limitations to account for during integration:
+
+- `PUT /api/v1/orders/{orderId}` intentionally returns `501 NOT_IMPLEMENTED`;
+- there is no platform-level `ADMIN` role or completed platform-admin API;
+- admin audit, payment, stock, trip, report, and user controllers are placeholders;
+- payment refunds, reversals, reconciliation reports, and settlement processing are not exposed as APIs;
+- an M-Pesa callback requires a reachable callback URL, a configured shared secret, and provider verification;
+- the catalog/order model currently represents distributor offers as stock items, so customers order distributor offer IDs.
+
+When an endpoint or request contract changes, update this inventory and the
+OpenAPI annotations/configuration in the same change.
+
+## Database and migrations
+
+Flyway owns schema changes. Hibernate is configured with `ddl-auto=validate`,
+so it validates the schema but does not create or alter tables.
+
+Migration files are in:
 
 ```text
-MPESA_CONSUMER_KEY
-MPESA_CONSUMER_SECRET
-MPESA_SHORTCODE
-MPESA_PASSKEY
-MPESA_CALLBACK_URL
-MPESA_CALLBACK_SECRET
-MPESA_FINAL_FAILURE_RESULT_CODES
-MPESA_AUTH_URL
-MPESA_STK_PUSH_URL
+src/main/resources/db/migration/
 ```
 
-The callback endpoint requires `X-Mpesa-Callback-Secret` to match
-`MPESA_CALLBACK_SECRET`. Configure that header at the payment gateway or
-integration layer before enabling live callbacks.
+For a new Docker database, no manual schema setup is required. Flyway runs on
+API startup. For a database that already contains data, do not edit applied
+migrations or use `flyway repair` to hide a mismatch. Review the existing
+schema and organization ownership data first, then follow the migration
+recovery instructions in the migration files and project history.
+
+Useful local database commands:
+
+```bash
+docker compose exec db psql -U distro -d distro_backend
+```
+
+Inside `psql`, use `\dt` to list tables and `\q` to exit.
 
 ## Build and test
 
-Run from the repository root.
-
-Compile, package, and skip test execution:
+Run from the repository root:
 
 ```bash
 mvn -B -ntp -DskipTests package
+mvn -B -ntp test
 ```
 
-Run the test suite after PostgreSQL is running and the database environment
-variables are set:
+Tests that load the Spring application context require PostgreSQL and the
+database/JWT environment variables described in the host-based workflow.
 
-```bash
-mvn clean test
-```
-
-The test suite uses PostgreSQL and Flyway. It requires the same
-`DATABASE_URL`, `DATABASE_USERNAME`, `DATABASE_PASSWORD`, and `JWT_SECRET`
-variables as host-based development.
-
-If the IDE reports unresolved Maven or JUnit imports after `pom.xml` changes,
-reload or reimport the Maven project and restart the Java language server if
-necessary.
-
-## WebSocket conventions
-
-The application uses STOMP over WebSocket:
-
-- Handshake endpoint: `/ws`
-- Application destination prefix: `/app`
-- Broker destination prefix: `/topic`
-- User destination prefix: `/user`
-- Trip location subscription format: `/topic/trips/{tripId}/location`
-
-STOMP `CONNECT` frames require a valid bearer JWT. Subscription destinations
-are validated by the inbound channel interceptor.
-
-## Project structure
-
-```text
-src/main/java/                  Application source code
-src/main/resources/             Configuration and database migrations
-src/main/resources/db/migration Flyway migrations
-src/test/java/                  Automated tests
-Dockerfile                      Multi-stage API image
-docker-compose.yml              Local API and PostgreSQL services
-.env.example                    Environment variable template
-pom.xml                         Maven build configuration
-```
+If the IDE shows unresolved Maven or JUnit imports after `pom.xml` changes,
+reload/reimport the Maven project and restart the Java language server.
 
 ## Troubleshooting
 
-### API is not reachable
-
-Check the service state and recent logs from the repository root:
+### API does not start
 
 ```bash
 docker compose ps
-docker compose logs --tail=100 api
+docker compose logs --tail=150 api
+docker compose logs --tail=100 db
 ```
 
-The API may take several seconds to start while PostgreSQL becomes healthy and
-Flyway applies migrations. Retry the health endpoint after startup completes.
+Wait for the database health check and Flyway startup to finish. If PostgreSQL
+reports authentication failure, remember that the password is initialized
+when the Docker volume is first created. Changing `POSTGRES_PASSWORD` later
+does not change an existing volume; restore the original password or recreate
+the disposable volume with `docker compose down --volumes`.
 
-### Port conflict
+### Port already in use
 
-If ports `8080` or `5433` are already in use, set `API_PORT` or
-`POSTGRES_PORT` in `.env`. When changing `POSTGRES_PORT`, update the host-based
-`DATABASE_URL` accordingly. The API-to-database connection inside Docker still
-uses the Compose service name `db` and port `5432`.
+Set `API_PORT` or `POSTGRES_PORT` in `.env`, then recreate the stack. When
+running Maven on the host, the JDBC URL must use the host PostgreSQL port, for
+example `5433`; inside Docker, the API uses `db:5432`.
 
-For example, when PostgreSQL host port `5433` is unavailable:
+### Frontend/mobile cannot reach the API
 
-```dotenv
-POSTGRES_PORT=5434
-API_PORT=8080
-```
+Browser development on the same machine uses `http://localhost:8080` and must
+match `CORS_ALLOWED_ORIGINS`. An Android emulator commonly reaches the host at
+`http://10.0.2.2:8080`; an iOS simulator normally uses
+`http://localhost:8080`. A physical device cannot normally reach a loopback-only
+Docker binding. Use a controlled local network/tunnel setup for device testing
+and update CORS for the exact development origin; do not expose the API
+publicly with production secrets.
 
-Then recreate the stack from the repository root:
+### API changes are not reflected
 
-```powershell
-docker compose down
-docker compose up --build
-```
-
-### Database authentication failure
-
-The PostgreSQL password is initialized when the Docker volume is first
-created. Changing `POSTGRES_PASSWORD` in `.env` does not change the password in
-an existing volume. Either restore the original password or recreate the
-disposable local volume with `docker compose down --volumes`.
-
-### Docker changes are not reflected
-
-Rebuild the API image from the repository root:
+Rebuild the image from the repository root:
 
 ```bash
 docker compose up --build -d
 ```
+
+### Docker data is stale
+
+If you intentionally want a fresh disposable database:
+
+```bash
+docker compose down --volumes
+docker compose up --build -d
+```
+
+This removes local database data and reruns the Flyway migrations.
+
+## Project structure
+
+```text
+src/main/java/com/example/distrobackend/controller/  HTTP REST controllers
+src/main/java/com/example/distrobackend/service/     Business workflows
+src/main/java/com/example/distrobackend/Domain/      JPA entities and enums
+src/main/java/com/example/distrobackend/repository/  Database access
+src/main/java/com/example/distrobackend/configuration/ Security, OpenAPI, WebSocket
+src/main/resources/application.properties             Runtime configuration
+src/main/resources/db/migration/                      Flyway migrations
+src/test/java/                                        Automated tests
+docker-compose.yml                                    Local API and PostgreSQL services
+.env.example                                          Environment template
+```
+
+Java does not use a Node.js-style `routes` folder here. The controller classes
+are the HTTP route definitions; Spring Boot discovers their annotations and
+maps incoming requests to them.

@@ -210,9 +210,15 @@ GET  /api/v1/notifications
 Order creation locks each requested offer in a deterministic order and reserves
 available quantity atomically. A request that exceeds available quantity is
 rejected with `INSUFFICIENT_STOCK` and a durable `ORDER_STOCK_REJECTED`
-notification is created for the distributor. Reservations are released when a
-pending payment fails or an order is cancelled; verified payment commits the
-reserved quantity.
+notification is created for the distributor.
+
+Unpaid reservations are bounded by `ORDER_RESERVATION_TTL` (15 minutes by
+default), then a scheduled cleanup marks the order `FAILED` and releases the
+reserved quantity. Each customer is also limited by
+`ORDER_MAX_OPEN_PENDING_PER_CUSTOMER` (5 by default). A temporary STK-push
+initiation failure leaves the order pending and the payment retryable; only a
+verified final failed callback, cancellation, or reservation expiry releases
+the reservation. Verified payment commits the reserved quantity.
 
 All controller and security failures use the common `ApiError` response shape:
 
@@ -272,12 +278,52 @@ src/main/resources/db/migration/
 ```
 
 The initial migration is `V1__initial_schema.sql`. Add subsequent schema
-changes as new versioned migrations. The current warehouse/offer/reservation
-migration is:
+changes as new versioned migrations. The warehouse/offer/reservation model was
+introduced by:
 
 ```text
 V8__distributor_offers_warehouses_and_reservations.sql
 ```
+
+Legacy inventory conversion is split into two migrations:
+
+```text
+V9__prepare_legacy_inventory_conversion.sql
+V10__convert_legacy_inventory_and_bound_reservations.sql
+```
+
+`V9` creates `legacy_stock_source_mappings` and automatically records only
+unambiguous, case-insensitive SKU matches between an existing distributor row
+and one manufacturer source product. `V10` creates a tenant-owned `LEGACY`
+warehouse where necessary, converts the rows into source-linked offers, and
+adds the unpaid-order reservation deadline. It fails closed if any legacy
+distributor row has no mapping or has an invalid cross-tenant mapping; it does
+not guess a manufacturer owner.
+
+For a populated deployment, review the unresolved rows after V9 and before
+allowing V10 to complete:
+
+```sql
+SELECT si.id, si.organization_id, si.sku, si.name
+FROM stock_items si
+JOIN organizations o ON o.id = si.organization_id
+WHERE o.type = 'DISTRIBUTOR'
+  AND si.source_stock_item_id IS NULL;
+```
+
+For each unresolved row, identify the correct manufacturer source product and
+insert an explicit mapping while the API is stopped. Then restart the API so
+Flyway can complete V10:
+
+```sql
+INSERT INTO legacy_stock_source_mappings
+    (legacy_stock_item_id, manufacturer_source_stock_item_id)
+VALUES ('<legacy-distributor-stock-uuid>', '<manufacturer-source-uuid>');
+```
+
+The mapping must point to an active manufacturer source row, not another
+distributor offer. Back up the database and verify the resulting warehouse,
+source, and organization ownership before proceeding.
 
 Do not modify a migration that has already been applied to a shared database.
 Hibernate uses `ddl-auto=validate`; it validates the schema but does not create

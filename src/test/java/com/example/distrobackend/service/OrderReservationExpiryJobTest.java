@@ -48,11 +48,13 @@ class OrderReservationExpiryJobTest {
 
         when(orderRepository.findLatestExpiredReservationCandidates(
                 eq(OrderStatus.PENDING), any(OffsetDateTime.class), eq(PageRequest.of(0, 1))))
-                .thenReturn(List.of(later), List.of(later));
+                .thenReturn(List.of(later))
+                .thenReturn(List.of(later));
         when(orderRepository.findExpiredReservationCandidatesThrough(
                 eq(OrderStatus.PENDING), any(OffsetDateTime.class), eq(later.getReservationExpiresAt()),
                 eq(laterId), eq(PageRequest.of(0, 2))))
-                .thenReturn(List.of(first, second), List.of(first, second));
+                .thenReturn(List.of(first, second))
+                .thenReturn(List.of(first, second));
         when(orderRepository.findExpiredReservationCandidatesAfterThrough(
                 eq(OrderStatus.PENDING), any(OffsetDateTime.class), eq(secondExpiry), eq(secondId),
                 eq(later.getReservationExpiresAt()), eq(laterId), eq(PageRequest.of(0, 2))))

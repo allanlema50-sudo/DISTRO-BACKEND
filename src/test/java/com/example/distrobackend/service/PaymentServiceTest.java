@@ -66,7 +66,7 @@ class PaymentServiceTest {
     @Test
     void customerCannotInitiatePaymentForAnotherCustomerOrder() {
         Order order = order();
-        when(orderRepository.findByIdWithOwnership(orderId)).thenReturn(Optional.of(order));
+        when(orderRepository.findByIdWithOwnershipForUpdate(orderId)).thenReturn(Optional.of(order));
 
         assertThatThrownBy(() -> paymentService.initiatePayment(
                 principal(UUID.randomUUID()), new PaymentInitiateRequest(orderId, "0712345678", null)))
@@ -152,13 +152,35 @@ class PaymentServiceTest {
     void paymentInitiationRequiresCallbackSecretConfiguration() {
         ReflectionTestUtils.setField(paymentService, "callbackSecret", "");
         Order order = order();
-        when(orderRepository.findByIdWithOwnership(orderId)).thenReturn(Optional.of(order));
+        when(orderRepository.findByIdWithOwnershipForUpdate(orderId)).thenReturn(Optional.of(order));
 
         assertThatThrownBy(() -> paymentService.initiatePayment(
                 principal(customerId), new PaymentInitiateRequest(orderId, "0712345678", null)))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("Payment service is not configured");
         verifyNoInteractions(paymentRepository, restTemplate);
+    }
+
+    @Test
+    void transientStkInitiationFailureKeepsOrderPendingAndAllowsRetry() {
+        Order order = order();
+        Payment payment = new Payment();
+        payment.setOrder(order);
+        payment.setAmount(order.getTotalAmount());
+        when(orderRepository.findByIdWithOwnershipForUpdate(orderId)).thenReturn(Optional.of(order));
+        when(paymentRepository.findByOrderIdForUpdate(orderId)).thenReturn(Optional.of(payment));
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.GET), any(HttpEntity.class),
+                org.mockito.ArgumentMatchers.<ParameterizedTypeReference<Map<String, Object>>>any()))
+                .thenThrow(new org.springframework.web.client.ResourceAccessException("timeout"));
+
+        assertThatThrownBy(() -> paymentService.initiatePayment(
+                principal(customerId), new PaymentInitiateRequest(orderId, "0712345678", null)))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("Payment provider unavailable");
+
+        org.assertj.core.api.Assertions.assertThat(payment.getStatus()).isEqualTo(PaymentStatus.FAILED);
+        verify(orderService, never()).failPaymentAndReleaseOrder(any(), anyString());
+        verify(paymentRepository).save(payment);
     }
 
     private Order order() {

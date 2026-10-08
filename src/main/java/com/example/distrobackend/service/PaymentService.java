@@ -69,7 +69,7 @@ public class PaymentService {
 
     @Transactional(noRollbackFor = ApiException.class)
     public PaymentInitiateResponse initiatePayment(AuthenticatedUser actor, PaymentInitiateRequest request) {
-        Order order = orderRepository.findByIdWithOwnership(request.orderId())
+        Order order = orderRepository.findByIdWithOwnershipForUpdate(request.orderId())
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
         requireOrderAccess(actor, order);
         if (order.getStatus() != OrderStatus.PENDING) {
@@ -147,11 +147,11 @@ public class PaymentService {
             paymentRepository.save(payment);
             return response(payment, mpesaResponse.getCustomerMessage());
         } catch (ApiException ex) {
-            markFailed(payment, ex.getMessage());
+            markInitiationFailed(payment, ex.getMessage());
             throw ex;
         } catch (RuntimeException ex) {
             log.error("Daraja STK push failed for order {}", order.getId(), ex);
-            markFailed(payment, "Payment provider unavailable");
+            markInitiationFailed(payment, "Payment provider unavailable");
             throw new ApiException(ErrorCode.INTERNAL_ERROR, "Payment provider unavailable");
         }
     }
@@ -342,11 +342,15 @@ public class PaymentService {
         }
     }
 
-    private void markFailed(Payment payment, String reason) {
+    /**
+     * An initiation failure is not a final payment outcome. Keep the order
+     * pending so the customer can retry; the reservation expiry job remains
+     * responsible for abandoned orders.
+     */
+    private void markInitiationFailed(Payment payment, String reason) {
         payment.setStatus(PaymentStatus.FAILED);
         payment.setFailureReason(reason);
         paymentRepository.save(payment);
-        orderService.failPaymentAndReleaseOrder(payment.getOrder().getId(), reason);
     }
 
     private PaymentInitiateResponse response(Payment payment, String message) {

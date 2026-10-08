@@ -20,6 +20,8 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.OffsetDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -37,6 +39,12 @@ public class OrderService {
     @Value("${app.orders.delivery-fee:0.00}")
     private BigDecimal deliveryFeeAmount;
 
+    @Value("${app.orders.reservation-ttl:15m}")
+    private Duration reservationTtl;
+
+    @Value("${app.orders.max-open-pending-per-customer:5}")
+    private int maxOpenPendingOrdersPerCustomer;
+
     private static final Map<OrderStatus, Set<OrderStatus>> ALLOWED_TRANSITIONS = Map.of(
             OrderStatus.PENDING, Set.of(OrderStatus.CONFIRMED, OrderStatus.CANCELLED, OrderStatus.FAILED),
             OrderStatus.CONFIRMED, Set.of(OrderStatus.PROCESSING, OrderStatus.CANCELLED),
@@ -53,6 +61,13 @@ public class OrderService {
     public OrderResponse createOrder(UUID customerId, OrderRequest request) {
         User customer = userRepository.findById(customerId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Customer not found"));
+
+        if (maxOpenPendingOrdersPerCustomer > 0
+                && orderRepository.countByCustomer_IdAndStatus(customerId, OrderStatus.PENDING)
+                >= maxOpenPendingOrdersPerCustomer) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "You have reached the maximum number of unpaid orders. Complete or cancel an existing order first");
+        }
 
         Organization org = organizationRepository.findById(request.organizationId())
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Organization not found"));
@@ -146,7 +161,9 @@ public class OrderService {
         order.setDeliveryFee(deliveryFeeAmount);
         order.setTotalAmount(subtotal.add(deliveryFeeAmount));
         order.setStatus(OrderStatus.PENDING);
-        order.setPlacedAt(java.time.OffsetDateTime.now());
+        OffsetDateTime now = OffsetDateTime.now();
+        order.setPlacedAt(now);
+        order.setReservationExpiresAt(now.plus(reservationTtl));
 
         Order saved = orderRepository.save(order);
         return mapToResponse(saved);
@@ -154,7 +171,7 @@ public class OrderService {
 
     @Transactional
     public OrderResponse updateOrderStatus(UUID orderId, UUID changedById, OrderStatusUpdate update) {
-        Order order = orderRepository.findById(orderId)
+        Order order = orderRepository.findByIdWithItemsForUpdate(orderId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
 
         Set<OrderStatus> allowedNext = ALLOWED_TRANSITIONS.getOrDefault(order.getStatus(), Collections.emptySet());
@@ -178,12 +195,19 @@ public class OrderService {
         order.addStatusHistory(history);
         order.setStatus(update.status());
 
-        if (update.status() == OrderStatus.CONFIRMED) order.setConfirmedAt(java.time.OffsetDateTime.now());
+        if (update.status() == OrderStatus.CONFIRMED) {
+            order.setConfirmedAt(OffsetDateTime.now());
+            order.setReservationExpiresAt(null);
+        }
         if (update.status() == OrderStatus.DELIVERED) order.setDeliveredAt(java.time.OffsetDateTime.now());
-        if (update.status() == OrderStatus.CANCELLED) order.setCancelledAt(java.time.OffsetDateTime.now());
+        if (update.status() == OrderStatus.CANCELLED) {
+            order.setCancelledAt(java.time.OffsetDateTime.now());
+            order.setReservationExpiresAt(null);
+        }
 
         if (update.status() == OrderStatus.CANCELLED || update.status() == OrderStatus.FAILED) {
             order.setCancellationReason(update.note());
+            order.setReservationExpiresAt(null);
             releaseOrRestoreInventory(order);
         }
 
@@ -200,7 +224,7 @@ public class OrderService {
 
     @Transactional
     public Order confirmPaidOrder(UUID orderId) {
-        Order order = orderRepository.findByIdWithItems(orderId)
+        Order order = orderRepository.findByIdWithItemsForUpdate(orderId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
         if (order.getStatus() != OrderStatus.PENDING) {
             throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
@@ -212,14 +236,15 @@ public class OrderService {
         history.setNote("Confirmed after verified payment");
         order.addStatusHistory(history);
         order.setStatus(OrderStatus.CONFIRMED);
-        order.setConfirmedAt(java.time.OffsetDateTime.now());
+        order.setConfirmedAt(OffsetDateTime.now());
+        order.setReservationExpiresAt(null);
         commitReservations(order);
         return orderRepository.save(order);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void failPaymentAndReleaseOrder(UUID orderId, String reason) {
-        Order order = orderRepository.findByIdWithItems(orderId)
+        Order order = orderRepository.findByIdWithItemsForUpdate(orderId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
         if (order.getStatus() != OrderStatus.PENDING) {
             return;
@@ -227,12 +252,37 @@ public class OrderService {
         releaseOrRestoreInventory(order);
         order.setStatus(OrderStatus.FAILED);
         order.setCancellationReason(reason);
+        order.setReservationExpiresAt(null);
         OrderStatusHistory history = new OrderStatusHistory();
         history.setFromStatus(OrderStatus.PENDING);
         history.setToStatus(OrderStatus.FAILED);
         history.setNote(reason);
         order.addStatusHistory(history);
         orderRepository.save(order);
+    }
+
+    /** Releases an abandoned unpaid reservation after its payment window expires. */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean expireReservationAndFailOrder(UUID orderId, OffsetDateTime now) {
+        Order order = orderRepository.findByIdWithItemsForUpdate(orderId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
+        if (order.getStatus() != OrderStatus.PENDING
+                || order.getReservationExpiresAt() == null
+                || order.getReservationExpiresAt().isAfter(now)) {
+            return false;
+        }
+
+        releaseOrRestoreInventory(order);
+        order.setStatus(OrderStatus.FAILED);
+        order.setCancellationReason("Payment window expired");
+        order.setReservationExpiresAt(null);
+        OrderStatusHistory history = new OrderStatusHistory();
+        history.setFromStatus(OrderStatus.PENDING);
+        history.setToStatus(OrderStatus.FAILED);
+        history.setNote("Payment window expired and reserved stock was released");
+        order.addStatusHistory(history);
+        orderRepository.save(order);
+        return true;
     }
 
     private void commitReservations(Order order) {
@@ -323,6 +373,7 @@ public class OrderService {
                 order.getTotalAmount(),
                 order.getCancellationReason(),
                 order.getPlacedAt(),
+                order.getReservationExpiresAt(),
                 order.getConfirmedAt(),
                 order.getDeliveredAt(),
                 order.getCancelledAt(),

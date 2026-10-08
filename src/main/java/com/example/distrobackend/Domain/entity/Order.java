@@ -20,7 +20,8 @@ import java.util.UUID;
 @Table(name = "orders", indexes = {
         @Index(name = "idx_order_customer", columnList = "customer_id"),
         @Index(name = "idx_order_org", columnList = "organization_id"),
-        @Index(name = "idx_order_status", columnList = "status")
+        @Index(name = "idx_order_status", columnList = "status"),
+        @Index(name = "idx_order_pending_expiry", columnList = "status,reservation_expires_at")
 })
 @Getter
 @Setter
@@ -71,6 +72,10 @@ public class Order {
 
     @Column(name = "placed_at", nullable = false)
     private OffsetDateTime placedAt;
+
+    /** Deadline for an unpaid stock reservation. */
+    @Column(name = "reservation_expires_at")
+    private OffsetDateTime reservationExpiresAt;
 
     @Column(name = "confirmed_at")
     private OffsetDateTime confirmedAt;

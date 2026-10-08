@@ -22,6 +22,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -54,6 +56,8 @@ class OrderServiceTest {
     @BeforeEach
     void setUp() {
         ReflectionTestUtils.setField(orderService, "deliveryFeeAmount", BigDecimal.ZERO);
+        ReflectionTestUtils.setField(orderService, "reservationTtl", Duration.ofMinutes(15));
+        ReflectionTestUtils.setField(orderService, "maxOpenPendingOrdersPerCustomer", 5);
         customerId = UUID.randomUUID();
         distributorId = UUID.randomUUID();
         stockItemId = UUID.randomUUID();
@@ -120,6 +124,31 @@ class OrderServiceTest {
                 "CUSTOMER_ORDER_ATTEMPT",
                 null);
         verify(orderRepository, never()).save(any(Order.class));
+    }
+
+    @Test
+    void expiredPendingOrderReleasesReservationAndFailsOrder() {
+        Order order = new Order();
+        order.setId(UUID.randomUUID());
+        order.setStatus(com.example.distrobackend.Domain.enums.OrderStatus.PENDING);
+        order.setReservationExpiresAt(OffsetDateTime.now().minusMinutes(1));
+        OrderItem orderItem = new OrderItem();
+        orderItem.setStockItem(offer);
+        orderItem.setQuantity(4);
+        orderItem.setStockCheckStatus("RESERVED");
+        order.addOrderItem(orderItem);
+        offer.setReservedQuantity(4);
+
+        when(orderRepository.findByIdWithItemsForUpdate(order.getId())).thenReturn(Optional.of(order));
+        when(stockItemRepository.findByIdForUpdate(stockItemId)).thenReturn(Optional.of(offer));
+        when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        assertThat(orderService.expireReservationAndFailOrder(order.getId(), OffsetDateTime.now())).isTrue();
+
+        assertThat(order.getStatus()).isEqualTo(com.example.distrobackend.Domain.enums.OrderStatus.FAILED);
+        assertThat(order.getReservationExpiresAt()).isNull();
+        assertThat(offer.getReservedQuantity()).isZero();
+        assertThat(orderItem.getStockCheckStatus()).isEqualTo("RELEASED");
     }
 
     private OrderRequest request(int quantity) {

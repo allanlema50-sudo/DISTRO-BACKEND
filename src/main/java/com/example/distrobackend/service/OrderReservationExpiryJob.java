@@ -28,6 +28,8 @@ public class OrderReservationExpiryJob {
 
     private OffsetDateTime cursorExpiresAt;
     private UUID cursorId;
+    private OffsetDateTime cycleUpperExpiresAt;
+    private UUID cycleUpperId;
 
     @Scheduled(fixedDelayString = "${app.orders.reservation-expiry-scan-ms:60000}")
     public synchronized void releaseExpiredReservations() {
@@ -35,11 +37,22 @@ public class OrderReservationExpiryJob {
         OffsetDateTime now = OffsetDateTime.now();
         List<OrderRepository.ExpiredReservationCandidate> candidates;
         if (cursorExpiresAt == null) {
-            candidates = orderRepository.findExpiredReservationCandidates(
-                    OrderStatus.PENDING, now, PageRequest.of(0, safeBatchSize));
+            List<OrderRepository.ExpiredReservationCandidate> latest =
+                    orderRepository.findLatestExpiredReservationCandidates(
+                            OrderStatus.PENDING, now, PageRequest.of(0, 1));
+            if (latest.isEmpty()) {
+                return;
+            }
+            OrderRepository.ExpiredReservationCandidate upperBound = latest.get(0);
+            cycleUpperExpiresAt = upperBound.getReservationExpiresAt();
+            cycleUpperId = upperBound.getId();
+            candidates = orderRepository.findExpiredReservationCandidatesThrough(
+                    OrderStatus.PENDING, now, cycleUpperExpiresAt, cycleUpperId,
+                    PageRequest.of(0, safeBatchSize));
         } else {
-            candidates = orderRepository.findExpiredReservationCandidatesAfter(
+            candidates = orderRepository.findExpiredReservationCandidatesAfterThrough(
                     OrderStatus.PENDING, now, cursorExpiresAt, cursorId,
+                    cycleUpperExpiresAt, cycleUpperId,
                     PageRequest.of(0, safeBatchSize));
         }
 
@@ -48,6 +61,8 @@ public class OrderReservationExpiryJob {
             // at the beginning, retrying rows skipped after provider failures.
             cursorExpiresAt = null;
             cursorId = null;
+            cycleUpperExpiresAt = null;
+            cycleUpperId = null;
             return;
         }
 

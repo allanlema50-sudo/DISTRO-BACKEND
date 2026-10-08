@@ -38,8 +38,8 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     @Query("SELECT o.id AS id, o.reservationExpiresAt AS reservationExpiresAt FROM Order o "
             + "WHERE o.status = :status AND o.reservationExpiresAt IS NOT NULL "
             + "AND o.reservationExpiresAt <= :now "
-            + "ORDER BY o.reservationExpiresAt, o.id")
-    List<ExpiredReservationCandidate> findExpiredReservationCandidates(
+            + "ORDER BY o.reservationExpiresAt DESC, o.id DESC")
+    List<ExpiredReservationCandidate> findLatestExpiredReservationCandidates(
             @Param("status") OrderStatus status,
             @Param("now") OffsetDateTime now,
             Pageable pageable);
@@ -47,14 +47,31 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     @Query("SELECT o.id AS id, o.reservationExpiresAt AS reservationExpiresAt FROM Order o "
             + "WHERE o.status = :status AND o.reservationExpiresAt IS NOT NULL "
             + "AND o.reservationExpiresAt <= :now "
+            + "AND (o.reservationExpiresAt < :cycleUpperExpiresAt "
+            + "OR (o.reservationExpiresAt = :cycleUpperExpiresAt AND o.id <= :cycleUpperId)) "
+            + "ORDER BY o.reservationExpiresAt, o.id")
+    List<ExpiredReservationCandidate> findExpiredReservationCandidatesThrough(
+            @Param("status") OrderStatus status,
+            @Param("now") OffsetDateTime now,
+            @Param("cycleUpperExpiresAt") OffsetDateTime cycleUpperExpiresAt,
+            @Param("cycleUpperId") UUID cycleUpperId,
+            Pageable pageable);
+
+    @Query("SELECT o.id AS id, o.reservationExpiresAt AS reservationExpiresAt FROM Order o "
+            + "WHERE o.status = :status AND o.reservationExpiresAt IS NOT NULL "
+            + "AND o.reservationExpiresAt <= :now "
             + "AND (o.reservationExpiresAt > :afterExpiresAt "
             + "OR (o.reservationExpiresAt = :afterExpiresAt AND o.id > :afterId)) "
+            + "AND (o.reservationExpiresAt < :cycleUpperExpiresAt "
+            + "OR (o.reservationExpiresAt = :cycleUpperExpiresAt AND o.id <= :cycleUpperId)) "
             + "ORDER BY o.reservationExpiresAt, o.id")
-    List<ExpiredReservationCandidate> findExpiredReservationCandidatesAfter(
+    List<ExpiredReservationCandidate> findExpiredReservationCandidatesAfterThrough(
             @Param("status") OrderStatus status,
             @Param("now") OffsetDateTime now,
             @Param("afterExpiresAt") OffsetDateTime afterExpiresAt,
             @Param("afterId") UUID afterId,
+            @Param("cycleUpperExpiresAt") OffsetDateTime cycleUpperExpiresAt,
+            @Param("cycleUpperId") UUID cycleUpperId,
             Pageable pageable);
 
     interface ExpiredReservationCandidate {

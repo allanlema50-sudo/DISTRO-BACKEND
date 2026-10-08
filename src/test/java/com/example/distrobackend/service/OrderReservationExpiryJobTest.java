@@ -46,25 +46,35 @@ class OrderReservationExpiryJobTest {
         OrderRepository.ExpiredReservationCandidate later = candidate(
                 laterId, OffsetDateTime.parse("2026-10-08T08:02:00Z"));
 
-        when(orderRepository.findExpiredReservationCandidates(
-                eq(OrderStatus.PENDING), any(OffsetDateTime.class), eq(PageRequest.of(0, 2))))
-                .thenReturn(List.of(first, second));
-        when(orderRepository.findExpiredReservationCandidatesAfter(
+        when(orderRepository.findLatestExpiredReservationCandidates(
+                eq(OrderStatus.PENDING), any(OffsetDateTime.class), eq(PageRequest.of(0, 1))))
+                .thenReturn(List.of(later), List.of(later));
+        when(orderRepository.findExpiredReservationCandidatesThrough(
+                eq(OrderStatus.PENDING), any(OffsetDateTime.class), eq(later.getReservationExpiresAt()),
+                eq(laterId), eq(PageRequest.of(0, 2))))
+                .thenReturn(List.of(first, second), List.of(first, second));
+        when(orderRepository.findExpiredReservationCandidatesAfterThrough(
                 eq(OrderStatus.PENDING), any(OffsetDateTime.class), eq(secondExpiry), eq(secondId),
-                eq(PageRequest.of(0, 2))))
+                eq(later.getReservationExpiresAt()), eq(laterId), eq(PageRequest.of(0, 2))))
                 .thenReturn(List.of(later));
+        when(orderRepository.findExpiredReservationCandidatesAfterThrough(
+                eq(OrderStatus.PENDING), any(OffsetDateTime.class),
+                eq(later.getReservationExpiresAt()), eq(laterId),
+                eq(later.getReservationExpiresAt()), eq(laterId), eq(PageRequest.of(0, 2))))
+                .thenReturn(List.of());
         when(paymentService.reconcileExpiredPayment(any(UUID.class)))
                 .thenThrow(new RuntimeException("provider unavailable"));
 
         job.releaseExpiredReservations();
         job.releaseExpiredReservations();
+        job.releaseExpiredReservations();
+        job.releaseExpiredReservations();
 
-        verify(paymentService).reconcileExpiredPayment(firstId);
-        verify(paymentService).reconcileExpiredPayment(secondId);
+        verify(paymentService, org.mockito.Mockito.times(2)).reconcileExpiredPayment(firstId);
+        verify(paymentService, org.mockito.Mockito.times(2)).reconcileExpiredPayment(secondId);
         verify(paymentService).reconcileExpiredPayment(laterId);
-        verify(orderRepository).findExpiredReservationCandidatesAfter(
-                eq(OrderStatus.PENDING), any(OffsetDateTime.class), eq(secondExpiry), eq(secondId),
-                eq(PageRequest.of(0, 2)));
+        verify(orderRepository, org.mockito.Mockito.times(2)).findLatestExpiredReservationCandidates(
+                eq(OrderStatus.PENDING), any(OffsetDateTime.class), eq(PageRequest.of(0, 1)));
     }
 
     private static OrderRepository.ExpiredReservationCandidate candidate(

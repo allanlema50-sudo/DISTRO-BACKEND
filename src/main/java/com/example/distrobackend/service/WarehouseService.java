@@ -12,6 +12,7 @@ import com.example.distrobackend.repository.OrganizationRepository;
 import com.example.distrobackend.repository.WarehouseRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -40,7 +41,15 @@ public class WarehouseService {
         warehouse.setName(request.name().trim());
         warehouse.setAddress(trimToNull(request.address()));
         warehouse.setActive(true);
-        return WarehouseResponse.from(warehouseRepository.saveAndFlush(warehouse));
+        try {
+            return WarehouseResponse.from(warehouseRepository.saveAndFlush(warehouse));
+        } catch (DataIntegrityViolationException ex) {
+            String detail = ex.getMostSpecificCause().getMessage();
+            if (detail != null && detail.contains("uk_warehouses_organization_code")) {
+                throw new ApiException(ErrorCode.CONFLICT, "A warehouse with this code already exists");
+            }
+            throw ex;
+        }
     }
 
     @Transactional(readOnly = true)

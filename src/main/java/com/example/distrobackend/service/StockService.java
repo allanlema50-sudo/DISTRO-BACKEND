@@ -207,7 +207,7 @@ public class StockService {
         if (distributor.getType() != Organizationtype.DISTRIBUTOR) {
             throw new ApiException(ErrorCode.ACCESS_DENIED);
         }
-        StockItem offer = stockItemRepository.findByIdAndOrganization_Id(id, distributor.getId())
+        StockItem offer = stockItemRepository.findByIdAndOrganizationIdForUpdate(id, distributor.getId())
                 .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.STOCK_ITEM_NOT_FOUND));
         if (offer.getSourceStockItem() == null || offer.getWarehouse() == null) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "The selected stock item is not a distributor offer");

@@ -1,0 +1,140 @@
+package com.example.distrobackend.service;
+
+import com.example.distrobackend.Domain.entity.Organization;
+import com.example.distrobackend.Domain.entity.Order;
+import com.example.distrobackend.Domain.entity.StockItem;
+import com.example.distrobackend.Domain.entity.User;
+import com.example.distrobackend.Domain.entity.Warehouse;
+import com.example.distrobackend.Domain.enums.Organizationtype;
+import com.example.distrobackend.Exception.InsufficientStockException;
+import com.example.distrobackend.dto.OrderItemRequest;
+import com.example.distrobackend.dto.OrderRequest;
+import com.example.distrobackend.repository.OrderRepository;
+import com.example.distrobackend.repository.OrganizationRepository;
+import com.example.distrobackend.repository.StockItemRepository;
+import com.example.distrobackend.repository.UserRepository;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import java.math.BigDecimal;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+@ExtendWith(MockitoExtension.class)
+class OrderServiceTest {
+
+    @Mock private OrderRepository orderRepository;
+    @Mock private StockItemRepository stockItemRepository;
+    @Mock private UserRepository userRepository;
+    @Mock private OrganizationRepository organizationRepository;
+    @Mock private OrganizationNotificationService notificationService;
+
+    @InjectMocks private OrderService orderService;
+
+    private UUID customerId;
+    private UUID distributorId;
+    private UUID stockItemId;
+    private Organization distributor;
+    private StockItem offer;
+    private User customer;
+
+    @BeforeEach
+    void setUp() {
+        ReflectionTestUtils.setField(orderService, "deliveryFeeAmount", BigDecimal.ZERO);
+        customerId = UUID.randomUUID();
+        distributorId = UUID.randomUUID();
+        stockItemId = UUID.randomUUID();
+        distributor = organization(distributorId, Organizationtype.DISTRIBUTOR);
+        Organization manufacturer = organization(UUID.randomUUID(), Organizationtype.MANUFACTURER);
+        Warehouse warehouse = new Warehouse();
+        warehouse.setId(UUID.randomUUID());
+        warehouse.setOrganization(distributor);
+        warehouse.setActive(true);
+
+        StockItem source = new StockItem();
+        source.setId(UUID.randomUUID());
+        source.setOrganization(manufacturer);
+
+        offer = new StockItem();
+        offer.setId(stockItemId);
+        offer.setOrganization(distributor);
+        offer.setSourceStockItem(source);
+        offer.setWarehouse(warehouse);
+        offer.setSku("DIST-CEMENT");
+        offer.setName("Cement");
+        offer.setUnitPrice(new BigDecimal("1200.00"));
+        offer.setQuantityOnHand(10);
+        offer.setReservedQuantity(0);
+        offer.setActive(true);
+
+        customer = new User();
+        customer.setId(customerId);
+    }
+
+    @Test
+    void orderCreationAtomicallyReservesAvailableStock() {
+        when(userRepository.findById(customerId)).thenReturn(Optional.of(customer));
+        when(organizationRepository.findById(distributorId)).thenReturn(Optional.of(distributor));
+        when(stockItemRepository.findByIdForUpdate(stockItemId)).thenReturn(Optional.of(offer));
+        when(orderRepository.getNextOrderSequence()).thenReturn(42L);
+        when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        OrderRequest request = request(3);
+        var response = orderService.createOrder(customerId, request);
+
+        assertThat(response.status()).isEqualTo(com.example.distrobackend.Domain.enums.OrderStatus.PENDING);
+        assertThat(offer.getReservedQuantity()).isEqualTo(3);
+        assertThat(offer.getAvailableQuantity()).isEqualTo(7);
+        verify(orderRepository).save(any(Order.class));
+    }
+
+    @Test
+    void insufficientStockRejectsOrderAndNotifiesDistributor() {
+        when(userRepository.findById(customerId)).thenReturn(Optional.of(customer));
+        when(organizationRepository.findById(distributorId)).thenReturn(Optional.of(distributor));
+        when(stockItemRepository.findByIdForUpdate(stockItemId)).thenReturn(Optional.of(offer));
+
+        assertThatThrownBy(() -> orderService.createOrder(customerId, request(11)))
+                .isInstanceOf(InsufficientStockException.class)
+                .hasMessageContaining("requested 11");
+
+        assertThat(offer.getReservedQuantity()).isZero();
+        verify(notificationService).notify(
+                distributor,
+                "ORDER_STOCK_REJECTED",
+                "Order rejected: insufficient stock",
+                org.mockito.ArgumentMatchers.contains("only 10 units were available"),
+                "CUSTOMER_ORDER_ATTEMPT",
+                null);
+        verify(orderRepository, never()).save(any(Order.class));
+    }
+
+    private OrderRequest request(int quantity) {
+        return new OrderRequest(
+                distributorId,
+                "1 Main Street",
+                -1.2864,
+                36.8172,
+                List.of(new OrderItemRequest(stockItemId, quantity)));
+    }
+
+    private static Organization organization(UUID id, Organizationtype type) {
+        Organization organization = new Organization();
+        organization.setId(id);
+        organization.setType(type);
+        return organization;
+    }
+}

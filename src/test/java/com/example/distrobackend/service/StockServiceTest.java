@@ -2,6 +2,7 @@ package com.example.distrobackend.service;
 
 import com.example.distrobackend.Domain.entity.StockItem;
 import com.example.distrobackend.Domain.entity.StockMovement;
+import com.example.distrobackend.Domain.entity.Warehouse;
 import com.example.distrobackend.Domain.enums.StockMovementType;
 import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.UserRole;
@@ -9,6 +10,8 @@ import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.InsufficientStockException;
 import com.example.distrobackend.dto.StockAdjustmentRequest;
 import com.example.distrobackend.dto.CreateRestockRequest;
+import com.example.distrobackend.dto.CreateDistributorOfferRequest;
+import com.example.distrobackend.repository.WarehouseRepository;
 import com.example.distrobackend.repository.OrganizationRepository;
 import com.example.distrobackend.repository.StockItemRepository;
 import com.example.distrobackend.repository.StockMovementRepository;
@@ -52,6 +55,9 @@ class StockServiceTest {
 
     @Mock
     private RestockRequestRepository restockRequestRepository;
+
+    @Mock
+    private WarehouseRepository warehouseRepository;
 
     @InjectMocks
     private StockService stockService;
@@ -136,6 +142,20 @@ class StockServiceTest {
     }
 
     @Test
+    void outboundMovementCannotConsumeReservedUnits() {
+        StockItem item = itemWithQuantity(10);
+        item.setReservedQuantity(8);
+        when(stockItemRepository.findByIdAndOrganizationIdForUpdate(stockItemId, organizationId))
+                .thenReturn(java.util.Optional.of(item));
+
+        assertThatThrownBy(() -> stockService.adjust(user, stockItemId,
+                new StockAdjustmentRequest(StockMovementType.SALE_OUT, -3, null, null, null)))
+                .isInstanceOf(InsufficientStockException.class);
+
+        verify(stockItemRepository, never()).save(item);
+    }
+
+    @Test
     void distributorCatalogIncludesManufacturersButNotOtherDistributors() {
         var pageable = org.springframework.data.domain.PageRequest.of(0, 20);
         when(stockItemRepository.findActiveCatalogForDistributor(
@@ -182,6 +202,10 @@ class StockServiceTest {
                 manufacturerId, Organizationtype.MANUFACTURER);
         StockItem item = itemWithQuantity(2);
         item.setSku("SKU-1");
+        StockItem source = itemWithQuantity(0);
+        source.setId(UUID.randomUUID());
+        source.setOrganization(manufacturer);
+        item.setSourceStockItem(source);
         com.example.distrobackend.Domain.entity.User requester = new com.example.distrobackend.Domain.entity.User();
         requester.setId(user.userId());
 
@@ -199,6 +223,39 @@ class StockServiceTest {
         assertThat(response.requestedQuantity()).isEqualTo(20);
         assertThat(response.status()).isEqualTo(com.example.distrobackend.Domain.enums.RestockRequestStatus.PENDING);
         verify(restockRequestRepository).saveAndFlush(any());
+    }
+
+    @Test
+    void distributorCanCreateOfferOnlyForManufacturerSourceAndOwnedWarehouse() {
+        var distributor = organization(organizationId, Organizationtype.DISTRIBUTOR);
+        UUID manufacturerId = UUID.randomUUID();
+        var manufacturer = organization(manufacturerId, Organizationtype.MANUFACTURER);
+        StockItem source = itemWithQuantity(50);
+        source.setOrganization(manufacturer);
+        source.setName("Cement");
+        source.setCategory("cement");
+        source.setSku("MFG-CEMENT");
+        Warehouse warehouse = new Warehouse();
+        warehouse.setId(UUID.randomUUID());
+        warehouse.setOrganization(distributor);
+        warehouse.setActive(true);
+
+        when(organizationRepository.findById(organizationId)).thenReturn(java.util.Optional.of(distributor));
+        when(stockItemRepository.findById(source.getId())).thenReturn(java.util.Optional.of(source));
+        when(warehouseRepository.findByIdAndOrganization_IdAndActiveTrue(
+                warehouse.getId(), organizationId)).thenReturn(java.util.Optional.of(warehouse));
+        when(stockItemRepository.existsByOrganization_IdAndSkuIgnoreCase(organizationId, "DIST-CEMENT"))
+                .thenReturn(false);
+        when(stockItemRepository.saveAndFlush(any(StockItem.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        var response = stockService.createDistributorOffer(user,
+                new CreateDistributorOfferRequest(source.getId(), warehouse.getId(),
+                        "dist-cement", new java.math.BigDecimal("1200.00"), 5));
+
+        assertThat(response.organizationId()).isEqualTo(organizationId);
+        assertThat(response.quantityOnHand()).isZero();
+        verify(stockItemRepository).saveAndFlush(any(StockItem.class));
     }
 
     private static com.example.distrobackend.Domain.entity.Organization organization(

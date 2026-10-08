@@ -1,6 +1,7 @@
 package com.example.distrobackend.security;
 
 import com.example.distrobackend.Domain.enums.UserRole;
+import com.example.distrobackend.Domain.enums.Organizationtype;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -82,6 +83,40 @@ class StompChannelInterceptorTest {
                 (AuthenticatedUser) authentication.getPrincipal())).thenReturn(false);
         Message<byte[]> message = stompMessage(StompCommand.SUBSCRIBE, authentication,
                 "/topic/trips/" + tripId + "/location");
+
+        assertThatThrownBy(() -> interceptor.preSend(message, messageChannel()))
+                .isInstanceOf(MessagingException.class)
+                .hasMessage("Unauthorized or invalid tracking subscription");
+    }
+
+    @Test
+    void permitsOrganizationNotificationSubscriptionForOwnOrganization() {
+        UUID organizationId = UUID.randomUUID();
+        AuthenticatedUser principal = new AuthenticatedUser(
+                UUID.randomUUID(), UserRole.DISTRIBUTOR_STAFF, organizationId,
+                Organizationtype.DISTRIBUTOR, Instant.now().plusSeconds(60));
+        Authentication organizationAuthentication = new UsernamePasswordAuthenticationToken(
+                principal, null, List.of());
+        Message<byte[]> message = stompMessage(
+                StompCommand.SUBSCRIBE,
+                organizationAuthentication,
+                "/topic/organizations/" + organizationId + "/notifications");
+
+        assertThat(interceptor.preSend(message, messageChannel())).isSameAs(message);
+    }
+
+    @Test
+    void rejectsOrganizationNotificationSubscriptionAcrossTenants() {
+        UUID organizationId = UUID.randomUUID();
+        AuthenticatedUser principal = new AuthenticatedUser(
+                UUID.randomUUID(), UserRole.DISTRIBUTOR_STAFF, organizationId,
+                Organizationtype.DISTRIBUTOR, Instant.now().plusSeconds(60));
+        Authentication organizationAuthentication = new UsernamePasswordAuthenticationToken(
+                principal, null, List.of());
+        Message<byte[]> message = stompMessage(
+                StompCommand.SUBSCRIBE,
+                organizationAuthentication,
+                "/topic/organizations/" + UUID.randomUUID() + "/notifications");
 
         assertThatThrownBy(() -> interceptor.preSend(message, messageChannel()))
                 .isInstanceOf(MessagingException.class)

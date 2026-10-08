@@ -14,20 +14,22 @@ WHERE status = 'PENDING'
       FROM payments p
       WHERE p.order_id = orders.id
         AND p.status = 'PENDING'
-        AND p.mpesa_checkout_request_id IS NOT NULL
+        AND NULLIF(BTRIM(p.mpesa_checkout_request_id), '') IS NOT NULL
   );
 
--- An accepted STK request remains eligible for a late provider callback. Do
--- not let the expiry job fail that order before the payment is reconciled.
+-- An accepted STK request remains eligible for a late provider callback. Give
+-- it a bounded, already-due deadline so the expiry job invokes Daraja
+-- reconciliation before releasing the reservation. A NULL deadline would
+-- exclude it from every future cleanup scan.
 UPDATE orders
-SET reservation_expires_at = NULL
+SET reservation_expires_at = LEAST(COALESCE(placed_at, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
 WHERE status = 'PENDING'
   AND EXISTS (
       SELECT 1
       FROM payments p
       WHERE p.order_id = orders.id
         AND p.status = 'PENDING'
-        AND p.mpesa_checkout_request_id IS NOT NULL
+        AND NULLIF(BTRIM(p.mpesa_checkout_request_id), '') IS NOT NULL
   );
 
 CREATE INDEX idx_orders_pending_reservation_expiry

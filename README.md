@@ -296,9 +296,11 @@ V10__convert_legacy_inventory_and_bound_reservations.sql
 unambiguous, case-insensitive SKU matches between an existing distributor row
 and one manufacturer source product. `V10` creates a tenant-owned `LEGACY`
 warehouse where necessary, converts the rows into source-linked offers, and
-adds the unpaid-order reservation deadline. It fails closed if any legacy
-distributor row has no mapping or has an invalid cross-tenant mapping; it does
-not guess a manufacturer owner.
+adds the unpaid-order reservation deadline. Existing orders with an accepted
+M-Pesa STK request remain outside the expiry backfill so their provider callback
+can still reconcile them. It fails closed if any legacy distributor row has no
+mapping or has an invalid cross-tenant mapping; it does not guess a
+manufacturer owner.
 
 For a populated deployment, review the unresolved rows after V9 and before
 allowing V10 to complete:

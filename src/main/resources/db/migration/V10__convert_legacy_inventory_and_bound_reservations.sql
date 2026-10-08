@@ -8,7 +8,27 @@ ALTER TABLE orders
 -- cutover so the cleanup job can release any legacy reservations safely.
 UPDATE orders
 SET reservation_expires_at = COALESCE(placed_at, CURRENT_TIMESTAMP)
-WHERE status = 'PENDING';
+WHERE status = 'PENDING'
+  AND NOT EXISTS (
+      SELECT 1
+      FROM payments p
+      WHERE p.order_id = orders.id
+        AND p.status = 'PENDING'
+        AND p.mpesa_checkout_request_id IS NOT NULL
+  );
+
+-- An accepted STK request remains eligible for a late provider callback. Do
+-- not let the expiry job fail that order before the payment is reconciled.
+UPDATE orders
+SET reservation_expires_at = NULL
+WHERE status = 'PENDING'
+  AND EXISTS (
+      SELECT 1
+      FROM payments p
+      WHERE p.order_id = orders.id
+        AND p.status = 'PENDING'
+        AND p.mpesa_checkout_request_id IS NOT NULL
+  );
 
 CREATE INDEX idx_orders_pending_reservation_expiry
     ON orders(status, reservation_expires_at);

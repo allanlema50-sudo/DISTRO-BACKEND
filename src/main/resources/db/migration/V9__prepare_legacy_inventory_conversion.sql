@@ -16,7 +16,7 @@ INSERT INTO legacy_stock_source_mappings (
     legacy_stock_item_id,
     manufacturer_source_stock_item_id
 )
-SELECT distributor_item.id, MIN(manufacturer_item.id)
+SELECT distributor_item.id, MIN(manufacturer_item.id::text)::uuid
 FROM stock_items distributor_item
 JOIN organizations distributor_org
     ON distributor_org.id = distributor_item.organization_id

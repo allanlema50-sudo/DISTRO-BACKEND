@@ -3,12 +3,14 @@ package com.example.distrobackend.service;
 import com.example.distrobackend.Domain.entity.*;
 import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.OrderStatus;
+import com.example.distrobackend.Domain.enums.PaymentStatus;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.Exception.InsufficientStockException;
 import com.example.distrobackend.dto.*;
 import com.example.distrobackend.repository.OrderRepository;
 import com.example.distrobackend.repository.OrganizationRepository;
+import com.example.distrobackend.repository.PaymentRepository;
 import com.example.distrobackend.repository.StockItemRepository;
 import com.example.distrobackend.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -33,6 +35,7 @@ public class OrderService {
     private final StockItemRepository stockItemRepository;
     private final UserRepository userRepository;
     private final OrganizationRepository organizationRepository;
+    private final PaymentRepository paymentRepository;
     private final OrganizationNotificationService notificationService;
 
     // Placeholder until real distance/route-based pricing exists once Trips is built
@@ -59,7 +62,7 @@ public class OrderService {
 
     @Transactional
     public OrderResponse createOrder(UUID customerId, OrderRequest request) {
-        User customer = userRepository.findById(customerId)
+        User customer = userRepository.findByIdForUpdate(customerId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Customer not found"));
 
         if (maxOpenPendingOrdersPerCustomer > 0
@@ -242,7 +245,7 @@ public class OrderService {
         return orderRepository.save(order);
     }
 
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Transactional
     public void failPaymentAndReleaseOrder(UUID orderId, String reason) {
         Order order = orderRepository.findByIdWithItemsForUpdate(orderId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
@@ -269,6 +272,17 @@ public class OrderService {
         if (order.getStatus() != OrderStatus.PENDING
                 || order.getReservationExpiresAt() == null
                 || order.getReservationExpiresAt().isAfter(now)) {
+            return false;
+        }
+
+        Payment payment = paymentRepository.findByOrderIdForUpdate(orderId).orElse(null);
+        if (payment != null && payment.getStatus() == PaymentStatus.PENDING
+                && payment.getMpesaCheckoutRequestId() != null
+                && !payment.getMpesaCheckoutRequestId().isBlank()) {
+            // A provider-accepted STK request is still eligible for a late
+            // callback. Keep the order pending until it is reconciled.
+            order.setReservationExpiresAt(null);
+            orderRepository.save(order);
             return false;
         }
 

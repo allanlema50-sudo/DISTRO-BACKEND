@@ -170,8 +170,15 @@ public class PaymentService {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Incomplete M-Pesa callback payload");
         }
 
-        Payment payment = paymentRepository.findByMpesaCheckoutRequestIdForUpdate(callback.getCheckoutRequestId())
+        Payment locatedPayment = paymentRepository.findByMpesaCheckoutRequestId(callback.getCheckoutRequestId())
                 .orElseThrow(() -> new ApiException(ErrorCode.PAYMENT_NOT_FOUND, "Payment not found"));
+        Order lockedOrder = orderRepository.findByIdWithOwnershipForUpdate(locatedPayment.getOrder().getId())
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
+        Payment payment = paymentRepository.findByIdForUpdate(locatedPayment.getId())
+                .orElseThrow(() -> new ApiException(ErrorCode.PAYMENT_NOT_FOUND, "Payment not found"));
+        if (!callback.getCheckoutRequestId().equals(payment.getMpesaCheckoutRequestId())) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "M-Pesa callback correlation failed");
+        }
         if (isBlank(payment.getMpesaMerchantRequestId())
                 || !payment.getMpesaMerchantRequestId().equals(callback.getMerchantRequestId())) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "M-Pesa callback correlation failed");
@@ -206,7 +213,7 @@ public class PaymentService {
             } catch (NumberFormatException ex) {
                 throw new ApiException(ErrorCode.BAD_REQUEST, "Invalid M-Pesa amount");
             }
-            if (payment.getOrder().getStatus() != OrderStatus.PENDING) {
+            if (lockedOrder.getStatus() != OrderStatus.PENDING) {
                 throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
                         "Payment cannot confirm an order in its current state");
             }

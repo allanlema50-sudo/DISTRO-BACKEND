@@ -1,6 +1,7 @@
 package com.example.distrobackend.Domain.enums;
 
 public enum UserRole {
+    SUPER_ADMIN,
     MANUFACTURER_ADMIN,
     MANUFACTURER_STAFF,
     DISTRIBUTOR_ADMIN,
@@ -8,7 +9,7 @@ public enum UserRole {
     DRIVER,
     CUSTOMER;
 
-    /** Organization type implied by the role, or null for DRIVER / CUSTOMER. */
+    /** Organization type implied by the role, or null for platform/mobile roles. */
     public Organizationtype organizationtype() {
         return switch (this) {
             case MANUFACTURER_ADMIN, MANUFACTURER_STAFF -> Organizationtype.MANUFACTURER;

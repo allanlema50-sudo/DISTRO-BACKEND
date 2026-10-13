@@ -67,6 +67,14 @@ class TripAccessServiceTest {
         verifyNoInteractions(tripRepository);
     }
 
+    @Test
+    void platformAdministratorCannotUseOrganizationTripFeedWithoutExplicitScope() {
+        AuthenticatedUser user = user(UUID.randomUUID(), UserRole.SUPER_ADMIN, null);
+
+        assertThat(tripAccessService.canSubscribe(UUID.randomUUID(), user)).isFalse();
+        verifyNoInteractions(tripRepository);
+    }
+
     private static AuthenticatedUser user(UUID userId, UserRole role, UUID organizationId) {
         return new AuthenticatedUser(
                 userId, role, organizationId, null, Instant.now().plusSeconds(60));

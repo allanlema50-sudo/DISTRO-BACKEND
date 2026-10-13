@@ -32,6 +32,9 @@ public class Organization {
     @Column(name = "name", nullable = false, length = 150)
     private String name;
 
+    @Column(name = "email", length = 150)
+    private String email;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "type", nullable = false)
     private Organizationtype type;

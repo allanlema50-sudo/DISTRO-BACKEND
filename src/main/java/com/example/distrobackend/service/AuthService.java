@@ -1,7 +1,6 @@
 package com.example.distrobackend.service;
 
 
-import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.OtpPurpose;
 import com.example.distrobackend.Domain.enums.UserRole;
@@ -10,7 +9,6 @@ import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.Util.PhoneNormalizer;
 import com.example.distrobackend.dto.*;
-import com.example.distrobackend.repository.OrganizationRepository;
 import com.example.distrobackend.repository.UserRepository;
 import com.example.distrobackend.security.JwtService;
 
@@ -35,10 +33,9 @@ import java.util.UUID;
 public class AuthService {
 
     private static final Set<UserRole> SELF_REGISTRATION_ROLES =
-            EnumSet.of(UserRole.CUSTOMER, UserRole.MANUFACTURER_ADMIN, UserRole.DISTRIBUTOR_ADMIN);
+            EnumSet.of(UserRole.CUSTOMER);
 
     private final UserRepository userRepository;
-    private final OrganizationRepository organizationRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final RefreshTokenService refreshTokenService;
@@ -62,16 +59,6 @@ public class AuthService {
                     "This role cannot self-register. Ask your organization administrator for an invitation");
         }
 
-        boolean createsOrganization = role != UserRole.CUSTOMER;
-        if (createsOrganization) {
-            if (isBlank(req.organizationName())) {
-                throw new ApiException(ErrorCode.BAD_REQUEST, "Organization name is required");
-            }
-            if (isBlank(req.email())) {
-                throw new ApiException(ErrorCode.BAD_REQUEST, "Email is required for organization accounts");
-            }
-        }
-
         String phone = PhoneNormalizer.normalize(req.phoneNumber());
         String email = isBlank(req.email()) ? null : req.email().trim().toLowerCase();
 
@@ -82,21 +69,13 @@ public class AuthService {
             throw new ApiException(ErrorCode.DUPLICATE_EMAIL);
         }
 
-        Organization organization = null;
-        if (createsOrganization) {
-            organization = new Organization();
-            organization.setName(req.organizationName().trim());
-            organization.setType(role.organizationtype());
-            organizationRepository.save(organization);
-        }
-
         User user = new User();
         user.setFullName(req.fullName().trim());
         user.setEmail(email);
         user.setPhoneNumber(phone);
         user.setPasswordHash(passwordEncoder.encode(req.password()));
         user.setRole(role);
-        user.setOrganization(organization);
+        user.setOrganization(null);
         userRepository.save(user);
 
         otpService.issue(user, OtpPurpose.ACCOUNT_VERIFICATION);
@@ -115,6 +94,10 @@ public class AuthService {
 
         otpService.verify(user, OtpPurpose.ACCOUNT_VERIFICATION, req.otp());
 
+        // Do not change account state until we know this account may receive tokens.
+        // This method deliberately uses noRollbackFor for OTP-attempt accounting;
+        // therefore the guard must run before the verification flag is persisted.
+        ensureAccountActive(user);
         user.setPhoneVerified(true);
         userRepository.save(user);
         return issueTokens(user); // verified users are signed in straight away
@@ -222,6 +205,7 @@ public class AuthService {
     // ------------------------------------------------------------------ helpers
 
     private AuthResponse issueTokens(User user) {
+        ensureAccountActive(user);
         String accessToken = jwtService.generateAccessToken(user);
         String refreshToken = refreshTokenService.create(user);
         return new AuthResponse(
@@ -231,6 +215,20 @@ public class AuthService {
                 jwtService.getAccessTtlSeconds(),
                 user.getRole().webHomePath(),
                 UserResponse.from(user));
+    }
+
+    /**
+     * Keep token issuance guarded in one place. This is especially important
+     * for account verification, which is also a token-issuing flow and must
+     * not reactivate a suspended or deactivated account.
+     */
+    private static void ensureAccountActive(User user) {
+        if (user.getStatus() == UserStatus.SUSPENDED) {
+            throw new ApiException(ErrorCode.ACCOUNT_SUSPENDED);
+        }
+        if (user.getStatus() == UserStatus.DEACTIVATED) {
+            throw new ApiException(ErrorCode.ACCOUNT_DEACTIVATED);
+        }
     }
 
     /** identifier is an email (contains "@") or a phone number in any supported local/international format. */

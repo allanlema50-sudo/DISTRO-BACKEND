@@ -6,6 +6,7 @@ import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.UserRole;
+import com.example.distrobackend.Domain.enums.UserStatus;
 
 import java.util.UUID;
 
@@ -18,7 +19,8 @@ public record UserResponse(
         UUID organizationId,
         String organizationName,
         Organizationtype organizationtype,
-        boolean phoneVerified
+        boolean phoneVerified,
+        UserStatus status
 ) {
     /** Must be called inside a transaction (organization is lazy). */
     public static UserResponse from(User user) {
@@ -32,7 +34,8 @@ public record UserResponse(
                 org == null ? null : org.getId(),
                 org == null ? null : org.getName(),
                 org == null ? null : org.getType(),
-                user.isPhoneVerified()
+                user.isPhoneVerified(),
+                user.getStatus()
         );
     }
 }

@@ -84,6 +84,11 @@ Important environment values:
 | `JWT_SECRET` | none | Signs access tokens; required |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:4200` | Allowed browser origins |
 | `OPENAPI_ENABLED` | `false` | Enables Swagger UI and OpenAPI JSON |
+| `FRONTEND_BASE_URL` | `http://localhost:4200` | Base URL used in onboarding and invitation links |
+| `MAIL_ENABLED` | `false` | Enables post-commit onboarding email delivery |
+| `MAIL_HOST` / `MAIL_PORT` | empty / `587` | SMTP server settings when mail is enabled |
+| `ONBOARDING_ACTIVATION_TTL` | `24h` | Lifetime of an approved administrator activation link |
+| `ONBOARDING_INVITATION_TTL` | `7d` | Lifetime of an organization administrator/staff invitation link |
 | `ORDER_RESERVATION_TTL` | `15m` | Unpaid stock-reservation lifetime |
 | `ORDER_MAX_OPEN_PENDING_PER_CUSTOMER` | `5` | Maximum open unpaid orders per customer |
 | `FLYWAY_BASELINE_ON_MIGRATE` | `false` | Only for a reviewed pre-Flyway database |
@@ -235,6 +240,45 @@ The maximum page size is 100. Errors use a common structure:
 Use the HTTP status and `code` rather than matching only on the human-readable
 message.
 
+Unless a section shows a request body, `GET`, `DELETE`, and notification
+read-marking endpoints do not require JSON input; provide their path variables,
+query parameters, and bearer token as applicable.
+
+### What accompanies an endpoint request?
+
+An API request is more than its JSON payload. When integrating, identify each
+of these parts:
+
+| Request part | Where it appears | Example |
+|---|---|---|
+| HTTP method | Request line | `POST`, `GET`, `PATCH`, or `DELETE` |
+| Path | URL, including required identifiers | `/api/v1/orders/{orderId}` |
+| Query parameters | After `?` in the URL; used for filters and pagination | `?page=0&size=20&sort=createdAt,desc` |
+| Headers | HTTP headers | `Authorization: Bearer <accessToken>` |
+| JSON body | Request body for create/update operations | `{ "status": "ACTIVE" }` |
+
+For example, changing a member's status requires a UUID in the path, a bearer
+token in the header, and a JSON body:
+
+```http
+PATCH http://localhost:8080/api/v1/organization/members/<user-id>/status
+Authorization: Bearer <access-token>
+Content-Type: application/json
+
+{ "status": "SUSPENDED" }
+```
+
+For a paginated catalog request, there is no JSON body; the inputs are the
+bearer token and query parameters:
+
+```http
+GET http://localhost:8080/api/products?category=Food&page=0&size=20
+Authorization: Bearer <access-token>
+```
+
+The payload examples below document JSON request bodies. Path variables and
+query parameters remain part of the endpoint URL shown in the API tables.
+
 ## API inventory
 
 The base URL for local development is:
@@ -251,7 +295,7 @@ organization unless an endpoint explicitly says otherwise.
 
 | Method | Endpoint | Access | Purpose |
 |---|---|---|---|
-| `POST` | `/api/auth/register` | Public | Register a customer, manufacturer admin, or distributor admin |
+| `POST` | `/api/auth/register` | Public | Register a customer |
 | `POST` | `/api/auth/verify-account` | Public | Verify the account OTP |
 | `POST` | `/api/auth/resend-verification` | Public | Resend account-verification OTP |
 | `POST` | `/api/auth/login` | Public | Obtain access and refresh tokens |
@@ -261,9 +305,148 @@ organization unless an endpoint explicitly says otherwise.
 | `POST` | `/api/auth/reset-password` | Public | Reset a password with an OTP |
 | `GET` | `/api/users/me` | Authenticated | Return the current user and organization profile |
 
-Self-registration does not create staff or driver accounts. Those roles are
-organization-managed. Organization registration requires an organization name
-and email; customer accounts do not belong to an organization.
+Request bodies (JSON) for authentication:
+
+```jsonc
+// POST /api/auth/register (CUSTOMER only)
+{
+  "fullName": "Jane Doe",
+  "email": "jane@example.com",
+  "phoneNumber": "254712345678",
+  "password": "StrongPassword1!",
+  "role": "CUSTOMER"
+}
+
+// POST /api/auth/verify-account
+{ "identifier": "jane@example.com", "otp": "123456" }
+
+// POST /api/auth/resend-verification or /api/auth/forgot-password
+{ "identifier": "jane@example.com" }
+
+// POST /api/auth/login
+{ "identifier": "jane@example.com", "password": "StrongPassword1!" }
+
+// POST /api/auth/refresh or /api/auth/logout
+{ "refreshToken": "<refresh-token>" }
+
+// POST /api/auth/reset-password
+{
+  "identifier": "jane@example.com",
+  "otp": "123456",
+  "newPassword": "NewStrongPassword1!"
+}
+```
+
+`identifier` may be the account's supported email address or phone number.
+Store access and refresh tokens securely on the client; send the access token
+on protected requests as `Authorization: Bearer <access-token>`. Verification,
+password, and phone values are examples only and must not be hard-coded.
+
+Self-registration is intentionally limited to customers. A manufacturer or
+distributor administrator is created after a platform administrator approves an
+access request. Organization staff are created from an invitation issued by an
+organization administrator. Customers and platform administrators do not belong
+to an organization; organization users carry exactly one organization claim.
+
+### Platform onboarding and organization invitations
+
+| Method | Endpoint | Access | Purpose / integration note |
+|---|---|---|---|
+| `POST` | `/api/access-requests` | Public | Request manufacturer/distributor administrator access |
+| `GET` | `/api/admin/access-requests` | `SUPER_ADMIN` | List access requests; optional `status` filter |
+| `POST` | `/api/admin/access-requests/{requestId}/approve` | `SUPER_ADMIN` | Create the organization and issue a one-time activation link |
+| `POST` | `/api/admin/access-requests/{requestId}/reject` | `SUPER_ADMIN` | Reject a pending access request |
+| `GET` | `/api/admin/users` | `SUPER_ADMIN` | List platform users; supports `organizationId`, `status`, `role`, and pagination filters |
+| `PATCH` | `/api/admin/users/{userId}/status` | `SUPER_ADMIN` | Suspend, deactivate, or reactivate a non-platform account |
+| `POST` | `/api/access-requests/activate` | Public | Set the approved administrator password using the emailed token |
+| `GET` | `/api/v1/organization/invitations` | Organization admin / `SUPER_ADMIN` | List invitations (organization admins see their organization) |
+| `POST` | `/api/v1/organization/invitations` | Organization admin / `SUPER_ADMIN` | Invite same-type organization administrators or staff; `SUPER_ADMIN` supplies `organizationId` |
+| `DELETE` | `/api/v1/organization/invitations/{id}` | Organization admin / `SUPER_ADMIN` | Revoke a pending invitation |
+| `GET` | `/api/invitations/{token}` | Public | Validate an invitation link and show limited metadata |
+| `POST` | `/api/invitations/{token}/accept` | Public | Create the invited organization account and start phone verification |
+
+Onboarding and invitation request bodies (JSON):
+
+```jsonc
+// POST /api/access-requests
+{
+  "organizationType": "MANUFACTURER",
+  "organizationName": "Example Manufacturing Ltd",
+  "fullName": "Amina Owner",
+  "phoneNumber": "254712345678",
+  "personalEmail": "amina@example.com",
+  "organizationEmail": "admin@example-manufacturer.com"
+}
+
+// POST /api/access-requests/activate
+{
+  "email": "amina@example.com",
+  "token": "<activation-token>",
+  "password": "StrongPassword1!",
+  "confirmPassword": "StrongPassword1!"
+}
+
+// POST /api/v1/organization/invitations
+{
+  "fullName": "John Staff",
+  "email": "john@example.com",
+  "phoneNumber": "254712345678",
+  "role": "MANUFACTURER_STAFF"
+}
+
+// POST /api/invitations/{token}/accept
+{ "phoneNumber": "254712345678", "password": "StrongPassword1!" }
+
+// PATCH .../status (platform or organization member administration)
+{ "status": "SUSPENDED" }
+```
+
+For a `SUPER_ADMIN` creating an invitation, include `organizationId` in the
+invitation body. Organization administrators omit it; the server derives the
+organization from the authenticated account. Valid invitation roles are
+organization administrator/staff roles permitted by the caller's scope.
+
+`SUPER_ADMIN` is a platform role, not a tenant role. It is never accepted by
+public registration and should be bootstrapped through a controlled database
+operation or deployment process. Organization administrator roles remain
+`MANUFACTURER_ADMIN` and `DISTRIBUTOR_ADMIN`; they are scoped to their own
+organization and cannot access `/api/admin/**`. An organization administrator
+may invite another administrator only for the same organization type, or may
+invite staff. Member status management is available below; an ownership-transfer
+workflow is still required before transferring the last administrator's
+responsibilities to another person or organization.
+
+Organization membership administration is available through:
+
+| Method | Endpoint | Access | Purpose |
+|---|---|---|---|
+| `GET` | `/api/v1/organization/members` | Organization admin | List members in the caller's organization |
+| `PATCH` | `/api/v1/organization/members/{userId}/status` | Organization admin | Suspend, deactivate, or reactivate another member in the caller's organization |
+
+The member-status payload is the same as the platform status payload:
+
+```json
+{ "status": "ACTIVE" }
+```
+
+Status changes revoke refresh tokens for disabled accounts. Existing access
+tokens are also checked against the current database account, role, and
+organization on every authenticated request. An organization must retain at
+least one active administrator, and administrators cannot change their own
+status.
+
+For a local environment, create and verify a normal account first, then run
+the following from the repository root. Replace the email with the verified
+account you intend to use for platform administration:
+
+```powershell
+docker compose exec db psql -U distro -d distro_backend -c "UPDATE users SET role = 'SUPER_ADMIN', organization_id = NULL WHERE lower(email) = lower('owner@example.com') AND is_phone_verified = true AND status = 'ACTIVE';"
+```
+
+The command should be executed only by an operator who already has database
+access. Revoke existing sessions or sign in again after promotion so a fresh
+JWT contains the new role. Do not expose a public endpoint for assigning
+`SUPER_ADMIN`.
 
 ### Product catalog, offers, warehouses, and stock
 
@@ -286,6 +469,73 @@ and email; customer accounts do not belong to an organization.
 | `GET` | `/api/stock/{organizationId}/availability` | Distributor admin/staff | View active inventory for the caller's distributor organization |
 | `POST` | `/api/stock/items/{id}/movements` | Manufacturer/distributor admin/staff | Record a stock movement |
 | `GET` | `/api/stock/items/{id}/movements` | Manufacturer/distributor admin/staff | Read movement history |
+
+Product, warehouse, offer, and stock request bodies (JSON):
+
+```jsonc
+// POST /api/products or POST /api/stock/items
+{
+  "sku": "SKU-1001",
+  "name": "25 kg maize flour",
+  "category": "Food",
+  "unitPrice": 1250.00,
+  "initialQuantity": 100,
+  "reorderThreshold": 20
+}
+
+// PATCH /api/products/{id} or PATCH /api/stock/items/{id}
+{
+  "name": "25 kg premium maize flour",
+  "category": "Food",
+  "unitPrice": 1300.00,
+  "reorderThreshold": 25,
+  "active": true
+}
+
+// POST /api/v1/warehouses
+{
+  "code": "NAI-001",
+  "name": "Nairobi Warehouse",
+  "address": "Industrial Area, Nairobi"
+}
+
+// POST /api/stock/offers
+{
+  "sourceStockItemId": "<manufacturer-product-id>",
+  "warehouseId": "<distributor-warehouse-id>",
+  "sku": "DIST-NAI-1001",
+  "sellingPrice": 1400.00,
+  "reorderThreshold": 10
+}
+
+// PATCH /api/stock/offers/{id}
+{ "sellingPrice": 1450.00, "reorderThreshold": 12, "active": true }
+
+// POST /api/stock/items/{id}/movements
+{
+  "movementType": "RESTOCK_IN",
+  "quantityDelta": 50,
+  "referenceType": "PURCHASE_ORDER",
+  "referenceId": "<purchase-order-id>",
+  "note": "Received delivery against approved purchase order"
+}
+
+// POST /api/stock/restock-request
+{
+  "stockItemId": "<distributor-offer-id>",
+  "manufacturerOrganizationId": "<manufacturer-organization-id>",
+  "requestedQuantity": 100,
+  "note": "Replenishment for Nairobi warehouse"
+}
+
+// PATCH /api/stock/restock-request/{id}/status
+{ "status": "APPROVED", "note": "Approved for next dispatch" }
+```
+
+The `category`, `sku`, and text fields have server-side length limits. Stock
+movement deltas must agree with the movement type; for example, an inbound
+restock uses a positive delta and an outbound sale uses a negative delta.
+Pagination uses Spring parameters such as `?page=0&size=20&sort=name,asc`.
 
 The catalog uses the current hybrid model. Manufacturers own source products;
 distributors create warehouse-backed offers for those products; customers
@@ -314,6 +564,64 @@ notification.
 | `PATCH` | `/api/v1/orders/{orderId}/status` | Customer or distributor admin/staff | Customer may cancel only an unpaid pending order; distributor staff use valid operational transitions |
 | `POST` | `/api/v1/orders/{orderId}/delivery-otp` | Customer order owner | Request delivery OTP while the order is `IN_TRANSIT` |
 | `PUT` | `/api/v1/orders/{orderId}` | Distributor admin/staff | Reserved route; currently returns `501 NOT_IMPLEMENTED` |
+
+Order and payment request bodies (JSON):
+
+```jsonc
+// POST /api/v1/orders
+{
+  "organizationId": "<distributor-organization-id>",
+  "deliveryAddress": "Westlands, Nairobi",
+  "deliveryLat": -1.2676,
+  "deliveryLng": 36.8108,
+  "items": [
+    {
+      "stockItemId": "<distributor-offer-id>",
+      "quantity": 2
+    }
+  ]
+}
+
+// PATCH /api/v1/orders/{orderId}/status
+{ "status": "CANCELLED", "note": "Customer requested cancellation" }
+
+// POST /api/v1/payments/initiate
+{
+  "orderId": "<order-id>",
+  "phoneNumber": "254712345678",
+  "idempotencyKey": "checkout-<client-generated-unique-key>"
+}
+```
+
+`POST /api/v1/orders` is customer-only. The customer identity is taken from
+the access token, not from the request body. The order organization must be a
+distributor organization and every item must be an eligible offer visible to
+that distributor. Customers should submit a unique idempotency key when they
+retry payment initiation.
+
+The M-Pesa callback is sent by Daraja, not by the frontend or mobile client.
+It must include the configured `X-Mpesa-Callback-Secret` header and the
+provider's callback shape, for example:
+
+```json
+{
+  "Body": {
+    "stkCallback": {
+      "MerchantRequestID": "<merchant-request-id>",
+      "CheckoutRequestID": "<checkout-request-id>",
+      "ResultCode": 0,
+      "ResultDesc": "The service request is processed successfully.",
+      "CallbackMetadata": {
+        "Item": [
+          { "Name": "Amount", "Value": 1400 },
+          { "Name": "MpesaReceiptNumber", "Value": "<receipt-number>" },
+          { "Name": "PhoneNumber", "Value": 254712345678 }
+        ]
+      }
+    }
+  }
+}
+```
 
 Order creation reserves stock immediately. An unpaid reservation expires after
 `ORDER_RESERVATION_TTL`; the scheduled cleanup releases it. If an accepted
@@ -355,6 +663,33 @@ and rely on the verified callback/reconciliation flow.
 | `GET` | `/api/stock/restock-request` | Manufacturer/distributor admin/staff | List organization-visible restock requests |
 | `PATCH` | `/api/stock/restock-request/{id}/status` | Manufacturer/distributor admin/staff | Update a restock request status |
 
+Purchase-order request bodies (JSON):
+
+```jsonc
+// POST /api/v1/purchase-orders
+{
+  "supplierOrganizationId": "<manufacturer-organization-id>",
+  "items": [
+    {
+      "stockItemId": "<manufacturer-product-id>",
+      "quantity": 100
+    }
+  ]
+}
+
+// PATCH /api/v1/manufacturer/purchase-orders/{purchaseOrderId}/decision
+{
+  "status": "APPROVED",
+  "note": "Approved for production and dispatch"
+}
+```
+
+Purchase-order status values are `SUBMITTED`, `APPROVED`, `REJECTED`,
+`CANCELLED`, and `FULFILLED`. The distributor creates the purchase order;
+only a manufacturer administrator can approve or reject it. Settlement
+endpoints currently return the read-only settlement ledger and do not initiate
+money transfers.
+
 Purchase-order settlements are currently a read-only `PENDING` ledger. Payment
 reconciliation, refunds, reversals, and platform-level settlement reporting are
 not part of the current integration surface.
@@ -372,11 +707,80 @@ not part of the current integration surface.
 | `POST` | `/api/v1/trips/{tripId}/stops/{stopId}/confirm` | Assigned driver | Confirm delivery using the customer's six-digit OTP |
 | `POST` | `/api/v1/trips/{tripId}/stops/{stopId}/delivery-otp` | Customer for the order | Request the delivery OTP |
 
+Trip and live-tracking request bodies (JSON):
+
+```jsonc
+// POST /api/v1/trips
+{
+  "tripType": "DELIVERY",
+  "origin": {
+    "name": "Nairobi Warehouse",
+    "address": "Industrial Area, Nairobi",
+    "latitude": -1.2921,
+    "longitude": 36.8219
+  },
+  "scheduledStartLabel": "2026-10-14 09:00 EAT",
+  "totalDistanceKm": 18,
+  "stops": [
+    {
+      "sequence": 1,
+      "location": {
+        "name": "Customer delivery point",
+        "address": "Westlands, Nairobi",
+        "latitude": -1.2676,
+        "longitude": 36.8108
+      },
+      "etaLabel": "2026-10-14 10:00 EAT",
+      "distanceFromPreviousKm": 18,
+      "orderId": "<order-id>",
+      "contactName": "Jane Doe",
+      "contactPhone": "254712345678"
+    }
+  ]
+}
+
+// PATCH /api/v1/trips/{tripId}/assign
+{ "riderId": "<driver-user-id>" }
+
+// POST /api/v1/trips/{tripId}/location
+{ "lat": -1.2676, "lng": 36.8108 }
+
+// POST /api/v1/trips/{tripId}/stops/{stopId}/confirm
+{ "otp": "123456" }
+```
+
+Example `RESTOCK` stop fields:
+
+```json
+{
+  "sequence": 1,
+  "location": {
+    "name": "Manufacturer depot",
+    "address": "Nairobi, Kenya",
+    "latitude": -1.2921,
+    "longitude": 36.8219
+  },
+  "stockItemId": "<distributor-stock-item-id>",
+  "restockQuantity": 100
+}
+```
+
+For a `DELIVERY` trip, each stop must include `orderId` and omit
+`stockItemId`. For a `RESTOCK` trip, each stop must include the distributor's
+`stockItemId` and a positive `restockQuantity`, and omit `orderId`. Drivers can
+record location only for trips assigned to them. Location coordinates are
+validated against latitude/longitude ranges. Delivery OTPs are requested by
+the customer and submitted by the assigned driver.
+
 ### Notifications and organization workspaces
 
 | Method | Endpoint | Access | Purpose |
 |---|---|---|---|
 | `GET` | `/api/v1/notifications` | Manufacturer/distributor admin/staff | Read the caller's organization notification feed |
+| `GET` | `/api/notifications` | Authenticated user | Read the caller's personal notifications |
+| `GET` | `/api/notifications/unread-count` | Authenticated user | Count unread personal notifications |
+| `PATCH` | `/api/notifications/{id}/read` | Notification owner | Mark one personal notification as read |
+| `PATCH` | `/api/notifications/read-all` | Authenticated user | Mark all personal notifications as read |
 | `GET` | `/api/manufacturer/dashboard` | Manufacturer admin/staff | Current manufacturer workspace placeholder |
 | `GET` | `/api/manufacturer/staff` | Manufacturer admin | Current manufacturer staff placeholder |
 | `GET` | `/api/distributor/dashboard` | Distributor admin/staff | Current distributor workspace placeholder |
@@ -464,8 +868,8 @@ Completed and available for frontend/mobile integration:
 Known limitations to account for during integration:
 
 - `PUT /api/v1/orders/{orderId}` intentionally returns `501 NOT_IMPLEMENTED`;
-- there is no platform-level `ADMIN` role or completed platform-admin API;
-- admin audit, payment, stock, trip, report, and user controllers are placeholders;
+- platform administration currently covers onboarding, invitations, and basic user status management; platform-wide audit, payment, stock, trip, and report APIs remain future work;
+- admin audit, payment, stock, trip, and report controllers are placeholders;
 - payment refunds, reversals, reconciliation reports, and settlement processing are not exposed as APIs;
 - an M-Pesa callback requires a reachable callback URL, a configured shared secret, and provider verification;
 - the catalog/order model currently represents distributor offers as stock items, so customers order distributor offer IDs.

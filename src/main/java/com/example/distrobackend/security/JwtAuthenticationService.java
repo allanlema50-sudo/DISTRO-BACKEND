@@ -2,6 +2,10 @@ package com.example.distrobackend.security;
 
 import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.UserRole;
+import com.example.distrobackend.Domain.enums.UserStatus;
+import com.example.distrobackend.Domain.entity.Organization;
+import com.example.distrobackend.Domain.entity.User;
+import com.example.distrobackend.repository.UserRepository;
 import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -10,6 +14,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.Date;
 
@@ -23,6 +28,7 @@ import java.util.Date;
 public class JwtAuthenticationService {
 
     private final JwtService jwtService;
+    private final UserRepository userRepository;
 
     public Authentication authenticateBearer(String authorizationHeader) {
         if (authorizationHeader == null || !authorizationHeader.startsWith("Bearer ")) {
@@ -46,6 +52,19 @@ public class JwtAuthenticationService {
         }
 
         validateOrganizationClaims(role, organizationId, organizationType);
+        User user = userRepository.findWithOrganizationById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("JWT user no longer exists"));
+        if (user.getStatus() != UserStatus.ACTIVE) {
+            throw new IllegalArgumentException("JWT account is not active");
+        }
+        Organization organization = user.getOrganization();
+        UUID actualOrganizationId = organization == null ? null : organization.getId();
+        Organizationtype actualOrganizationType = organization == null ? null : organization.getType();
+        if (user.getRole() != role
+                || !Objects.equals(actualOrganizationId, organizationId)
+                || actualOrganizationType != organizationType) {
+            throw new IllegalArgumentException("JWT identity no longer matches the account");
+        }
 
         AuthenticatedUser principal = new AuthenticatedUser(
                 userId, role, organizationId, organizationType,
@@ -70,6 +89,12 @@ public class JwtAuthenticationService {
 
         if (role == UserRole.CUSTOMER && organizationId != null) {
             throw new IllegalArgumentException("Customers cannot carry organization claims");
+        }
+        if (role == UserRole.SUPER_ADMIN && (organizationId != null || organizationType != null)) {
+            throw new IllegalArgumentException("Platform administrators cannot carry organization claims");
+        }
+        if (role == UserRole.DRIVER && organizationId == null) {
+            throw new IllegalArgumentException("Drivers must belong to an organization");
         }
     }
 

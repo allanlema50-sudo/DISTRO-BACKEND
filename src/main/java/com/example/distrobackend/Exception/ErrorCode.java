@@ -38,6 +38,13 @@ public enum ErrorCode {
     PAYMENT_NOT_CONFIGURED(HttpStatus.SERVICE_UNAVAILABLE, "Payment service is not configured"),
     PAYMENT_STATE_CONFLICT(HttpStatus.CONFLICT, "Payment is already in a terminal state"),
 
+    ACCESS_REQUEST_NOT_FOUND(HttpStatus.NOT_FOUND, "Access request not found"),
+    ACCESS_REQUEST_STATE_CONFLICT(HttpStatus.CONFLICT, "Access request is no longer in the requested state"),
+    INVALID_ACTIVATION_TOKEN(HttpStatus.BAD_REQUEST, "The activation link is invalid or expired"),
+    INVITATION_NOT_FOUND(HttpStatus.NOT_FOUND, "Invitation not found"),
+    INVITATION_STATE_CONFLICT(HttpStatus.CONFLICT, "Invitation is no longer available"),
+    INVITATION_EXPIRED(HttpStatus.BAD_REQUEST, "This invitation has expired"),
+
     INVALID_OTP(HttpStatus.BAD_REQUEST, "The verification code is incorrect"),
     OTP_EXPIRED(HttpStatus.BAD_REQUEST, "The verification code has expired. Request a new one"),
     OTP_ATTEMPTS_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "Too many incorrect attempts. Request a new code"),

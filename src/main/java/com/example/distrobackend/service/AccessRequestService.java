@@ -1,0 +1,225 @@
+package com.example.distrobackend.service;
+
+import com.example.distrobackend.Domain.entity.AccessRequest;
+import com.example.distrobackend.Domain.entity.Organization;
+import com.example.distrobackend.Domain.entity.User;
+import com.example.distrobackend.Domain.enums.AccessRequestStatus;
+import com.example.distrobackend.Domain.enums.UserRole;
+import com.example.distrobackend.Exception.ApiException;
+import com.example.distrobackend.Exception.ErrorCode;
+import com.example.distrobackend.Exception.OnboardingExpiredException;
+import com.example.distrobackend.dto.AccessRequestApprovalResponse;
+import com.example.distrobackend.dto.AccessRequestCreateRequest;
+import com.example.distrobackend.dto.AccessRequestResponse;
+import com.example.distrobackend.dto.ActivateAccountRequest;
+import com.example.distrobackend.dto.RegisterResponse;
+import com.example.distrobackend.event.OnboardingEmailRequested;
+import com.example.distrobackend.repository.AccessRequestRepository;
+import com.example.distrobackend.repository.OrganizationRepository;
+import com.example.distrobackend.repository.UserRepository;
+import com.example.distrobackend.security.AuthenticatedUser;
+import com.example.distrobackend.Util.SecretTokenService;
+import com.example.distrobackend.Util.PhoneNormalizer;
+import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Duration;
+import java.time.OffsetDateTime;
+import java.util.EnumSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.UUID;
+
+@Service
+@RequiredArgsConstructor
+public class AccessRequestService {
+    private static final EnumSet<AccessRequestStatus> ACTIVE_DUPLICATE_STATUSES =
+            EnumSet.of(AccessRequestStatus.PENDING, AccessRequestStatus.APPROVED);
+
+    private final AccessRequestRepository accessRequestRepository;
+    private final OrganizationRepository organizationRepository;
+    private final UserRepository userRepository;
+    private final PasswordEncoder passwordEncoder;
+    private final OtpService otpService;
+    private final ApplicationEventPublisher eventPublisher;
+
+    @Value("${app.frontend.base-url:http://localhost:4200}")
+    private String frontendBaseUrl;
+
+    @Value("${app.onboarding.activation-ttl:24h}")
+    private Duration activationTtl;
+
+    @Transactional
+    public AccessRequestResponse submit(AccessRequestCreateRequest request) {
+        String email = normalizeEmail(request.personalEmail());
+        String phone = PhoneNormalizer.normalize(request.phoneNumber());
+
+        if (userRepository.existsByEmail(email)) {
+            throw new ApiException(ErrorCode.DUPLICATE_EMAIL);
+        }
+        if (userRepository.existsByPhoneNumber(phone)) {
+            throw new ApiException(ErrorCode.DUPLICATE_PHONE);
+        }
+        if (ACTIVE_DUPLICATE_STATUSES.stream()
+                .anyMatch(status -> accessRequestRepository.existsByPersonalEmailAndStatus(email, status))) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "An access request for this email is already awaiting review or activation");
+        }
+        if (accessRequestRepository.existsByPhoneNumberAndStatusIn(phone, ACTIVE_DUPLICATE_STATUSES)) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "An access request for this phone number is already awaiting review or activation");
+        }
+
+        AccessRequest accessRequest = new AccessRequest();
+        accessRequest.setFullName(request.fullName().trim());
+        accessRequest.setPersonalEmail(email);
+        accessRequest.setOrganizationEmail(normalizeEmail(request.organizationEmail()));
+        accessRequest.setPhoneNumber(phone);
+        accessRequest.setOrganizationName(request.organizationName().trim());
+        accessRequest.setOrganizationType(request.organizationType());
+        accessRequest.setStatus(AccessRequestStatus.PENDING);
+        return AccessRequestResponse.from(accessRequestRepository.save(accessRequest));
+    }
+
+    @Transactional(readOnly = true)
+    public List<AccessRequestResponse> list(AccessRequestStatus status) {
+        List<AccessRequest> requests = status == null
+                ? accessRequestRepository.findAllByOrderByCreatedAtDesc()
+                : accessRequestRepository.findByStatusOrderByCreatedAtDesc(status);
+        return requests.stream().map(AccessRequestResponse::from).toList();
+    }
+
+    @Transactional
+    public AccessRequestApprovalResponse approve(UUID requestId, AuthenticatedUser reviewer) {
+        requirePlatformAdmin(reviewer);
+        AccessRequest request = accessRequestRepository.findByIdForUpdate(requestId)
+                .orElseThrow(() -> new ApiException(ErrorCode.ACCESS_REQUEST_NOT_FOUND));
+        if (request.getStatus() != AccessRequestStatus.PENDING) {
+            throw new ApiException(ErrorCode.ACCESS_REQUEST_STATE_CONFLICT,
+                    "Only pending access requests can be approved");
+        }
+        if (userRepository.existsByEmail(request.getPersonalEmail())
+                || userRepository.existsByPhoneNumber(request.getPhoneNumber())) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "The applicant already has an account. Reject the request and resolve the duplicate first");
+        }
+        organizationRepository.findByEmailIgnoreCase(request.getOrganizationEmail())
+                .ifPresent(existing -> {
+                    throw new ApiException(ErrorCode.CONFLICT,
+                            "An organization with this email already exists");
+                });
+
+        Organization organization = new Organization();
+        organization.setName(request.getOrganizationName().trim());
+        organization.setEmail(request.getOrganizationEmail());
+        organization.setType(request.getOrganizationType());
+        organizationRepository.save(organization);
+        request.setOrganization(organization);
+
+        String rawToken = SecretTokenService.generate();
+        request.setActivationTokenHash(SecretTokenService.sha256(rawToken));
+        request.setActivationExpiresAt(OffsetDateTime.now().plus(activationTtl));
+        request.setReviewedAt(OffsetDateTime.now());
+        request.setReviewedBy(userRepository.getReferenceById(reviewer.userId()));
+        request.setStatus(AccessRequestStatus.APPROVED);
+        AccessRequest saved = accessRequestRepository.save(request);
+
+        String link = buildLink("/activate-account?token=" + rawToken);
+        eventPublisher.publishEvent(new OnboardingEmailRequested(
+                saved.getPersonalEmail(),
+                "Complete your LogiFlow organization account setup",
+                "Your organization access request was approved. Complete setup here:\n\n" + link
+        ));
+        return new AccessRequestApprovalResponse(AccessRequestResponse.from(saved), link);
+    }
+
+    @Transactional
+    public AccessRequestResponse reject(UUID requestId, AuthenticatedUser reviewer) {
+        requirePlatformAdmin(reviewer);
+        AccessRequest request = accessRequestRepository.findByIdForUpdate(requestId)
+                .orElseThrow(() -> new ApiException(ErrorCode.ACCESS_REQUEST_NOT_FOUND));
+        if (request.getStatus() != AccessRequestStatus.PENDING) {
+            throw new ApiException(ErrorCode.ACCESS_REQUEST_STATE_CONFLICT,
+                    "Only pending access requests can be rejected");
+        }
+        request.setReviewedAt(OffsetDateTime.now());
+        request.setReviewedBy(userRepository.getReferenceById(reviewer.userId()));
+        request.setStatus(AccessRequestStatus.REJECTED);
+        return AccessRequestResponse.from(accessRequestRepository.save(request));
+    }
+
+    @Transactional(noRollbackFor = OnboardingExpiredException.class)
+    public RegisterResponse activate(ActivateAccountRequest request) {
+        AccessRequest accessRequest = accessRequestRepository
+                .findByPersonalEmailAndStatusForUpdate(normalizeEmail(request.email()), AccessRequestStatus.APPROVED)
+                .orElseThrow(() -> new ApiException(ErrorCode.INVALID_ACTIVATION_TOKEN));
+
+        if (accessRequest.getActivationTokenHash() == null
+                || !SecretTokenService.matches(request.token(), accessRequest.getActivationTokenHash())
+                || accessRequest.getActivationExpiresAt() == null
+                || !accessRequest.getActivationExpiresAt().isAfter(OffsetDateTime.now())) {
+            if (accessRequest.getActivationExpiresAt() != null
+                    && !accessRequest.getActivationExpiresAt().isAfter(OffsetDateTime.now())) {
+                accessRequest.setStatus(AccessRequestStatus.EXPIRED);
+            }
+            throw new OnboardingExpiredException(ErrorCode.INVALID_ACTIVATION_TOKEN);
+        }
+        if (!request.password().equals(request.confirmPassword())) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Password and confirmation do not match");
+        }
+        if (userRepository.existsByEmail(accessRequest.getPersonalEmail())
+                || userRepository.existsByPhoneNumber(accessRequest.getPhoneNumber())) {
+            throw new ApiException(ErrorCode.CONFLICT, "An account already exists for this request");
+        }
+
+        User user = new User();
+        user.setFullName(accessRequest.getFullName());
+        user.setEmail(accessRequest.getPersonalEmail());
+        user.setPhoneNumber(accessRequest.getPhoneNumber());
+        user.setPasswordHash(passwordEncoder.encode(request.password()));
+        user.setRole(accessRequest.getOrganizationType() == com.example.distrobackend.Domain.enums.Organizationtype.MANUFACTURER
+                ? UserRole.MANUFACTURER_ADMIN : UserRole.DISTRIBUTOR_ADMIN);
+        Organization organization = accessRequest.getOrganization();
+        if (organization == null) {
+            throw new ApiException(ErrorCode.CONFLICT, "Approved organization is unavailable");
+        }
+        user.setOrganization(organization);
+        user.setPhoneVerified(false);
+        user.setEmailVerified(false);
+        userRepository.save(user);
+
+        accessRequest.setStatus(AccessRequestStatus.ACTIVATED);
+        accessRequest.setActivatedAt(OffsetDateTime.now());
+        accessRequest.setActivationTokenHash(null);
+        accessRequest.setActivationExpiresAt(null);
+        accessRequestRepository.save(accessRequest);
+        otpService.issue(user, com.example.distrobackend.Domain.enums.OtpPurpose.ACCOUNT_VERIFICATION);
+        return new RegisterResponse(user.getId(),
+                "Account created. Enter the verification code sent to " + mask(user.getPhoneNumber()));
+    }
+
+    private String buildLink(String suffix) {
+        return frontendBaseUrl.replaceAll("/+$", "") + suffix;
+    }
+
+    private static String normalizeEmail(String value) {
+        return value.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private static String mask(String phone) {
+        return phone.substring(0, Math.min(4, phone.length())) + "****"
+                + phone.substring(Math.max(0, phone.length() - 3));
+    }
+
+    private static void requirePlatformAdmin(AuthenticatedUser reviewer) {
+        if (reviewer == null || reviewer.role() != UserRole.SUPER_ADMIN
+                || reviewer.organizationId() != null) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+    }
+
+}

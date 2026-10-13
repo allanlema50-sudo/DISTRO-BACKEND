@@ -92,6 +92,12 @@
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
 
+        <!-- Optional SMTP integration for onboarding and invitation emails. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-mail</artifactId>
+        </dependency>
+
         <!-- Jackson -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

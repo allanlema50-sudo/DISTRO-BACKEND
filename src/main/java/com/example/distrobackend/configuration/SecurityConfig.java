@@ -44,6 +44,14 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/api/auth/**").permitAll()
+                        // Permit only the deliberately public onboarding operations. Keeping
+                        // this method/path-specific prevents a future authenticated onboarding
+                        // endpoint from becoming public by accident.
+                        .requestMatchers(HttpMethod.POST,
+                                "/api/access-requests",
+                                "/api/access-requests/activate",
+                                "/api/invitations/*/accept").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/invitations/*").permitAll()
                         .requestMatchers("/api/v1/payments/mpesa/callback").permitAll()
                         .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                         // The HTTP upgrade is unauthenticated; STOMP CONNECT is
@@ -55,6 +63,11 @@ public class SecurityConfig {
                                 "/swagger-ui/**",
                                 "/swagger-ui.html"
                         ).permitAll()
+
+                        // Platform administration is deliberately separate from
+                        // organization administration. Organization admins must
+                        // never reach platform-wide workflows through this path.
+                        .requestMatchers("/api/admin/**").hasRole("SUPER_ADMIN")
 
                         // Workspace isolation: each area is reachable only by its own roles.
                         .requestMatchers("/api/manufacturer/**")

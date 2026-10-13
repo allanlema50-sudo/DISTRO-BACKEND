@@ -84,6 +84,11 @@ Important environment values:
 | `JWT_SECRET` | none | Signs access tokens; required |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:4200` | Allowed browser origins |
 | `OPENAPI_ENABLED` | `false` | Enables Swagger UI and OpenAPI JSON |
+| `FRONTEND_BASE_URL` | `http://localhost:4200` | Base URL used in onboarding and invitation links |
+| `MAIL_ENABLED` | `false` | Enables post-commit onboarding email delivery |
+| `MAIL_HOST` / `MAIL_PORT` | empty / `587` | SMTP server settings when mail is enabled |
+| `ONBOARDING_ACTIVATION_TTL` | `24h` | Lifetime of an approved administrator activation link |
+| `ONBOARDING_INVITATION_TTL` | `7d` | Lifetime of an organization administrator/staff invitation link |
 | `ORDER_RESERVATION_TTL` | `15m` | Unpaid stock-reservation lifetime |
 | `ORDER_MAX_OPEN_PENDING_PER_CUSTOMER` | `5` | Maximum open unpaid orders per customer |
 | `FLYWAY_BASELINE_ON_MIGRATE` | `false` | Only for a reviewed pre-Flyway database |
@@ -251,7 +256,7 @@ organization unless an endpoint explicitly says otherwise.
 
 | Method | Endpoint | Access | Purpose |
 |---|---|---|---|
-| `POST` | `/api/auth/register` | Public | Register a customer, manufacturer admin, or distributor admin |
+| `POST` | `/api/auth/register` | Public | Register a customer |
 | `POST` | `/api/auth/verify-account` | Public | Verify the account OTP |
 | `POST` | `/api/auth/resend-verification` | Public | Resend account-verification OTP |
 | `POST` | `/api/auth/login` | Public | Obtain access and refresh tokens |
@@ -261,9 +266,64 @@ organization unless an endpoint explicitly says otherwise.
 | `POST` | `/api/auth/reset-password` | Public | Reset a password with an OTP |
 | `GET` | `/api/users/me` | Authenticated | Return the current user and organization profile |
 
-Self-registration does not create staff or driver accounts. Those roles are
-organization-managed. Organization registration requires an organization name
-and email; customer accounts do not belong to an organization.
+Self-registration is intentionally limited to customers. A manufacturer or
+distributor administrator is created after a platform administrator approves an
+access request. Organization staff are created from an invitation issued by an
+organization administrator. Customers and platform administrators do not belong
+to an organization; organization users carry exactly one organization claim.
+
+### Platform onboarding and organization invitations
+
+| Method | Endpoint | Access | Purpose / integration note |
+|---|---|---|---|
+| `POST` | `/api/access-requests` | Public | Request manufacturer/distributor administrator access |
+| `GET` | `/api/admin/access-requests` | `SUPER_ADMIN` | List access requests; optional `status` filter |
+| `POST` | `/api/admin/access-requests/{requestId}/approve` | `SUPER_ADMIN` | Create the organization and issue a one-time activation link |
+| `POST` | `/api/admin/access-requests/{requestId}/reject` | `SUPER_ADMIN` | Reject a pending access request |
+| `GET` | `/api/admin/users` | `SUPER_ADMIN` | List platform users; supports `organizationId`, `status`, `role`, and pagination filters |
+| `PATCH` | `/api/admin/users/{userId}/status` | `SUPER_ADMIN` | Suspend, deactivate, or reactivate a non-platform account |
+| `POST` | `/api/access-requests/activate` | Public | Set the approved administrator password using the emailed token |
+| `GET` | `/api/v1/organization/invitations` | Organization admin / `SUPER_ADMIN` | List invitations (organization admins see their organization) |
+| `POST` | `/api/v1/organization/invitations` | Organization admin / `SUPER_ADMIN` | Invite same-type organization administrators or staff; `SUPER_ADMIN` supplies `organizationId` |
+| `DELETE` | `/api/v1/organization/invitations/{id}` | Organization admin / `SUPER_ADMIN` | Revoke a pending invitation |
+| `GET` | `/api/invitations/{token}` | Public | Validate an invitation link and show limited metadata |
+| `POST` | `/api/invitations/{token}/accept` | Public | Create the invited organization account and start phone verification |
+
+`SUPER_ADMIN` is a platform role, not a tenant role. It is never accepted by
+public registration and should be bootstrapped through a controlled database
+operation or deployment process. Organization administrator roles remain
+`MANUFACTURER_ADMIN` and `DISTRIBUTOR_ADMIN`; they are scoped to their own
+organization and cannot access `/api/admin/**`. An organization administrator
+may invite another administrator only for the same organization type, or may
+invite staff. There is currently no user-deactivation or administrator-removal
+API; add a last-administrator/ownership-transfer workflow before introducing
+those operations.
+
+Organization membership administration is available through:
+
+| Method | Endpoint | Access | Purpose |
+|---|---|---|---|
+| `GET` | `/api/v1/organization/members` | Organization admin | List members in the caller's organization |
+| `PATCH` | `/api/v1/organization/members/{userId}/status` | Organization admin | Suspend, deactivate, or reactivate another member in the caller's organization |
+
+Status changes revoke refresh tokens for disabled accounts. Existing access
+tokens are also checked against the current database account, role, and
+organization on every authenticated request. An organization must retain at
+least one active administrator, and administrators cannot change their own
+status.
+
+For a local environment, create and verify a normal account first, then run
+the following from the repository root. Replace the email with the verified
+account you intend to use for platform administration:
+
+```powershell
+docker compose exec db psql -U distro -d distro_backend -c "UPDATE users SET role = 'SUPER_ADMIN', organization_id = NULL WHERE lower(email) = lower('owner@example.com') AND is_phone_verified = true AND status = 'ACTIVE';"
+```
+
+The command should be executed only by an operator who already has database
+access. Revoke existing sessions or sign in again after promotion so a fresh
+JWT contains the new role. Do not expose a public endpoint for assigning
+`SUPER_ADMIN`.
 
 ### Product catalog, offers, warehouses, and stock
 
@@ -377,6 +437,10 @@ not part of the current integration surface.
 | Method | Endpoint | Access | Purpose |
 |---|---|---|---|
 | `GET` | `/api/v1/notifications` | Manufacturer/distributor admin/staff | Read the caller's organization notification feed |
+| `GET` | `/api/notifications` | Authenticated user | Read the caller's personal notifications |
+| `GET` | `/api/notifications/unread-count` | Authenticated user | Count unread personal notifications |
+| `PATCH` | `/api/notifications/{id}/read` | Notification owner | Mark one personal notification as read |
+| `PATCH` | `/api/notifications/read-all` | Authenticated user | Mark all personal notifications as read |
 | `GET` | `/api/manufacturer/dashboard` | Manufacturer admin/staff | Current manufacturer workspace placeholder |
 | `GET` | `/api/manufacturer/staff` | Manufacturer admin | Current manufacturer staff placeholder |
 | `GET` | `/api/distributor/dashboard` | Distributor admin/staff | Current distributor workspace placeholder |
@@ -464,8 +528,8 @@ Completed and available for frontend/mobile integration:
 Known limitations to account for during integration:
 
 - `PUT /api/v1/orders/{orderId}` intentionally returns `501 NOT_IMPLEMENTED`;
-- there is no platform-level `ADMIN` role or completed platform-admin API;
-- admin audit, payment, stock, trip, report, and user controllers are placeholders;
+- platform administration currently covers onboarding, invitations, and basic user status management; platform-wide audit, payment, stock, trip, and report APIs remain future work;
+- admin audit, payment, stock, trip, and report controllers are placeholders;
 - payment refunds, reversals, reconciliation reports, and settlement processing are not exposed as APIs;
 - an M-Pesa callback requires a reachable callback URL, a configured shared secret, and provider verification;
 - the catalog/order model currently represents distributor offers as stock items, so customers order distributor offer IDs.

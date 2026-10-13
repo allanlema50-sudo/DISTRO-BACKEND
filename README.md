@@ -380,7 +380,7 @@ Onboarding and invitation request bodies (JSON):
 
 // POST /api/access-requests/activate
 {
-  "email": "admin@example-manufacturer.com",
+  "email": "amina@example.com",
   "token": "<activation-token>",
   "password": "StrongPassword1!",
   "confirmPassword": "StrongPassword1!"
@@ -412,9 +412,9 @@ operation or deployment process. Organization administrator roles remain
 `MANUFACTURER_ADMIN` and `DISTRIBUTOR_ADMIN`; they are scoped to their own
 organization and cannot access `/api/admin/**`. An organization administrator
 may invite another administrator only for the same organization type, or may
-invite staff. There is currently no user-deactivation or administrator-removal
-API; add a last-administrator/ownership-transfer workflow before introducing
-those operations.
+invite staff. Member status management is available below; an ownership-transfer
+workflow is still required before transferring the last administrator's
+responsibilities to another person or organization.
 
 Organization membership administration is available through:
 

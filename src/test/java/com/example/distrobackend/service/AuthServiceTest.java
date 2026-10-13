@@ -44,6 +44,7 @@ class AuthServiceTest {
 
         verify(otpService).verify(user,
                 com.example.distrobackend.Domain.enums.OtpPurpose.ACCOUNT_VERIFICATION, "123456");
+        verify(userRepository, never()).save(any());
         verify(jwtService, never()).generateAccessToken(any());
         verify(refreshTokenService, never()).create(any());
     }

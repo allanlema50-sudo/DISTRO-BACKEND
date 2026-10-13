@@ -94,6 +94,10 @@ public class AuthService {
 
         otpService.verify(user, OtpPurpose.ACCOUNT_VERIFICATION, req.otp());
 
+        // Do not change account state until we know this account may receive tokens.
+        // This method deliberately uses noRollbackFor for OTP-attempt accounting;
+        // therefore the guard must run before the verification flag is persisted.
+        ensureAccountActive(user);
         user.setPhoneVerified(true);
         userRepository.save(user);
         return issueTokens(user); // verified users are signed in straight away

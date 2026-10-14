@@ -2,10 +2,8 @@ package com.example.distrobackend.repository;
 
 import com.example.distrobackend.Domain.entity.TripStatusHistory;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.stereotype.Repository;
 
 import java.util.UUID;
 
-@Repository
 public interface TripStatusHistoryRepository extends JpaRepository<TripStatusHistory, UUID> {
 }

@@ -4,11 +4,9 @@ import com.example.distrobackend.Domain.entity.RestockRequest;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.stereotype.Repository;
 
 import java.util.UUID;
 
-@Repository
 public interface RestockRequestRepository extends JpaRepository<RestockRequest, UUID> {
 
     Page<RestockRequest> findByDistributorOrganization_IdOrderByCreatedAtDesc(

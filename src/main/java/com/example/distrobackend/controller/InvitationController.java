@@ -10,17 +10,17 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
-@RequestMapping("/api/invitations")
+@RequestMapping("/api/invitations/{token}")
 @RequiredArgsConstructor
 public class InvitationController {
     private final InvitationService invitationService;
 
-    @GetMapping("/{token}")
+    @GetMapping
     public InvitationPublicResponse get(@PathVariable String token) {
         return invitationService.getPublic(token);
     }
 
-    @PostMapping("/{token}/accept")
+    @PostMapping("/accept")
     @ResponseStatus(HttpStatus.CREATED)
     public RegisterResponse accept(
             @PathVariable String token,

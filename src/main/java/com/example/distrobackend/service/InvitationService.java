@@ -102,7 +102,9 @@ public class InvitationService {
                 "You have been invited to join " + organization.getName()
                         + ". Complete setup here:\n\n" + link
         ));
-        return InvitationResponse.from(saved, link);
+        // The raw token is delivered only through the invitation email. It must
+        // never be returned to the organization administrator who created it.
+        return InvitationResponse.from(saved, null);
     }
 
     @Transactional(readOnly = true)

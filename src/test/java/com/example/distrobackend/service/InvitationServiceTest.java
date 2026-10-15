@@ -71,6 +71,7 @@ class InvitationServiceTest {
         InvitationServiceResult result = new InvitationServiceResult(invitationService.create(actor, request));
 
         assertThat(result.response().role()).isEqualTo(UserRole.MANUFACTURER_ADMIN.name());
+        assertThat(result.response().invitationLink()).isNull();
         verify(invitationRepository).save(any(Invitation.class));
     }
 

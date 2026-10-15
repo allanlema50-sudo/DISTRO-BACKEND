@@ -44,7 +44,9 @@ public class AccessRequestService {
     private final OrganizationRepository organizationRepository;
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
-    private final OtpService otpService;
+    // Deferred onboarding option: reintroduce an OtpService dependency here only
+    // if phone verification is deliberately enabled for organization accounts.
+    // private final OtpService otpService;
     private final ApplicationEventPublisher eventPublisher;
 
     @Value("${app.frontend.base-url:http://localhost:4200}")
@@ -189,7 +191,8 @@ public class AccessRequestService {
         }
         user.setOrganization(organization);
         user.setPhoneVerified(false);
-        user.setEmailVerified(false);
+        // The emailed activation link is the email-verification step for organization accounts.
+        user.setEmailVerified(true);
         userRepository.save(user);
 
         accessRequest.setStatus(AccessRequestStatus.ACTIVATED);
@@ -197,9 +200,11 @@ public class AccessRequestService {
         accessRequest.setActivationTokenHash(null);
         accessRequest.setActivationExpiresAt(null);
         accessRequestRepository.save(accessRequest);
-        otpService.issue(user, com.example.distrobackend.Domain.enums.OtpPurpose.ACCOUNT_VERIFICATION);
+        // Deferred onboarding option; intentionally inactive for the current
+        // email-link verification flow:
+        // otpService.issue(user, OtpPurpose.ACCOUNT_VERIFICATION);
         return new RegisterResponse(user.getId(),
-                "Account created. Enter the verification code sent to " + mask(user.getPhoneNumber()));
+                "Account activated. You can now sign in.");
     }
 
     private String buildLink(String suffix) {
@@ -208,11 +213,6 @@ public class AccessRequestService {
 
     private static String normalizeEmail(String value) {
         return value.trim().toLowerCase(Locale.ROOT);
-    }
-
-    private static String mask(String phone) {
-        return phone.substring(0, Math.min(4, phone.length())) + "****"
-                + phone.substring(Math.max(0, phone.length() - 3));
     }
 
     private static void requirePlatformAdmin(AuthenticatedUser reviewer) {

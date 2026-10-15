@@ -106,9 +106,10 @@ public class AuthService {
     @Transactional
     public MessageResponse resendVerification(IdentifierRequest req) {
         findByIdentifier(req.identifier())
+                .filter(AuthService::requiresPhoneVerification)
                 .filter(u -> !u.isPhoneVerified())
                 .ifPresent(u -> otpService.issue(u, OtpPurpose.ACCOUNT_VERIFICATION));
-        return new MessageResponse("If the account exists and is not yet verified, a new code has been sent");
+        return new MessageResponse("If the account exists and requires phone verification, a new code has been sent");
     }
 
     // ------------------------------------------------------------------ login
@@ -132,7 +133,10 @@ public class AuthService {
         if (user.getStatus() == UserStatus.DEACTIVATED) {
             throw new ApiException(ErrorCode.ACCOUNT_DEACTIVATED);
         }
-        if (!user.isPhoneVerified()) {
+        if (requiresPhoneVerification(user) && !user.isPhoneVerified()) {
+            throw new ApiException(ErrorCode.ACCOUNT_NOT_VERIFIED);
+        }
+        if (requiresEmailVerification(user) && !user.isEmailVerified()) {
             throw new ApiException(ErrorCode.ACCOUNT_NOT_VERIFIED);
         }
 
@@ -246,6 +250,17 @@ public class AuthService {
 
     private static boolean isBlank(String s) {
         return s == null || s.isBlank();
+    }
+
+    private static boolean requiresPhoneVerification(User user) {
+        return user.getRole() == UserRole.CUSTOMER || user.getRole() == UserRole.DRIVER;
+    }
+
+    private static boolean requiresEmailVerification(User user) {
+        return user.getRole() == UserRole.MANUFACTURER_ADMIN
+                || user.getRole() == UserRole.MANUFACTURER_STAFF
+                || user.getRole() == UserRole.DISTRIBUTOR_ADMIN
+                || user.getRole() == UserRole.DISTRIBUTOR_STAFF;
     }
 
     private static String mask(String phone) {

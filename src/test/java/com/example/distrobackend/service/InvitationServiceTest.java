@@ -2,9 +2,12 @@ package com.example.distrobackend.service;
 
 import com.example.distrobackend.Domain.entity.Invitation;
 import com.example.distrobackend.Domain.entity.Organization;
+import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Exception.ApiException;
+import com.example.distrobackend.Util.SecretTokenService;
+import com.example.distrobackend.dto.AcceptInvitationRequest;
 import com.example.distrobackend.dto.CreateInvitationRequest;
 import com.example.distrobackend.repository.InvitationRepository;
 import com.example.distrobackend.repository.OrganizationRepository;
@@ -21,10 +24,13 @@ import org.springframework.context.ApplicationEventPublisher;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentCaptor.forClass;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -36,7 +42,6 @@ class InvitationServiceTest {
     @Mock private OrganizationRepository organizationRepository;
     @Mock private UserRepository userRepository;
     @Mock private PasswordEncoder passwordEncoder;
-    @Mock private OtpService otpService;
     @Mock private ApplicationEventPublisher eventPublisher;
 
     private InvitationService invitationService;
@@ -46,7 +51,7 @@ class InvitationServiceTest {
     void setUp() {
         invitationService = new InvitationService(
                 invitationRepository, organizationRepository, userRepository,
-                passwordEncoder, otpService, eventPublisher);
+                passwordEncoder, eventPublisher);
         ReflectionTestUtils.setField(invitationService, "frontendBaseUrl", "https://app.example.test");
         ReflectionTestUtils.setField(invitationService, "invitationTtl", Duration.ofDays(7));
 
@@ -54,7 +59,6 @@ class InvitationServiceTest {
         manufacturer.setId(UUID.randomUUID());
         manufacturer.setName("Example Manufacturer");
         manufacturer.setType(Organizationtype.MANUFACTURER);
-        when(organizationRepository.findById(manufacturer.getId())).thenReturn(java.util.Optional.of(manufacturer));
     }
 
     @Test
@@ -67,11 +71,13 @@ class InvitationServiceTest {
         InvitationServiceResult result = new InvitationServiceResult(invitationService.create(actor, request));
 
         assertThat(result.response().role()).isEqualTo(UserRole.MANUFACTURER_ADMIN.name());
+        assertThat(result.response().invitationLink()).isNull();
         verify(invitationRepository).save(any(Invitation.class));
     }
 
     @Test
     void organizationAdminCannotInviteAStaffOrAdminRoleForAnotherOrganizationType() {
+        when(organizationRepository.findById(manufacturer.getId())).thenReturn(Optional.of(manufacturer));
         AuthenticatedUser actor = principal(UserRole.MANUFACTURER_ADMIN, manufacturer.getId(),
                 Organizationtype.MANUFACTURER);
         CreateInvitationRequest request = request(UserRole.DISTRIBUTOR_ADMIN, manufacturer.getId());
@@ -92,7 +98,37 @@ class InvitationServiceTest {
         assertThat(result.response().role()).isEqualTo(UserRole.MANUFACTURER_ADMIN.name());
     }
 
+    @Test
+    void acceptingInvitationVerifiesEmailWithoutIssuingPhoneOtp() {
+        String rawToken = "invitation-token";
+        Invitation invitation = new Invitation();
+        invitation.setOrganization(manufacturer);
+        invitation.setFullName("Invited Administrator");
+        invitation.setEmail("invited@example.test");
+        invitation.setPhoneNumber("+254700000001");
+        invitation.setRole(UserRole.MANUFACTURER_ADMIN);
+        invitation.setStatus(com.example.distrobackend.Domain.enums.InvitationStatus.PENDING);
+        invitation.setExpiresAt(OffsetDateTime.now().plusHours(1));
+
+        when(invitationRepository.findByTokenHashForUpdate(SecretTokenService.sha256(rawToken)))
+                .thenReturn(Optional.of(invitation));
+        when(userRepository.existsByEmail("invited@example.test")).thenReturn(false);
+        when(userRepository.existsByPhoneNumber("+254700000001")).thenReturn(false);
+        when(userRepository.save(any(User.class))).thenAnswer(invocationCall -> invocationCall.getArgument(0));
+        when(invitationRepository.save(any(Invitation.class))).thenAnswer(invocationCall -> invocationCall.getArgument(0));
+
+        assertThat(invitationService.accept(rawToken,
+                new AcceptInvitationRequest("+254700000001", "StrongPassword1!")).message())
+                .isEqualTo("Invitation accepted. You can now sign in.");
+
+        var savedUser = forClass(User.class);
+        verify(userRepository).save(savedUser.capture());
+        assertThat(savedUser.getValue().isEmailVerified()).isTrue();
+        assertThat(savedUser.getValue().isPhoneVerified()).isFalse();
+    }
+
     private void stubCreateDependencies() {
+        when(organizationRepository.findById(manufacturer.getId())).thenReturn(Optional.of(manufacturer));
         when(userRepository.existsByEmail(any())).thenReturn(false);
         when(userRepository.existsByPhoneNumber(any())).thenReturn(false);
         when(invitationRepository.existsByEmailIgnoreCaseAndOrganizationIdAndStatus(any(), any(), any()))

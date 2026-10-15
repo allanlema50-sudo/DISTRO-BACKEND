@@ -363,7 +363,7 @@ to an organization; organization users carry exactly one organization claim.
 | `POST` | `/api/v1/organization/invitations` | Organization admin / `SUPER_ADMIN` | Invite same-type organization administrators or staff; `SUPER_ADMIN` supplies `organizationId` |
 | `DELETE` | `/api/v1/organization/invitations/{id}` | Organization admin / `SUPER_ADMIN` | Revoke a pending invitation |
 | `GET` | `/api/invitations/{token}` | Public | Validate an invitation link and show limited metadata |
-| `POST` | `/api/invitations/{token}/accept` | Public | Create the invited organization account and start phone verification |
+| `POST` | `/api/invitations/{token}/accept` | Public | Create the invited organization account; accepting the emailed invitation verifies the account email |
 
 Onboarding and invitation request bodies (JSON):
 

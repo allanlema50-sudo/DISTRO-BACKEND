@@ -4,7 +4,9 @@ import com.example.distrobackend.Domain.entity.Invitation;
 import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.InvitationStatus;
-import com.example.distrobackend.Domain.enums.OtpPurpose;
+// Deferred onboarding option: restore OtpPurpose only if phone verification is
+// deliberately enabled for organization invitations.
+// import com.example.distrobackend.Domain.enums.OtpPurpose;
 import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
@@ -41,7 +43,9 @@ public class InvitationService {
     private final OrganizationRepository organizationRepository;
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
-    private final OtpService otpService;
+    // Deferred onboarding option; intentionally inactive for the current
+    // email-link verification flow:
+    // private final OtpService otpService;
     private final ApplicationEventPublisher eventPublisher;
 
     @Value("${app.frontend.base-url:http://localhost:4200}")
@@ -152,15 +156,18 @@ public class InvitationService {
         user.setRole(invitation.getRole());
         user.setOrganization(invitation.getOrganization());
         user.setPhoneVerified(false);
-        user.setEmailVerified(false);
+        // Accepting the emailed invitation verifies the organization user's email.
+        user.setEmailVerified(true);
         userRepository.save(user);
 
         invitation.setStatus(InvitationStatus.ACCEPTED);
         invitation.setAcceptedAt(OffsetDateTime.now());
         invitationRepository.save(invitation);
-        otpService.issue(user, OtpPurpose.ACCOUNT_VERIFICATION);
+        // Deferred onboarding option; intentionally inactive for the current
+        // email-link verification flow:
+        // otpService.issue(user, OtpPurpose.ACCOUNT_VERIFICATION);
         return new RegisterResponse(user.getId(),
-                "Account created. Enter the verification code sent to " + mask(phone));
+                "Invitation accepted. You can now sign in.");
     }
 
     @Transactional
@@ -251,8 +258,4 @@ public class InvitationService {
         return value.trim().toLowerCase(Locale.ROOT);
     }
 
-    private static String mask(String phone) {
-        return phone.substring(0, Math.min(4, phone.length())) + "****"
-                + phone.substring(Math.max(0, phone.length() - 3));
-    }
 }

@@ -4,6 +4,7 @@ import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.UserStatus;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.dto.VerifyOtpRequest;
+import com.example.distrobackend.dto.LoginRequest;
 import com.example.distrobackend.repository.UserRepository;
 import com.example.distrobackend.security.JwtService;
 import org.junit.jupiter.api.Test;
@@ -15,6 +16,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -47,5 +49,26 @@ class AuthServiceTest {
         verify(userRepository, never()).save(any());
         verify(jwtService, never()).generateAccessToken(any());
         verify(refreshTokenService, never()).create(any());
+    }
+
+    @Test
+    void organizationUserUsesEmailVerificationInsteadOfPhoneOtpAtLogin() {
+        AuthService authService = new AuthService(
+                userRepository, passwordEncoder, jwtService, refreshTokenService, otpService);
+        User user = new User();
+        user.setRole(com.example.distrobackend.Domain.enums.UserRole.MANUFACTURER_ADMIN);
+        user.setEmail("admin@example.test");
+        user.setPhoneVerified(false);
+        user.setEmailVerified(true);
+        user.setPasswordHash("encoded-password");
+        when(userRepository.findByEmail("admin@example.test")).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("StrongPassword1!", "encoded-password")).thenReturn(true);
+        when(jwtService.generateAccessToken(user)).thenReturn("access-token");
+        when(refreshTokenService.create(user)).thenReturn("refresh-token");
+        when(jwtService.getAccessTtlSeconds()).thenReturn(900L);
+
+        assertThat(authService.login(new LoginRequest("admin@example.test", "StrongPassword1!"))
+                .accessToken()).isEqualTo("access-token");
+        verify(otpService, never()).issue(any(), any());
     }
 }

@@ -18,10 +18,16 @@ import org.springframework.web.bind.annotation.RestController;
 public class UserController {
 
     private final AuthService authService;
+    private final com.example.distrobackend.service.UserService userService;
 
     /** Any authenticated user. */
     @GetMapping("/me")
     public UserResponse me(@AuthenticationPrincipal AuthenticatedUser me) {
         return authService.getProfile(me.userId());
+    }
+
+    @org.springframework.web.bind.annotation.DeleteMapping("/me")
+    public void deleteMyAccount(@AuthenticationPrincipal AuthenticatedUser me) {
+        userService.deleteUserAccount(me.userId());
     }
 }

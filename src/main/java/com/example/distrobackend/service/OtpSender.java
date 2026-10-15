@@ -1,7 +1,8 @@
 package com.example.distrobackend.service;
 
+import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.OtpPurpose;
 
 public interface OtpSender {
-    void send(String phoneNumber, OtpPurpose purpose, String code, long ttlMinutes);
+    void send(User user, OtpPurpose purpose, String code, long ttlMinutes);
 }

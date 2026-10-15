@@ -1,5 +1,6 @@
 package com.example.distrobackend.service;
 
+import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.OtpPurpose;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
@@ -33,7 +34,8 @@ public class HttpOtpSender implements OtpSender {
     private String senderId;
 
     @Override
-    public void send(String phoneNumber, OtpPurpose purpose, String code, long ttlMinutes) {
+    public void send(User user, OtpPurpose purpose, String code, long ttlMinutes) {
+        String phoneNumber = user.getPhoneNumber();
         if (endpoint == null || endpoint.isBlank() || apiKey == null || apiKey.isBlank()) {
             throw new ApiException(ErrorCode.INTERNAL_ERROR, "Production OTP provider is not configured");
         }

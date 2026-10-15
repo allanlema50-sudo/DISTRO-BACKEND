@@ -7,9 +7,11 @@ import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.dto.UpdateUserStatusRequest;
 import com.example.distrobackend.dto.UserResponse;
+import com.example.distrobackend.repository.OtpVerificationRepository;
 import com.example.distrobackend.repository.UserRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -18,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 import java.util.UUID;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class UserService {
@@ -26,6 +29,7 @@ public class UserService {
             UserRole.MANUFACTURER_ADMIN, UserRole.DISTRIBUTOR_ADMIN);
 
     private final UserRepository userRepository;
+    private final OtpVerificationRepository otpRepository;
     private final RefreshTokenService refreshTokenService;
 
     @Transactional(readOnly = true)
@@ -166,5 +170,29 @@ public class UserService {
 
     private static boolean isOrganizationAdmin(UserRole role) {
         return role == UserRole.MANUFACTURER_ADMIN || role == UserRole.DISTRIBUTOR_ADMIN;
+    }
+
+    /**
+     * Soft-delete. Orders and payments stay attached to the row, but the
+     * person can register again because email and phone are released.
+     */
+    @Transactional
+    public void deleteUserAccount(UUID userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "User not found"));
+        if (user.getRole() == UserRole.SUPER_ADMIN) {
+            throw new ApiException(ErrorCode.ROLE_NOT_ALLOWED,
+                    "Platform administrator accounts require a controlled operator workflow");
+        }
+
+        otpRepository.deleteByUser_Id(userId);
+        user.setStatus(UserStatus.DEACTIVATED);
+        user.setEmail("deleted_" + UUID.randomUUID() + "@anonymized.com");
+        user.setPhoneNumber("deleted_" + UUID.randomUUID().toString().substring(0, 8));
+        user.setPasswordHash("DELETED");
+        user.setFullName("Deleted User");
+        userRepository.save(user);
+        refreshTokenService.revokeAll(userId);
+        log.info("Deactivated and anonymized user {}", userId);
     }
 }

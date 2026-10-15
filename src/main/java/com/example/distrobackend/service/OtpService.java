@@ -65,7 +65,7 @@ public class OtpService {
         otp.setExpiresAt(now.plusMinutes(ttlMinutes));
         repository.save(otp);
 
-        otpSender.send(user.getPhoneNumber(), purpose, code, ttlMinutes);
+        otpSender.send(user, purpose, code, ttlMinutes);
     }
 
     /**

@@ -45,7 +45,7 @@ public class AccessRequestController {
     // =========================================================
 
     @GetMapping("/admin/access-requests")
-    @PreAuthorize("hasRole('PLATFORM_ADMIN')")
+    @PreAuthorize("hasAnyRole('PLATFORM_ADMIN', 'SUPER_ADMIN')")
     public List<AccessRequestResponse> getAll() {
 
         return accessRequestService.getAll();
@@ -57,7 +57,7 @@ public class AccessRequestController {
     // =========================================================
 
     @GetMapping("/admin/access-requests/{id}")
-    @PreAuthorize("hasRole('PLATFORM_ADMIN')")
+    @PreAuthorize("hasAnyRole('PLATFORM_ADMIN', 'SUPER_ADMIN')")
     public AccessRequestResponse getById(
             @PathVariable UUID id
     ) {
@@ -73,7 +73,7 @@ public class AccessRequestController {
     // =========================================================
 
     @PostMapping("/admin/access-requests/{id}/approve")
-    @PreAuthorize("hasRole('PLATFORM_ADMIN')")
+    @PreAuthorize("hasAnyRole('PLATFORM_ADMIN', 'SUPER_ADMIN')")
     public AccessRequestResponse approve(
             @PathVariable UUID id,
             @AuthenticationPrincipal AuthenticatedUser me
@@ -100,7 +100,7 @@ public class AccessRequestController {
     // =========================================================
 
     @PostMapping("/admin/access-requests/{id}/reject")
-    @PreAuthorize("hasRole('PLATFORM_ADMIN')")
+    @PreAuthorize("hasAnyRole('PLATFORM_ADMIN', 'SUPER_ADMIN')")
     public AccessRequestResponse reject(
             @PathVariable UUID id,
             @AuthenticationPrincipal AuthenticatedUser me

@@ -63,7 +63,7 @@ public class InvitationService {
         // PLATFORM ADMIN
         // ------------------------------------------------------------
 
-        if (me.role() == UserRole.PLATFORM_ADMIN) {
+        if (me.role().isPlatformAdmin()) {
 
             if (request.organizationId() == null) {
                 throw new ApiException(

@@ -30,6 +30,7 @@ public class InvitationController {
     @PreAuthorize("""
             hasAnyRole(
                 'PLATFORM_ADMIN',
+                'SUPER_ADMIN',
                 'DISTRIBUTOR_ADMIN',
                 'MANUFACTURER_ADMIN'
             )

@@ -15,11 +15,12 @@ import java.util.List;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/admin/users")
+@RequestMapping({"/api/admin/users", "/api/v1/admin/users"})
 @RequiredArgsConstructor
 @PreAuthorize("""
         hasAnyRole(
             'PLATFORM_ADMIN',
+            'SUPER_ADMIN',
             'MANUFACTURER_ADMIN',
             'DISTRIBUTOR_ADMIN'
         )

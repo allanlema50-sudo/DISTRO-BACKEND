@@ -13,7 +13,14 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/admin/stock")
 @RequiredArgsConstructor
-@PreAuthorize("hasAnyRole('MANUFACTURER_ADMIN', 'DISTRIBUTOR_ADMIN')")
+@PreAuthorize("""
+        hasAnyRole(
+            'PLATFORM_ADMIN',
+            'SUPER_ADMIN',
+            'MANUFACTURER_ADMIN',
+            'DISTRIBUTOR_ADMIN'
+        )
+        """)
 public class AdminStockController {
 
     private final AdminStockService adminStockService;

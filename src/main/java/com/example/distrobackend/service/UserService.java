@@ -30,7 +30,7 @@ public class UserService {
             AuthenticatedUser me
     ) {
 
-        if (me.role() == UserRole.PLATFORM_ADMIN) {
+        if (me.role().isPlatformAdmin()) {
 
             return userRepository.findAll()
                     .stream()
@@ -91,7 +91,7 @@ public class UserService {
             AuthenticatedUser me
     ) {
 
-        if (me.role() == UserRole.PLATFORM_ADMIN) {
+        if (me.role().isPlatformAdmin()) {
 
             return userRepository
                     .findByStatus(status)
@@ -122,7 +122,7 @@ public class UserService {
             AuthenticatedUser me
     ) {
 
-        if (me.role() == UserRole.PLATFORM_ADMIN) {
+        if (me.role().isPlatformAdmin()) {
 
             return userRepository
                     .findByRole(role)
@@ -198,7 +198,7 @@ public class UserService {
             AuthenticatedUser me
     ) {
 
-        if (me.role() == UserRole.PLATFORM_ADMIN) {
+        if (me.role().isPlatformAdmin()) {
 
             return userRepository
                     .findById(id)
@@ -239,8 +239,7 @@ public class UserService {
          * Nobody should be able to deactivate or suspend
          * the platform administrator through this endpoint.
          */
-        if (target.getRole()
-                == UserRole.PLATFORM_ADMIN) {
+        if (target.getRole().isPlatformAdmin()) {
 
             throw new ApiException(
                     ErrorCode.ROLE_NOT_ALLOWED,

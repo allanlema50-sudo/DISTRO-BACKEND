@@ -21,7 +21,7 @@ public class OrganizationController {
 
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('PLATFORM_ADMIN','MANUFACTURER_ADMIN','DISTRIBUTOR_ADMIN')")
+    @PreAuthorize("hasAnyRole('PLATFORM_ADMIN','SUPER_ADMIN','MANUFACTURER_ADMIN','DISTRIBUTOR_ADMIN')")
     public List<OrganizationResponse> getAllOrganizations() {
 
         return organizationService
@@ -33,7 +33,7 @@ public class OrganizationController {
 
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyRole('PLATFORM_ADMIN','MANUFACTURER_ADMIN','DISTRIBUTOR_ADMIN')")
+    @PreAuthorize("hasAnyRole('PLATFORM_ADMIN','SUPER_ADMIN','MANUFACTURER_ADMIN','DISTRIBUTOR_ADMIN')")
     public OrganizationResponse getOrganization(
             @PathVariable UUID id
     ) {
@@ -46,7 +46,7 @@ public class OrganizationController {
 
 
     @PostMapping
-    @PreAuthorize("hasRole('PLATFORM_ADMIN')")
+    @PreAuthorize("hasAnyRole('PLATFORM_ADMIN','SUPER_ADMIN')")
     public OrganizationResponse createOrganization(
             @Valid @RequestBody CreateOrganizationRequest request
     ) {

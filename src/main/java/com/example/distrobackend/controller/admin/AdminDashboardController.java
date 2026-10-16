@@ -3,6 +3,7 @@ package com.example.distrobackend.controller.admin;
 import com.example.distrobackend.dto.AdminDashboardResponse;
 import com.example.distrobackend.service.AdminDashboardService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -10,6 +11,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/admin/dashboard")
 @RequiredArgsConstructor
+@PreAuthorize("hasAnyRole('PLATFORM_ADMIN', 'SUPER_ADMIN')")
 public class AdminDashboardController {
 
     private final AdminDashboardService adminDashboardService;

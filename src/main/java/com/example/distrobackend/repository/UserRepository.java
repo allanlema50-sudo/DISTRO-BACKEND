@@ -41,4 +41,6 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     );
 
     long countByOrganizationId(UUID organizationId);
+    
+    long countByRole(UserRole role);
 }

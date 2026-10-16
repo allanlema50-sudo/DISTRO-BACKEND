@@ -5,7 +5,7 @@ import com.example.distrobackend.Domain.enums.ProductApprovalStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
-
+import java.math.BigDecimal;
 import java.util.UUID;
 
 public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
@@ -38,4 +38,28 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
     long sumQuantityOnHandByOrganizationId(
             @Param("organizationId") UUID organizationId
     );
+
+    @Query("""
+    SELECT COUNT(s)
+    FROM StockItem s
+    WHERE s.active = true
+      AND s.quantityOnHand > 0
+      AND s.quantityOnHand <= s.reorderThreshold
+    """)
+long countLowStockItems();
+
+@Query("""
+    SELECT COUNT(s)
+    FROM StockItem s
+    WHERE s.active = true
+      AND s.quantityOnHand = 0
+    """)
+long countOutOfStockItems();
+
+@Query("""
+    SELECT COALESCE(SUM(s.unitPrice * s.quantityOnHand), 0)
+    FROM StockItem s
+    WHERE s.active = true
+    """)
+BigDecimal calculateInventoryValue();
 }

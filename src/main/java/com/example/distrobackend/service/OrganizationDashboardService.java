@@ -106,13 +106,13 @@ public class OrganizationDashboardService {
                         );
 
         long totalPayments =
-                paymentRepository.countByOrganizationId(
+                paymentRepository.countByOrder_Organization_Id(
                         organizationId
                 );
 
         long pendingPayments =
                 paymentRepository
-                        .countByOrganizationIdAndStatus(
+                        .countByOrder_Organization_IdAndStatus(
                                 organizationId,
                                 PaymentStatus.PENDING
                         );

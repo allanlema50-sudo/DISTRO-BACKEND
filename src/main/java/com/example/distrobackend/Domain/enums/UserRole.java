@@ -3,6 +3,7 @@ package com.example.distrobackend.Domain.enums;
 public enum UserRole {
 
     PLATFORM_ADMIN,
+    SUPER_ADMIN,
 
     MANUFACTURER_ADMIN,
     MANUFACTURER_STAFF,
@@ -15,7 +16,7 @@ public enum UserRole {
 
     /**
      * Organization type implied by the role,
-     * or null for PLATFORM_ADMIN / DRIVER / CUSTOMER.
+     * or null for platform admins / DRIVER / CUSTOMER.
      */
     public Organizationtype organizationtype() {
 
@@ -40,7 +41,7 @@ public enum UserRole {
      */
     public String webHomePath() {
 
-        if (this == PLATFORM_ADMIN) {
+        if (isPlatformAdmin()) {
             return "/dashboard";
         }
 
@@ -53,5 +54,9 @@ public enum UserRole {
         return type == Organizationtype.MANUFACTURER
                 ? "/manufacturer/dashboard"
                 : "/distributor/dashboard";
+    }
+
+    public boolean isPlatformAdmin() {
+        return this == PLATFORM_ADMIN || this == SUPER_ADMIN;
     }
 }

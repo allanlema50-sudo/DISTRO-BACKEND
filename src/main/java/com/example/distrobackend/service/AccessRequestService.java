@@ -84,9 +84,7 @@ public class AccessRequestService {
         for (User user : users) {
 
             if (user.getRole() != null
-                    && "PLATFORM_ADMIN".equals(
-                            user.getRole().name()
-                    )) {
+                    && user.getRole().isPlatformAdmin()) {
 
                 notificationService.create(
                         user,

@@ -30,6 +30,18 @@ public interface TripRepository extends JpaRepository<Trip, UUID> {
 
     Page<Trip> findByRiderId(UUID riderId, Pageable pageable);
 
+    Page<Trip> findByOrganization_Id(UUID organizationId, Pageable pageable);
+
+    long countByOrganization_Id(UUID organizationId);
+
+    long countByStatus(TripStatus status);
+
+    @Query(value = "select distinct t from Trip t left join t.stops s left join s.order o "
+            + "where o.customer.id = :customerId",
+            countQuery = "select count(distinct t) from Trip t left join t.stops s left join s.order o "
+                    + "where o.customer.id = :customerId")
+    Page<Trip> findByCustomerId(@Param("customerId") UUID customerId, Pageable pageable);
+
     List<Trip> findByRiderIdAndStatusIn(UUID riderId, List<TripStatus> statuses);
 
     @Query("SELECT DISTINCT t FROM Trip t JOIN t.stops s WHERE s.order.organization.id = :organizationId")

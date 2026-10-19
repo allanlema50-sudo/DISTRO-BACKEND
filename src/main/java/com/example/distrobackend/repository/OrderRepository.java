@@ -33,6 +33,21 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
 
     long countByCustomer_IdAndStatus(UUID customerId, OrderStatus status);
 
+    long countByStatus(OrderStatus status);
+
+    long countByOrganization_IdAndStatus(UUID organizationId, OrderStatus status);
+
+    long countByOrganization_Id(UUID organizationId);
+
+    @Query("select coalesce(sum(o.totalAmount), 0) from Order o")
+    java.math.BigDecimal sumTotalAmount();
+
+    @Query("select coalesce(sum(o.totalAmount), 0) from Order o where o.customer.id = :customerId")
+    java.math.BigDecimal sumTotalAmountByCustomerId(@Param("customerId") UUID customerId);
+
+    @Query("select coalesce(sum(o.totalAmount), 0) from Order o where o.organization.id = :organizationId")
+    java.math.BigDecimal sumTotalAmountByOrganizationId(@Param("organizationId") UUID organizationId);
+
     @Query("SELECT o.id AS id, o.reservationExpiresAt AS reservationExpiresAt FROM Order o "
             + "WHERE o.status = :status AND o.reservationExpiresAt IS NOT NULL "
             + "AND o.reservationExpiresAt <= :now "
@@ -85,6 +100,10 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     @Query(value = "SELECT o FROM Order o JOIN FETCH o.customer c JOIN FETCH o.organization org WHERE o.organization.id = :organizationId",
            countQuery = "SELECT COUNT(o) FROM Order o WHERE o.organization.id = :organizationId")
     Page<Order> findByOrganizationIdWithDetails(@Param("organizationId") UUID organizationId, Pageable pageable);
+
+    @Query(value = "SELECT o FROM Order o JOIN FETCH o.customer c JOIN FETCH o.organization org",
+           countQuery = "SELECT COUNT(o) FROM Order o")
+    Page<Order> findAllWithDetails(Pageable pageable);
 
     @Query(value = "SELECT nextval('order_number_seq')", nativeQuery = true)
     Long getNextOrderSequence();

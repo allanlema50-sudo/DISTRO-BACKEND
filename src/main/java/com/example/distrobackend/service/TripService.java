@@ -11,6 +11,8 @@ import com.example.distrobackend.security.TripAccessService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
@@ -201,6 +203,62 @@ public class TripService {
     }
 
     @Transactional(readOnly = true)
+    public Page<TripResponse> list(AuthenticatedUser actor, Pageable pageable) {
+        if (actor == null || actor.role() == null) {
+            throw new ApiException(ErrorCode.UNAUTHENTICATED);
+        }
+        return switch (actor.role()) {
+            case SUPER_ADMIN -> tripRepository.findAll(pageable)
+                    .map(trip -> TripResponse.from(trip, aggregateItems(trip)));
+            case DRIVER -> tripRepository.findByRiderId(actor.userId(), pageable)
+                    .map(trip -> TripResponse.from(trip, aggregateItems(trip)));
+            case CUSTOMER -> tripRepository.findByCustomerId(actor.userId(), pageable)
+                    .map(trip -> TripResponse.from(trip, aggregateItems(trip)));
+            case MANUFACTURER_ADMIN, MANUFACTURER_STAFF,
+                    DISTRIBUTOR_ADMIN, DISTRIBUTOR_STAFF -> {
+                if (actor.organizationId() == null) throw new ApiException(ErrorCode.ACCESS_DENIED);
+                yield tripRepository.findByOrganization_Id(actor.organizationId(), pageable)
+                        .map(trip -> TripResponse.from(trip, aggregateItems(trip)));
+            }
+        };
+    }
+
+    @Transactional(readOnly = true)
+    public TripResponse get(AuthenticatedUser actor, UUID tripId) {
+        Trip trip = tripRepository.findById(tripId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Trip not found"));
+        if (actor == null || actor.role() == null) throw new ApiException(ErrorCode.UNAUTHENTICATED);
+        boolean allowed = actor.role() == UserRole.SUPER_ADMIN
+                || tripAccessService.canAccess(actor, tripId);
+        if (!allowed && actor.organizationId() != null && trip.getOrganization() != null) {
+            allowed = actor.organizationId().equals(trip.getOrganization().getId());
+        }
+        if (!allowed) throw new ApiException(ErrorCode.ACCESS_DENIED);
+        return TripResponse.from(trip, aggregateItems(trip));
+    }
+
+    @Transactional
+    public TripResponse updateStatus(AuthenticatedUser actor, UUID tripId, TripStatus requested,
+                                     String note) {
+        Trip trip = getOrganizationTrip(actor, tripId);
+        if (!isAllowedTransition(trip.getStatus(), requested)) {
+            throw new ApiException(ErrorCode.INVALID_STATE_TRANSITION,
+                    "Trip cannot transition from " + trip.getStatus() + " to " + requested);
+        }
+        TripStatus previous = trip.getStatus();
+        trip.setStatus(requested);
+        Trip saved = tripRepository.save(trip);
+        recordStatus(saved, previous, requested, actor,
+                note == null || note.isBlank() ? "Trip status updated" : note.trim());
+        return TripResponse.from(saved, aggregateItems(saved));
+    }
+
+    @Transactional(readOnly = true)
+    public List<LocationPingResponse> tracking(AuthenticatedUser actor, UUID tripId) {
+        return locationHistory(actor, tripId);
+    }
+
+    @Transactional(readOnly = true)
     public List<TripResponse> getActiveTripsForRider(UUID riderId) {
         return tripRepository.findByRiderIdAndStatusIn(riderId,
                         List.of(TripStatus.SCHEDULED, TripStatus.ONGOING, TripStatus.DELAYED))
@@ -241,6 +299,18 @@ public class TripService {
             throw new ApiException(ErrorCode.ACCESS_DENIED, "An organization identity is required");
         }
         return actor.organizationId();
+    }
+
+    private static boolean isAllowedTransition(TripStatus current, TripStatus requested) {
+        if (requested == null || current == requested) return false;
+        return switch (current) {
+            case SCHEDULED -> requested == TripStatus.ONGOING
+                    || requested == TripStatus.DELAYED || requested == TripStatus.CANCELLED;
+            case ONGOING -> requested == TripStatus.DELAYED
+                    || requested == TripStatus.COMPLETED || requested == TripStatus.CANCELLED;
+            case DELAYED -> requested == TripStatus.ONGOING || requested == TripStatus.CANCELLED;
+            case COMPLETED, CANCELLED -> false;
+        };
     }
 
     private void validateStopSequences(TripRequest request) {

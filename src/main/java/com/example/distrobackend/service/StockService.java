@@ -83,6 +83,37 @@ public class StockService {
     }
 
     @Transactional(readOnly = true)
+    public ProductResponse catalogItem(AuthenticatedUser user, UUID productId) {
+        requireCatalogRole(user);
+        StockItem item = stockItemRepository.findById(productId)
+                .filter(StockItem::isActive)
+                .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.STOCK_ITEM_NOT_FOUND));
+        boolean visible = switch (user.role()) {
+            case CUSTOMER -> item.getSourceStockItem() != null
+                    && item.getOrganization() != null
+                    && item.getOrganization().getType() == Organizationtype.DISTRIBUTOR
+                    && item.getSourceStockItem().getOrganization() != null
+                    && item.getSourceStockItem().getOrganization().getType() == Organizationtype.MANUFACTURER
+                    && item.getWarehouse() != null && item.getWarehouse().isActive();
+            case MANUFACTURER_ADMIN, MANUFACTURER_STAFF -> user.organizationId() != null
+                    && item.getOrganization() != null
+                    && user.organizationId().equals(item.getOrganization().getId());
+            case DISTRIBUTOR_ADMIN, DISTRIBUTOR_STAFF -> user.organizationId() != null
+                    && ((item.getOrganization() != null
+                    && item.getOrganization().getType() == Organizationtype.MANUFACTURER)
+                    || (item.getOrganization() != null
+                    && user.organizationId().equals(item.getOrganization().getId())
+                    && item.getSourceStockItem() != null
+                    && item.getSourceStockItem().getOrganization() != null
+                    && item.getSourceStockItem().getOrganization().getType() == Organizationtype.MANUFACTURER
+                    && item.getWarehouse() != null && item.getWarehouse().isActive()));
+            default -> false;
+        };
+        if (!visible) throw new ApiException(ErrorCode.ACCESS_DENIED);
+        return ProductResponse.from(item);
+    }
+
+    @Transactional(readOnly = true)
     public java.util.List<String> categories(AuthenticatedUser user) {
         requireCatalogRole(user);
         return switch (user.role()) {

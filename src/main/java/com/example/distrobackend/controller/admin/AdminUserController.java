@@ -41,4 +41,9 @@ public class AdminUserController {
             @AuthenticationPrincipal AuthenticatedUser actor) {
         return userService.updateStatusForPlatform(actor, userId, request);
     }
+
+    @DeleteMapping("/{userId}")
+    public void deleteUser(@PathVariable UUID userId) {
+        userService.deleteUserAccount(userId);
+    }
 }

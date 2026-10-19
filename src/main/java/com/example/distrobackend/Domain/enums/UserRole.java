@@ -20,6 +20,7 @@ public enum UserRole {
 
     /** Web workspace the user is routed to after login; null for mobile-only roles. */
     public String webHomePath() {
+        if (this == SUPER_ADMIN) return "/admin/dashboard";
         Organizationtype type = organizationtype();
         if (type == null) return null;
         return type == Organizationtype.MANUFACTURER ? "/manufacturer/dashboard" : "/distributor/dashboard";

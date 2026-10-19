@@ -467,6 +467,102 @@ access. Revoke existing sessions or sign in again after promotion so a fresh
 JWT contains the new role. Do not expose a public endpoint for assigning
 `SUPER_ADMIN`.
 
+### Platform administration API
+
+These endpoints are intended for the platform administration console and
+require a `SUPER_ADMIN` access token unless stated otherwise. Collection
+endpoints support Spring pagination parameters such as `page`, `size`, and
+`sort`.
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/api/admin/dashboard` | Platform-wide operational counts |
+| `GET` | `/api/organizations` | List organizations |
+| `GET` | `/api/organizations/{organizationId}` | View one organization |
+| `POST` | `/api/organizations` | Create an organization record |
+| `GET` | `/api/admin/users` | Search platform users by organization, status, role, and page |
+| `GET` | `/api/admin/users/{userId}` | View one platform user |
+| `PATCH` | `/api/admin/users/{userId}/status` | Activate, suspend, or deactivate a user |
+| `DELETE` | `/api/admin/users/{userId}` | Anonymize/deactivate a non-platform user |
+| `GET` | `/api/admin/stock` | List platform inventory |
+| `GET` | `/api/admin/stock/{inventoryId}` | View one inventory record |
+| `POST` | `/api/admin/stock` | Create manufacturer source inventory |
+| `PATCH` | `/api/admin/stock/{inventoryId}` | Update inventory metadata |
+| `GET` | `/api/admin/stock/alerts` | List low-stock inventory |
+| `GET` | `/api/admin/stock/{inventoryId}/movements` | View movement history |
+| `POST` | `/api/admin/stock/{inventoryId}/movements` | Record a controlled inventory adjustment |
+| `GET` | `/api/admin/orders` | List platform orders |
+| `GET` | `/api/admin/orders/{orderId}` | View one platform order |
+| `PATCH` | `/api/admin/orders/{orderId}/status` | Apply a permitted administrative order transition |
+| `GET` | `/api/v1/payments` | List payments visible to the authenticated role |
+| `GET` | `/api/v1/payments/{paymentId}` | View one payment |
+| `PATCH` | `/api/v1/admin/payments/{paymentId}/status` | Mark an unsettled payment failed; successful confirmation only comes from verified callbacks |
+| `GET` | `/api/v1/admin/payments` | Backward-compatible paginated platform payment listing |
+| `GET` | `/api/v1/trips` | List trips visible to the authenticated role |
+| `GET` | `/api/v1/trips/{tripId}` | View one trip |
+| `PATCH` | `/api/v1/trips/{tripId}/driver` | Assign a driver; `/assign` remains a compatibility alias |
+| `PATCH` | `/api/v1/trips/{tripId}/status` | Update a valid trip status |
+| `GET` | `/api/v1/trips/{tripId}/tracking` | Read persisted tracking points |
+| `GET` | `/api/v1/reports/overview` | Platform overview report |
+| `GET` | `/api/v1/reports/revenue` | Revenue and payment-status report |
+| `GET` | `/api/v1/reports/orders` | Order totals and status counts |
+| `GET` | `/api/v1/reports/payments` | Payment totals and status counts |
+| `GET` | `/api/v1/reports/deliveries` | Trip/delivery status counts |
+| `GET` | `/api/v1/reports/inventory` | Inventory summary |
+| `GET` | `/api/v1/analytics` | Platform analytics summary |
+| `GET` | `/api/v1/analytics/organizations` | Per-organization operational analytics |
+| `GET` | `/api/v1/audit-logs` | Search audit records |
+| `GET` | `/api/v1/audit-logs/{auditLogId}` | View one audit record |
+| `GET` | `/api/v1/audit-logs/user/{userId}` | Filter audit records by actor |
+| `GET` | `/api/v1/audit-logs/organization/{organizationId}` | Filter audit records by organization |
+| `GET` | `/api/v1/audit-logs/resource` | Filter audit records by resource |
+| `GET` | `/api/v1/settings` | Read typed platform settings |
+| `PUT` | `/api/v1/settings` | Update typed platform settings |
+
+Representative JSON bodies:
+
+```jsonc
+// POST /api/organizations
+{
+  "name": "Example Manufacturing Ltd",
+  "email": "operations@example.com",
+  "type": "MANUFACTURER"
+}
+
+// PATCH /api/admin/users/{userId}/status
+{ "status": "SUSPENDED" }
+
+// POST /api/admin/stock
+{
+  "organizationId": "<manufacturer-organization-id>",
+  "sku": "SKU-1001",
+  "name": "25 kg maize flour",
+  "category": "Food",
+  "unitPrice": 1250.00,
+  "initialQuantity": 100,
+  "reorderThreshold": 20
+}
+
+// PATCH /api/admin/orders/{orderId}/status
+{ "status": "FAILED", "note": "Administrative review" }
+
+// PUT /api/v1/settings
+{
+  "maintenanceMode": false,
+  "supportEmail": "support@example.com",
+  "defaultDeliveryFee": 200.00
+}
+```
+
+The platform user delete operation is a soft-delete/anonymization operation;
+it preserves order, payment, and audit references. It cannot delete a
+`SUPER_ADMIN`, delete the calling administrator, or remove the last active
+administrator of an organization. Inventory and payment mutations are
+validated and locked by the service layer. An accepted M-Pesa payment must be
+reconciled before its reservation can be failed administratively. Clients
+should treat `409 Conflict` as a concurrency or state-transition response and
+refresh the affected record.
+
 ### Product catalog, offers, warehouses, and stock
 
 | Method | Endpoint | Access | Purpose / integration note |
@@ -475,6 +571,15 @@ JWT contains the new role. Do not expose a public endpoint for assigning
 | `GET` | `/api/products/categories` | Authenticated catalog roles | List categories visible to the caller |
 | `POST` | `/api/products` | Manufacturer admin/staff | Create a manufacturer source product |
 | `PATCH` | `/api/products/{id}` | Manufacturer admin/staff | Update a manufacturer source product |
+| `GET` | `/api/v1/products` | Authenticated catalog roles | Versioned product/offer catalog |
+| `GET` | `/api/v1/products/{productId}` | Authenticated catalog roles | Read one visible product/offer |
+| `GET` | `/api/v1/products/categories` | Authenticated catalog roles | List visible categories |
+| `GET` | `/api/v1/products/{productId}/inventory` | Authorized inventory scope | Read inventory details |
+| `GET` | `/api/v1/products/stats` | Manufacturer, distributor, or platform scope | Read product statistics |
+| `POST` | `/api/v1/products` | Manufacturer admin/staff | Create a manufacturer source product |
+| `PUT` | `/api/v1/products/{productId}` | Manufacturer admin/staff | Update a manufacturer source product |
+| `PATCH` | `/api/v1/products/{productId}/status` | Manufacturer admin/staff | Activate/deactivate own product |
+| `PATCH` | `/api/v1/products/{productId}/approval` | `SUPER_ADMIN` | Apply platform approval state |
 | `POST` | `/api/v1/warehouses` | Distributor admin | Create a distributor warehouse |
 | `GET` | `/api/v1/warehouses` | Distributor admin/staff | List the caller's warehouses |
 | `GET` | `/api/stock` | Manufacturer/distributor admin/staff | List organization stock records |
@@ -580,9 +685,11 @@ notification.
 | `POST` | `/api/v1/orders` | Customer | Create an order from distributor offer IDs |
 | `GET` | `/api/v1/orders/{orderId}` | Customer owner or distributor organization | Get order details |
 | `GET` | `/api/v1/orders/{orderId}/items` | Customer owner or distributor organization | Get order items |
+| `GET` | `/api/v1/orders/stats` | Customer, distributor, or `SUPER_ADMIN` | Return order totals and status counts |
 | `PATCH` | `/api/v1/orders/{orderId}/status` | Customer or distributor admin/staff | Customer may cancel only an unpaid pending order; distributor staff use valid operational transitions |
 | `POST` | `/api/v1/orders/{orderId}/delivery-otp` | Customer order owner | Request delivery OTP while the order is `IN_TRANSIT` |
-| `PUT` | `/api/v1/orders/{orderId}` | Distributor admin/staff | Reserved route; currently returns `501 NOT_IMPLEMENTED` |
+| `PUT` | `/api/v1/orders/{orderId}` | Distributor admin/staff | Update permitted pending-order delivery fields and reserved item quantities |
+| `GET` | `/api/v1/orders/{orderId}/payments` | Customer owner, distributor organization, or `SUPER_ADMIN` | Read the order payment |
 
 Order and payment request bodies (JSON):
 
@@ -652,6 +759,9 @@ successful payment is not stranded.
 | Method | Endpoint | Access | Purpose / integration note |
 |---|---|---|---|
 | `POST` | `/api/v1/payments/initiate` | Customer or distributor admin/staff with order access | Start an M-Pesa STK Push; send `orderId`, Kenyan `phoneNumber`, and optional idempotency key |
+| `GET` | `/api/v1/payments` | Authenticated payment roles | List payments visible to the caller |
+| `GET` | `/api/v1/payments/{paymentId}` | Authorized payment participant | Read one payment |
+| `PATCH` | `/api/v1/admin/payments/{paymentId}/status` | `SUPER_ADMIN` | Mark an unsettled payment failed with a reason; cannot forge confirmation or manually reverse a payment |
 | `GET` | `/api/v1/payments/{orderId}/status` | Customer owner or distributor organization | Read persisted payment status |
 | `POST` | `/api/v1/payments/mpesa/callback` | M-Pesa gateway only | Public HTTP route; requires `X-Mpesa-Callback-Secret` and provider verification |
 
@@ -719,6 +829,11 @@ not part of the current integration surface.
 |---|---|---|---|
 | `POST` | `/api/v1/trips` | Organization operations users | Create a delivery or restock trip with stops |
 | `PATCH` | `/api/v1/trips/{tripId}/assign` | Organization operations users | Assign a driver belonging to the trip organization |
+| `PATCH` | `/api/v1/trips/{tripId}/driver` | Organization operations users | Canonical driver-assignment route; `/assign` is retained as an alias |
+| `GET` | `/api/v1/trips` | Authorized trip participant | List visible trips |
+| `GET` | `/api/v1/trips/{tripId}` | Authorized trip participant | Read one trip |
+| `PATCH` | `/api/v1/trips/{tripId}/status` | Organization operations users | Update a valid trip status |
+| `GET` | `/api/v1/trips/{tripId}/tracking` | Authorized trip participant | Read tracking history |
 | `GET` | `/api/v1/trips/active` | Driver | List the driver's active trips |
 | `GET` | `/api/v1/trips/history` | Driver | List the driver's completed/history trips |
 | `POST` | `/api/v1/trips/{tripId}/location` | Assigned driver | Record a latitude/longitude ping |
@@ -883,12 +998,15 @@ Completed and available for frontend/mobile integration:
 - distributor/manufacturer purchase orders and restock requests;
 - trip assignment, driver delivery confirmation, OTP delivery flow, and location tracking;
 - organization notifications and WebSocket subscriptions.
+- platform organization, user, dashboard, inventory, order, payment, trip,
+  report, analytics, audit-log, and settings APIs listed in the platform
+  administration contract above.
 
 Known limitations to account for during integration:
 
-- `PUT /api/v1/orders/{orderId}` intentionally returns `501 NOT_IMPLEMENTED`;
-- platform administration currently covers onboarding, invitations, and basic user status management; platform-wide audit, payment, stock, trip, and report APIs remain future work;
-- admin audit, payment, stock, trip, and report controllers are placeholders;
+- platform settings, report, analytics, and audit-log endpoints are contract
+  surfaces; audit-log ingestion and settlement automation remain separate
+  follow-up capabilities;
 - payment refunds, reversals, reconciliation reports, and settlement processing are not exposed as APIs;
 - an M-Pesa callback requires a reachable callback URL, a configured shared secret, and provider verification;
 - the catalog/order model currently represents distributor offers as stock items, so customers order distributor offer IDs.

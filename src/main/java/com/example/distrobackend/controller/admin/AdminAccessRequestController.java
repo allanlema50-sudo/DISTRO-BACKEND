@@ -26,6 +26,11 @@ public class AdminAccessRequestController {
         return accessRequestService.list(status);
     }
 
+    @GetMapping("/{requestId}")
+    public AccessRequestResponse getById(@PathVariable UUID requestId) {
+        return accessRequestService.getById(requestId);
+    }
+
     @PostMapping("/{requestId}/approve")
     public AccessRequestApprovalResponse approve(
             @PathVariable UUID requestId,

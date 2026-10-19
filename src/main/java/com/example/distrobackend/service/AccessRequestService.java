@@ -4,6 +4,8 @@ import com.example.distrobackend.Domain.entity.AccessRequest;
 import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.AccessRequestStatus;
+import com.example.distrobackend.Domain.enums.NotificationPriority;
+import com.example.distrobackend.Domain.enums.NotificationType;
 import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
@@ -29,6 +31,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
@@ -48,6 +52,7 @@ public class AccessRequestService {
     // if phone verification is deliberately enabled for organization accounts.
     // private final OtpService otpService;
     private final ApplicationEventPublisher eventPublisher;
+    private final NotificationService notificationService;
 
     @Value("${app.frontend.base-url:http://localhost:4200}")
     private String frontendBaseUrl;
@@ -84,7 +89,40 @@ public class AccessRequestService {
         accessRequest.setOrganizationName(request.organizationName().trim());
         accessRequest.setOrganizationType(request.organizationType());
         accessRequest.setStatus(AccessRequestStatus.PENDING);
-        return AccessRequestResponse.from(accessRequestRepository.save(accessRequest));
+        List<User> superAdmins = userRepository.findByRole(UserRole.SUPER_ADMIN);
+        if (superAdmins.isEmpty()) {
+            throw new ApiException(ErrorCode.INTERNAL_ERROR,
+                    "No SUPER_ADMIN account is configured to receive access requests");
+        }
+
+        AccessRequest saved = accessRequestRepository.save(accessRequest);
+        String notificationMessage = "New organization access request from " + saved.getFullName()
+                + " for " + saved.getOrganizationName() + " (" + saved.getOrganizationType()
+                + "). Review request " + saved.getId() + ".";
+        for (User superAdmin : superAdmins) {
+            notificationService.create(
+                    superAdmin,
+                    "New organization access request",
+                    notificationMessage,
+                    NotificationType.ACCESS_REQUEST,
+                    NotificationPriority.HIGH,
+                    saved.getId(),
+                    "ACCESS_REQUEST");
+            if (superAdmin.getEmail() != null && !superAdmin.getEmail().isBlank()) {
+                eventPublisher.publishEvent(new OnboardingEmailRequested(
+                        superAdmin.getEmail(),
+                        "New LogiFlow organization access request",
+                        notificationMessage));
+            }
+        }
+        return AccessRequestResponse.from(saved);
+    }
+
+    @Transactional(readOnly = true)
+    public AccessRequestResponse getById(UUID requestId) {
+        return accessRequestRepository.findById(requestId)
+                .map(AccessRequestResponse::from)
+                .orElseThrow(() -> new ApiException(ErrorCode.ACCESS_REQUEST_NOT_FOUND));
     }
 
     @Transactional(readOnly = true)
@@ -97,9 +135,12 @@ public class AccessRequestService {
 
     @Transactional
     public AccessRequestApprovalResponse approve(UUID requestId, AuthenticatedUser reviewer) {
-        requirePlatformAdmin(reviewer);
+        requireSuperAdmin(reviewer);
         AccessRequest request = accessRequestRepository.findByIdForUpdate(requestId)
                 .orElseThrow(() -> new ApiException(ErrorCode.ACCESS_REQUEST_NOT_FOUND));
+        if (request.getStatus() == AccessRequestStatus.APPROVED) {
+            return new AccessRequestApprovalResponse(AccessRequestResponse.from(request), null);
+        }
         if (request.getStatus() != AccessRequestStatus.PENDING) {
             throw new ApiException(ErrorCode.ACCESS_REQUEST_STATE_CONFLICT,
                     "Only pending access requests can be approved");
@@ -130,20 +171,28 @@ public class AccessRequestService {
         request.setStatus(AccessRequestStatus.APPROVED);
         AccessRequest saved = accessRequestRepository.save(request);
 
-        String link = buildLink("/activate-account?token=" + rawToken);
+        String link = buildLink("/auth/activate?email="
+                + URLEncoder.encode(saved.getPersonalEmail(), StandardCharsets.UTF_8)
+                + "&token=" + URLEncoder.encode(rawToken, StandardCharsets.UTF_8));
         eventPublisher.publishEvent(new OnboardingEmailRequested(
                 saved.getPersonalEmail(),
                 "Complete your LogiFlow organization account setup",
                 "Your organization access request was approved. Complete setup here:\n\n" + link
         ));
-        return new AccessRequestApprovalResponse(AccessRequestResponse.from(saved), link);
+        // The raw token is delivered only through the applicant's email.
+        // Returning it to an administrator would allow activation without
+        // proving control of the applicant's email address.
+        return new AccessRequestApprovalResponse(AccessRequestResponse.from(saved), null);
     }
 
     @Transactional
     public AccessRequestResponse reject(UUID requestId, AuthenticatedUser reviewer) {
-        requirePlatformAdmin(reviewer);
+        requireSuperAdmin(reviewer);
         AccessRequest request = accessRequestRepository.findByIdForUpdate(requestId)
                 .orElseThrow(() -> new ApiException(ErrorCode.ACCESS_REQUEST_NOT_FOUND));
+        if (request.getStatus() == AccessRequestStatus.REJECTED) {
+            return AccessRequestResponse.from(request);
+        }
         if (request.getStatus() != AccessRequestStatus.PENDING) {
             throw new ApiException(ErrorCode.ACCESS_REQUEST_STATE_CONFLICT,
                     "Only pending access requests can be rejected");
@@ -215,7 +264,7 @@ public class AccessRequestService {
         return value.trim().toLowerCase(Locale.ROOT);
     }
 
-    private static void requirePlatformAdmin(AuthenticatedUser reviewer) {
+    private static void requireSuperAdmin(AuthenticatedUser reviewer) {
         if (reviewer == null || reviewer.role() != UserRole.SUPER_ADMIN
                 || reviewer.organizationId() != null) {
             throw new ApiException(ErrorCode.ACCESS_DENIED);

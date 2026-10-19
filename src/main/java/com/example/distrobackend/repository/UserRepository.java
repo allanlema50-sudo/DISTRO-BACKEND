@@ -1,6 +1,7 @@
 package com.example.distrobackend.repository;
 
 import com.example.distrobackend.Domain.entity.User;
+import com.example.distrobackend.Domain.enums.UserRole;
 import jakarta.persistence.LockModeType;
 
 import org.springframework.data.domain.Page;
@@ -19,6 +20,7 @@ import java.util.UUID;
 public interface UserRepository  extends JpaRepository<User, UUID> {
     Optional<User> findByEmail(String email);
     Optional<User> findByPhoneNumber(String phoneNumber);
+    List<User> findByRole(UserRole role);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select u from User u where u.id = :id")
     Optional<User> findByIdForUpdate(@Param("id") UUID id);

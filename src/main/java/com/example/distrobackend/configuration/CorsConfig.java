@@ -26,6 +26,9 @@ public class CorsConfig {
         // requests with no Origin. No extra configuration is needed.
 
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
+        // Keep the request-header allowlist explicit. CORS is not an
+        // authorization boundary, but an explicit list prevents accidental
+        // expansion when clients add headers over time.
         config.setAllowedHeaders(List.of(
                 "Authorization",
                 "Content-Type",

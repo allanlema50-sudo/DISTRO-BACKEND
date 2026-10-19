@@ -28,11 +28,12 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import lombok.extern.slf4j.Slf4j;
 
-import java.time.Duration;
-import java.time.OffsetDateTime;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.OffsetDateTime;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
@@ -40,6 +41,7 @@ import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class AccessRequestService {
     private static final EnumSet<AccessRequestStatus> ACTIVE_DUPLICATE_STATUSES =
             EnumSet.of(AccessRequestStatus.PENDING, AccessRequestStatus.APPROVED);
@@ -89,13 +91,15 @@ public class AccessRequestService {
         accessRequest.setOrganizationName(request.organizationName().trim());
         accessRequest.setOrganizationType(request.organizationType());
         accessRequest.setStatus(AccessRequestStatus.PENDING);
-        List<User> superAdmins = userRepository.findByRole(UserRole.SUPER_ADMIN);
-        if (superAdmins.isEmpty()) {
-            throw new ApiException(ErrorCode.INTERNAL_ERROR,
-                    "No SUPER_ADMIN account is configured to receive access requests");
-        }
 
         AccessRequest saved = accessRequestRepository.save(accessRequest);
+        List<User> superAdmins = userRepository.findByRole(UserRole.SUPER_ADMIN);
+        if (superAdmins.isEmpty()) {
+            log.warn("Access request {} was persisted without Super Admin notification because "
+                    + "no SUPER_ADMIN account is configured", saved.getId());
+            return AccessRequestResponse.from(saved);
+        }
+
         String notificationMessage = "New organization access request from " + saved.getFullName()
                 + " for " + saved.getOrganizationName() + " (" + saved.getOrganizationType()
                 + "). Review request " + saved.getId() + ".";
@@ -163,26 +167,26 @@ public class AccessRequestService {
         organizationRepository.save(organization);
         request.setOrganization(organization);
 
-        String rawToken = SecretTokenService.generate();
-        request.setActivationTokenHash(SecretTokenService.sha256(rawToken));
-        request.setActivationExpiresAt(OffsetDateTime.now().plus(activationTtl));
         request.setReviewedAt(OffsetDateTime.now());
         request.setReviewedBy(userRepository.getReferenceById(reviewer.userId()));
         request.setStatus(AccessRequestStatus.APPROVED);
-        AccessRequest saved = accessRequestRepository.save(request);
-
-        String link = buildLink("/auth/activate?email="
-                + URLEncoder.encode(saved.getPersonalEmail(), StandardCharsets.UTF_8)
-                + "&token=" + URLEncoder.encode(rawToken, StandardCharsets.UTF_8));
-        eventPublisher.publishEvent(new OnboardingEmailRequested(
-                saved.getPersonalEmail(),
-                "Complete your LogiFlow organization account setup",
-                "Your organization access request was approved. Complete setup here:\n\n" + link
-        ));
+        AccessRequest saved = issueActivationTokenAndNotify(request);
         // The raw token is delivered only through the applicant's email.
         // Returning it to an administrator would allow activation without
         // proving control of the applicant's email address.
         return new AccessRequestApprovalResponse(AccessRequestResponse.from(saved), null);
+    }
+
+    @Transactional
+    public AccessRequestResponse resendActivation(UUID requestId, AuthenticatedUser reviewer) {
+        requireSuperAdmin(reviewer);
+        AccessRequest request = accessRequestRepository.findByIdForUpdate(requestId)
+                .orElseThrow(() -> new ApiException(ErrorCode.ACCESS_REQUEST_NOT_FOUND));
+        if (request.getStatus() != AccessRequestStatus.APPROVED) {
+            throw new ApiException(ErrorCode.ACCESS_REQUEST_STATE_CONFLICT,
+                    "Activation can only be resent for an approved request that has not been activated");
+        }
+        return AccessRequestResponse.from(issueActivationTokenAndNotify(request));
     }
 
     @Transactional
@@ -258,6 +262,23 @@ public class AccessRequestService {
 
     private String buildLink(String suffix) {
         return frontendBaseUrl.replaceAll("/+$", "") + suffix;
+    }
+
+    private AccessRequest issueActivationTokenAndNotify(AccessRequest request) {
+        String rawToken = SecretTokenService.generate();
+        request.setActivationTokenHash(SecretTokenService.sha256(rawToken));
+        request.setActivationExpiresAt(OffsetDateTime.now().plus(activationTtl));
+        AccessRequest saved = accessRequestRepository.save(request);
+
+        String link = buildLink("/auth/activate?email="
+                + URLEncoder.encode(saved.getPersonalEmail(), StandardCharsets.UTF_8)
+                + "&token=" + URLEncoder.encode(rawToken, StandardCharsets.UTF_8));
+        eventPublisher.publishEvent(new OnboardingEmailRequested(
+                saved.getPersonalEmail(),
+                "Complete your LogiFlow organization account setup",
+                "Your organization access request was approved. Complete setup here:\n\n" + link
+        ));
+        return saved;
     }
 
     private static String normalizeEmail(String value) {

@@ -96,6 +96,33 @@ class AccessRequestServiceTest {
     }
 
     @Test
+    void submittingRequestIsPersistedBeforeSuperAdminBootstrap() {
+        when(userRepository.existsByEmail(any())).thenReturn(false);
+        when(userRepository.existsByPhoneNumber(any())).thenReturn(false);
+        when(accessRequestRepository.existsByPersonalEmailAndStatus(any(), any())).thenReturn(false);
+        when(accessRequestRepository.existsByPhoneNumberAndStatusIn(any(), any())).thenReturn(false);
+        when(userRepository.findByRole(UserRole.SUPER_ADMIN)).thenReturn(List.of());
+        when(accessRequestRepository.save(any(AccessRequest.class))).thenAnswer(invocation -> {
+            AccessRequest request = invocation.getArgument(0);
+            request.setId(UUID.randomUUID());
+            return request;
+        });
+
+        AccessRequestResponse response = accessRequestService.submit(new AccessRequestCreateRequest(
+                Organizationtype.DISTRIBUTOR,
+                "Example Distributor",
+                "Brian Owner",
+                "+254712345679",
+                "brian@example.test",
+                "admin@example-distributor.test"));
+
+        assertThat(response.status()).isEqualTo(AccessRequestStatus.PENDING);
+        verify(accessRequestRepository).save(any(AccessRequest.class));
+        verify(notificationService, never()).create(any(), any(), any(), any(), any(), any(), any());
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
     void approvalEmailsCompatibleLinkWithoutReturningRawActivationToken() {
         UUID requestId = UUID.randomUUID();
         UUID reviewerId = UUID.randomUUID();
@@ -138,6 +165,26 @@ class AccessRequestServiceTest {
         assertThat(response.activationLink()).isNull();
         verify(organizationRepository, never()).save(any());
         verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    void superAdminCanResendActivationWithAReplacementToken() {
+        UUID requestId = UUID.randomUUID();
+        AccessRequest request = pendingRequest(requestId);
+        request.setStatus(AccessRequestStatus.APPROVED);
+        request.setActivationTokenHash("old-token-hash");
+        when(accessRequestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(request));
+        when(accessRequestRepository.save(any(AccessRequest.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        AccessRequestResponse response = accessRequestService.resendActivation(
+                requestId, principal(UUID.randomUUID()));
+
+        assertThat(response.status()).isEqualTo(AccessRequestStatus.APPROVED);
+        assertThat(request.getActivationTokenHash()).isNotEqualTo("old-token-hash");
+        assertThat(request.getActivationExpiresAt()).isNotNull();
+        verify(accessRequestRepository).save(request);
+        verify(eventPublisher).publishEvent(any(OnboardingEmailRequested.class));
     }
 
     @Test

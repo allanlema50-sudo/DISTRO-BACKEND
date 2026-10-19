@@ -82,7 +82,7 @@ Important environment values:
 | `POSTGRES_PORT` | `5433` | PostgreSQL port exposed on the host |
 | `API_PORT` | `8080` | API port exposed on the host |
 | `JWT_SECRET` | none | Signs access tokens; required |
-| `CORS_ALLOWED_ORIGINS` | `http://localhost:4200` | Allowed browser origins |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:4200,http://127.0.0.1:4200` | Comma-separated browser origins allowed to call the API |
 | `OPENAPI_ENABLED` | `false` | Enables Swagger UI and OpenAPI JSON |
 | `FRONTEND_BASE_URL` | `http://localhost:4200` | Base URL used in onboarding and invitation links |
 | `MAIL_ENABLED` | `false` | Enables post-commit onboarding email delivery |
@@ -862,7 +862,7 @@ $env:DATABASE_URL='jdbc:postgresql://localhost:5433/distro_backend'
 $env:DATABASE_USERNAME='distro'
 $env:DATABASE_PASSWORD='<same value as POSTGRES_PASSWORD in .env>'
 $env:JWT_SECRET='<same generated JWT secret>'
-$env:CORS_ALLOWED_ORIGINS='http://localhost:4200'
+$env:CORS_ALLOWED_ORIGINS='http://localhost:4200,http://127.0.0.1:4200'
 $env:SERVER_PORT='8080'
 mvn spring-boot:run
 ```

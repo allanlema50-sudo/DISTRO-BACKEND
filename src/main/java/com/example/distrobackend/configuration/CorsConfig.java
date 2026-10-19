@@ -18,11 +18,18 @@ public class CorsConfig {
         CorsConfiguration config = new CorsConfiguration();
         config.setAllowedOrigins(allowedOrigins);
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-        // The origin list remains explicitly restricted. Header names are not
-        // trusted for authorization; allowing frontend-specific headers avoids
-        // rejecting legitimate browser preflight requests as the client grows.
-        config.setAllowedHeaders(List.of("*"));
-        config.setExposedHeaders(List.of("Location"));
+        // Keep the request-header allowlist explicit. CORS is not an
+        // authorization boundary, but an explicit list prevents accidental
+        // expansion when clients add headers over time.
+        config.setAllowedHeaders(List.of(
+                "Authorization",
+                "Content-Type",
+                "Accept",
+                "X-Requested-With",
+                "X-Platform",
+                "ngrok-skip-browser-warning"
+        ));
+        config.setExposedHeaders(List.of("Location", "X-Total-Count"));
         config.setAllowCredentials(false);
         config.setMaxAge(3600L);
 

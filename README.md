@@ -343,9 +343,9 @@ on protected requests as `Authorization: Bearer <access-token>`. Verification,
 password, and phone values are examples only and must not be hard-coded.
 
 Self-registration is intentionally limited to customers. A manufacturer or
-distributor administrator is created after a platform administrator approves an
-access request. Organization staff are created from an invitation issued by an
-organization administrator. Customers and platform administrators do not belong
+distributor administrator is created after a `SUPER_ADMIN` approves an access
+request. Organization staff are created from an invitation issued by an
+organization administrator. Customers and `SUPER_ADMIN` accounts do not belong
 to an organization; organization users carry exactly one organization claim.
 
 ### Platform onboarding and organization invitations
@@ -354,7 +354,9 @@ to an organization; organization users carry exactly one organization claim.
 |---|---|---|---|
 | `POST` | `/api/access-requests` | Public | Request manufacturer/distributor administrator access |
 | `GET` | `/api/admin/access-requests` | `SUPER_ADMIN` | List access requests; optional `status` filter |
-| `POST` | `/api/admin/access-requests/{requestId}/approve` | `SUPER_ADMIN` | Create the organization and issue a one-time activation link |
+| `GET` | `/api/admin/access-requests/{requestId}` | `SUPER_ADMIN` | View one access request |
+| `POST` | `/api/admin/access-requests/{requestId}/approve` | `SUPER_ADMIN` | Create the organization and email a one-time activation link |
+| `POST` | `/api/admin/access-requests/{requestId}/activation/resend` | `SUPER_ADMIN` | Issue a fresh activation token and resend the activation email |
 | `POST` | `/api/admin/access-requests/{requestId}/reject` | `SUPER_ADMIN` | Reject a pending access request |
 | `GET` | `/api/admin/users` | `SUPER_ADMIN` | List platform users; supports `organizationId`, `status`, `role`, and pagination filters |
 | `PATCH` | `/api/admin/users/{userId}/status` | `SUPER_ADMIN` | Suspend, deactivate, or reactivate a non-platform account |
@@ -400,6 +402,23 @@ Onboarding and invitation request bodies (JSON):
 // PATCH .../status (platform or organization member administration)
 { "status": "SUSPENDED" }
 ```
+
+Submitting an access request creates an in-app notification for each configured
+`SUPER_ADMIN` and sends an email notification when mail delivery is enabled.
+Requests are persisted even if no `SUPER_ADMIN` account has been bootstrapped
+yet, so they become reviewable as soon as the first Super Admin is configured.
+Approval and rejection are safe to retry after a timeout: repeating an
+approval or rejection returns the existing decision and does not create
+another organization, activation token, or notification. The raw activation
+token is never returned to the administrator. It is sent to the applicant's
+email in the frontend-compatible link:
+`/auth/activate?email=...&token=...`.
+
+If an approval email is missed or delivery is temporarily unavailable, an
+authenticated `SUPER_ADMIN` can call the activation-resend endpoint. It
+invalidates the previous token, creates a new expiry window, and sends a new
+email without exposing the token in the API response. The endpoint is valid
+only while the request is approved and not yet activated.
 
 For a `SUPER_ADMIN` creating an invitation, include `organizationId` in the
 invitation body. Organization administrators omit it; the server derives the

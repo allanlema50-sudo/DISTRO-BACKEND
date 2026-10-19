@@ -38,6 +38,13 @@ public class AdminAccessRequestController {
         return accessRequestService.approve(requestId, reviewer);
     }
 
+    @PostMapping("/{requestId}/activation/resend")
+    public AccessRequestResponse resendActivation(
+            @PathVariable UUID requestId,
+            @AuthenticationPrincipal AuthenticatedUser reviewer) {
+        return accessRequestService.resendActivation(requestId, reviewer);
+    }
+
     @PostMapping("/{requestId}/reject")
     public AccessRequestResponse reject(
             @PathVariable UUID requestId,

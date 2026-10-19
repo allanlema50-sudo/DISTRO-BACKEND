@@ -42,8 +42,15 @@ public class AdminUserController {
         return userService.updateStatusForPlatform(actor, userId, request);
     }
 
+    @GetMapping("/{userId}")
+    public UserResponse get(@PathVariable UUID userId,
+                            @AuthenticationPrincipal AuthenticatedUser actor) {
+        return userService.getForPlatform(actor, userId);
+    }
+
     @DeleteMapping("/{userId}")
-    public void deleteUser(@PathVariable UUID userId) {
-        userService.deleteUserAccount(userId);
+    public void deleteUser(@PathVariable UUID userId,
+                           @AuthenticationPrincipal AuthenticatedUser actor) {
+        userService.deleteUserAccount(actor, userId);
     }
 }

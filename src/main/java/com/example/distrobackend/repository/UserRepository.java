@@ -43,4 +43,8 @@ public interface UserRepository  extends JpaRepository<User, UUID> {
             @Param("roles") Collection<com.example.distrobackend.Domain.enums.UserRole> roles);
     boolean existsByEmail(String email);
     boolean existsByPhoneNumber(String phoneNumber);
+
+    long countByStatus(com.example.distrobackend.Domain.enums.UserStatus status);
+
+    long countByOrganization_Id(UUID organizationId);
 }

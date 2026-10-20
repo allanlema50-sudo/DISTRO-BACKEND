@@ -11,4 +11,6 @@ public interface StockMovementRepository extends JpaRepository<StockMovement, UU
 
     Page<StockMovement> findByStockItem_IdAndStockItem_Organization_IdOrderByCreatedAtDesc(
             UUID stockItemId, UUID organizationId, Pageable pageable);
+
+    Page<StockMovement> findByStockItem_IdOrderByCreatedAtDesc(UUID stockItemId, Pageable pageable);
 }

@@ -8,6 +8,7 @@ import com.example.distrobackend.dto.*;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.service.OrderService;
 import com.example.distrobackend.service.OtpService;
+import com.example.distrobackend.service.PaymentAdministrationService;
 import com.example.distrobackend.Domain.enums.OtpPurpose;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +29,12 @@ public class OrderController {
 
     private final OrderService orderService;
     private final OtpService otpService;
+    private final PaymentAdministrationService paymentAdministrationService;
+
+    @GetMapping("/stats")
+    public OrderStatsResponse stats(@AuthenticationPrincipal AuthenticatedUser me) {
+        return orderService.stats(me);
+    }
 
     // -----------------------------------------------------------------------
     // GET /api/v1/orders
@@ -42,6 +49,7 @@ public class OrderController {
             @PageableDefault(size = 20) Pageable pageable) {
 
         return switch (me.role()) {
+            case SUPER_ADMIN -> orderService.getAllOrders(pageable);
             case CUSTOMER ->
                     orderService.getOrdersForCustomer(me.userId(), pageable);
             case DISTRIBUTOR_ADMIN, DISTRIBUTOR_STAFF ->
@@ -101,6 +109,13 @@ public class OrderController {
         return order.items();
     }
 
+    @GetMapping("/{orderId}/payments")
+    public PaymentResponse getOrderPayment(
+            @AuthenticationPrincipal AuthenticatedUser me,
+            @PathVariable UUID orderId) {
+        return paymentAdministrationService.getForOrder(me, orderId);
+    }
+
     // -----------------------------------------------------------------------
     // PUT /api/v1/orders/{orderId}
     // Full update — distributor staff / admin only (customers cannot edit an
@@ -123,13 +138,7 @@ public class OrderController {
                     "You do not have access to this order");
         }
 
-        // Order editing semantics (which fields are mutable, recalculation rules,
-        // status constraints) are not yet confirmed. Throwing 501 so callers get
-        // an explicit signal rather than a misleading 200 with unchanged data.
-        // Order editing remains intentionally unsupported until its mutable fields,
-        // recalculation rules, and status constraints are confirmed.
-        throw new ApiException(ErrorCode.NOT_IMPLEMENTED,
-                "Order editing is not yet supported. Use PATCH /{orderId}/status to transition order state.");
+        return orderService.updateOrder(orderId, request);
     }
 
     // -----------------------------------------------------------------------
@@ -169,7 +178,7 @@ public class OrderController {
             // Staff may perform any transition that ALLOWED_TRANSITIONS permits;
             // the service layer validates the specific move and throws BAD_REQUEST
             // if it is illegal for the current status.
-        } else {
+        } else if (me.role() != UserRole.SUPER_ADMIN) {
             // MANUFACTURER_*, DRIVER, and any future roles not explicitly listed above
             throw new ApiException(ErrorCode.ACCESS_DENIED,
                     "This endpoint is not available for your role");
@@ -196,6 +205,7 @@ public class OrderController {
     // -----------------------------------------------------------------------
     private void checkOrderAccess(AuthenticatedUser me, OrderResponse order) {
         switch (me.role()) {
+            case SUPER_ADMIN -> { return; }
             case CUSTOMER -> {
                 if (!order.customerId().equals(me.userId())) {
                     throw new ApiException(ErrorCode.ACCESS_DENIED,

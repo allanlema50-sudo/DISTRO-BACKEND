@@ -10,10 +10,18 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import java.util.Optional;
+import java.util.List;
 import java.util.UUID;
 
 public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
     Page<StockItem> findByOrganization_Id(UUID organizationId, Pageable pageable);
+
+    @Query(value = "select s from StockItem s where (:organizationId is null or s.organization.id = :organizationId) "
+            + "and (:active is null or s.active = :active)",
+            countQuery = "select count(s) from StockItem s where (:organizationId is null or s.organization.id = :organizationId) "
+                    + "and (:active is null or s.active = :active)")
+    Page<StockItem> findForPlatform(@Param("organizationId") UUID organizationId,
+                                    @Param("active") Boolean active, Pageable pageable);
 
     @Query("""
             select s from StockItem s
@@ -96,6 +104,29 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
 
     boolean existsByOrganization_IdAndSkuIgnoreCase(UUID organizationId, String sku);
 
+    long countByOrganization_Id(UUID organizationId);
+
+    @Query("select s.organization.id, count(s) from StockItem s "
+            + "where s.organization.id in :organizationIds group by s.organization.id")
+    List<Object[]> countByOrganizationIds(@Param("organizationIds") List<UUID> organizationIds);
+
+    long countByOrganization_IdAndActiveTrue(UUID organizationId);
+
+    long countByOrganization_IdAndActiveFalse(UUID organizationId);
+
+    long countByActiveTrue();
+
+    long countByActiveFalse();
+
+    @Query("select count(s) from StockItem s where s.active = true "
+            + "and s.quantityOnHand - s.reservedQuantity <= s.reorderThreshold")
+    long countLowStock();
+
+    @Query("select count(s) from StockItem s where s.active = true "
+            + "and s.organization.id = :organizationId "
+            + "and s.quantityOnHand - s.reservedQuantity <= s.reorderThreshold")
+    long countLowStockByOrganizationId(@Param("organizationId") UUID organizationId);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from StockItem s where s.id = :id and s.organization.id = :organizationId")
     Optional<StockItem> findByIdAndOrganizationIdForUpdate(
@@ -112,4 +143,10 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
             """)
     Page<StockItem> findLowStockByOrganizationId(
             @Param("organizationId") UUID organizationId, Pageable pageable);
+
+    @Query(value = "select s from StockItem s where (:organizationId is null or s.organization.id = :organizationId) "
+            + "and s.active = true and s.quantityOnHand - s.reservedQuantity <= s.reorderThreshold",
+            countQuery = "select count(s) from StockItem s where (:organizationId is null or s.organization.id = :organizationId) "
+                    + "and s.active = true and s.quantityOnHand - s.reservedQuantity <= s.reorderThreshold")
+    Page<StockItem> findLowStockForPlatform(@Param("organizationId") UUID organizationId, Pageable pageable);
 }

@@ -14,6 +14,7 @@ import com.example.distrobackend.repository.OrganizationRepository;
 import com.example.distrobackend.repository.PaymentRepository;
 import com.example.distrobackend.repository.StockItemRepository;
 import com.example.distrobackend.repository.UserRepository;
+import com.example.distrobackend.security.AuthenticatedUser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
@@ -38,10 +39,7 @@ public class OrderService {
     private final OrganizationRepository organizationRepository;
     private final PaymentRepository paymentRepository;
     private final OrganizationNotificationService notificationService;
-
-    // Placeholder until real distance/route-based pricing exists once Trips is built
-    @Value("${app.orders.delivery-fee:0.00}")
-    private BigDecimal deliveryFeeAmount;
+    private final PlatformSettingsService platformSettingsService;
 
     @Value("${app.orders.reservation-ttl:15m}")
     private Duration reservationTtl;
@@ -164,8 +162,9 @@ public class OrderService {
         }
 
         order.setSubtotalAmount(subtotal);
-        order.setDeliveryFee(deliveryFeeAmount);
-        order.setTotalAmount(subtotal.add(deliveryFeeAmount));
+        BigDecimal effectiveDeliveryFee = platformSettingsService.resolveDeliveryFee();
+        order.setDeliveryFee(effectiveDeliveryFee);
+        order.setTotalAmount(subtotal.add(effectiveDeliveryFee));
         order.setStatus(OrderStatus.PENDING);
         OffsetDateTime now = OffsetDateTime.now();
         order.setPlacedAt(now);
@@ -233,6 +232,57 @@ public class OrderService {
 
         Order saved = orderRepository.save(order);
         return mapToResponse(saved);
+    }
+
+    @Transactional
+    public OrderResponse updateOrder(UUID orderId, OrderRequest request) {
+        Order order = orderRepository.findByIdWithItemsForUpdate(orderId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
+        if (order.getStatus() != OrderStatus.PENDING) {
+            throw new ApiException(ErrorCode.CONFLICT, "Only pending orders can be edited");
+        }
+        if (order.getOrganization() == null || !order.getOrganization().getId().equals(request.organizationId())) {
+            throw new ApiException(ErrorCode.CONFLICT, "The order organization cannot be changed");
+        }
+        Map<UUID, Integer> existing = order.getOrderItems().stream()
+                .collect(Collectors.toMap(item -> item.getStockItem().getId(), OrderItem::getQuantity));
+        if (request.items().stream().map(OrderItemRequest::stockItemId).distinct().count() != request.items().size()) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Each stock item may appear only once in an order");
+        }
+        Map<UUID, Integer> requested = request.items().stream()
+                .collect(Collectors.toMap(OrderItemRequest::stockItemId, OrderItemRequest::quantity));
+        if (!existing.equals(requested)) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "Order items cannot be changed after reservation; update delivery details only");
+        }
+        order.setDeliveryAddress(request.deliveryAddress());
+        order.setDeliveryLat(request.deliveryLat());
+        order.setDeliveryLng(request.deliveryLng());
+        return mapToResponse(orderRepository.save(order));
+    }
+
+    @Transactional(readOnly = true)
+    public OrderStatsResponse stats(AuthenticatedUser actor) {
+        if (actor == null || actor.role() == null) throw new ApiException(ErrorCode.UNAUTHENTICATED);
+        Map<OrderStatus, Long> counts = new EnumMap<>(OrderStatus.class);
+        for (OrderStatus status : OrderStatus.values()) {
+            long count = switch (actor.role()) {
+                case SUPER_ADMIN -> orderRepository.countByStatus(status);
+                case CUSTOMER -> orderRepository.countByCustomer_IdAndStatus(actor.userId(), status);
+                case DISTRIBUTOR_ADMIN, DISTRIBUTOR_STAFF -> actor.organizationId() == null ? 0
+                        : orderRepository.countByOrganization_IdAndStatus(actor.organizationId(), status);
+                default -> throw new ApiException(ErrorCode.ACCESS_DENIED);
+            };
+            counts.put(status, count);
+        }
+        BigDecimal total = switch (actor.role()) {
+            case SUPER_ADMIN -> orderRepository.sumTotalAmount();
+            case CUSTOMER -> orderRepository.sumTotalAmountByCustomerId(actor.userId());
+            case DISTRIBUTOR_ADMIN, DISTRIBUTOR_STAFF -> actor.organizationId() == null ? BigDecimal.ZERO
+                    : orderRepository.sumTotalAmountByOrganizationId(actor.organizationId());
+            default -> throw new ApiException(ErrorCode.ACCESS_DENIED);
+        };
+        return new OrderStatsResponse(counts, total == null ? BigDecimal.ZERO : total);
     }
 
     @Transactional(readOnly = true)
@@ -378,6 +428,11 @@ public class OrderService {
     public Page<OrderResponse> getOrdersForOrganization(UUID organizationId, Pageable pageable) {
         return orderRepository.findByOrganizationIdWithDetails(organizationId, pageable)
                 .map(this::mapToResponse);
+    }
+
+    @Transactional(readOnly = true)
+    public Page<OrderResponse> getAllOrders(Pageable pageable) {
+        return orderRepository.findAllWithDetails(pageable).map(this::mapToResponse);
     }
 
     private OrderResponse mapToResponse(Order order) {

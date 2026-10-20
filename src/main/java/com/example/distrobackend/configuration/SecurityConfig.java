@@ -67,7 +67,10 @@ public class SecurityConfig {
                         // Platform administration is deliberately separate from
                         // organization administration. Organization admins must
                         // never reach platform-wide workflows through this path.
-                        .requestMatchers("/api/admin/**", "/api/v1/admin/**").hasRole("SUPER_ADMIN")
+                        .requestMatchers("/api/admin/**", "/api/v1/admin/**", "/api/organizations/**",
+                                "/api/v1/reports/**", "/api/v1/analytics/**", "/api/v1/audit-logs/**",
+                                "/api/v1/settings/**")
+                        .hasRole("SUPER_ADMIN")
 
                         // Workspace isolation: each area is reachable only by its own roles.
                         .requestMatchers("/api/manufacturer/**")

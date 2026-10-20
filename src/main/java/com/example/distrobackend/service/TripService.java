@@ -11,6 +11,8 @@ import com.example.distrobackend.security.TripAccessService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
@@ -201,6 +203,65 @@ public class TripService {
     }
 
     @Transactional(readOnly = true)
+    public Page<TripResponse> list(AuthenticatedUser actor, Pageable pageable) {
+        if (actor == null || actor.role() == null) {
+            throw new ApiException(ErrorCode.UNAUTHENTICATED);
+        }
+        return switch (actor.role()) {
+            case SUPER_ADMIN -> tripRepository.findAll(pageable)
+                    .map(trip -> TripResponse.from(trip, aggregateItems(trip)));
+            case DRIVER -> tripRepository.findByRiderId(actor.userId(), pageable)
+                    .map(trip -> TripResponse.from(trip, aggregateItems(trip)));
+            case CUSTOMER -> tripRepository.findByCustomerId(actor.userId(), pageable)
+                    .map(trip -> customerResponse(trip, actor.userId()));
+            case MANUFACTURER_ADMIN, MANUFACTURER_STAFF,
+                    DISTRIBUTOR_ADMIN, DISTRIBUTOR_STAFF -> {
+                if (actor.organizationId() == null) throw new ApiException(ErrorCode.ACCESS_DENIED);
+                yield tripRepository.findByOrganization_Id(actor.organizationId(), pageable)
+                        .map(trip -> TripResponse.from(trip, aggregateItems(trip)));
+            }
+        };
+    }
+
+    @Transactional(readOnly = true)
+    public TripResponse get(AuthenticatedUser actor, UUID tripId) {
+        Trip trip = tripRepository.findById(tripId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Trip not found"));
+        if (actor == null || actor.role() == null) throw new ApiException(ErrorCode.UNAUTHENTICATED);
+        boolean allowed = actor.role() == UserRole.SUPER_ADMIN
+                || tripAccessService.canAccess(actor, tripId);
+        if (!allowed) throw new ApiException(ErrorCode.ACCESS_DENIED);
+        return actor.role() == UserRole.CUSTOMER
+                ? customerResponse(trip, actor.userId())
+                : TripResponse.from(trip, aggregateItems(trip));
+    }
+
+    @Transactional
+    public TripResponse updateStatus(AuthenticatedUser actor, UUID tripId, TripStatus requested,
+                                     String note) {
+        Trip trip = getOrganizationTrip(actor, tripId);
+        if (!isAllowedTransition(trip.getStatus(), requested)) {
+            throw new ApiException(ErrorCode.INVALID_STATE_TRANSITION,
+                    "Trip cannot transition from " + trip.getStatus() + " to " + requested);
+        }
+        if (requested == TripStatus.COMPLETED && !allStopsCompleted(trip)) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    "A trip can only be completed after all stops are completed");
+        }
+        TripStatus previous = trip.getStatus();
+        trip.setStatus(requested);
+        Trip saved = tripRepository.save(trip);
+        recordStatus(saved, previous, requested, actor,
+                note == null || note.isBlank() ? "Trip status updated" : note.trim());
+        return TripResponse.from(saved, aggregateItems(saved));
+    }
+
+    @Transactional(readOnly = true)
+    public List<LocationPingResponse> tracking(AuthenticatedUser actor, UUID tripId) {
+        return locationHistory(actor, tripId);
+    }
+
+    @Transactional(readOnly = true)
     public List<TripResponse> getActiveTripsForRider(UUID riderId) {
         return tripRepository.findByRiderIdAndStatusIn(riderId,
                         List.of(TripStatus.SCHEDULED, TripStatus.ONGOING, TripStatus.DELAYED))
@@ -243,6 +304,18 @@ public class TripService {
         return actor.organizationId();
     }
 
+    private static boolean isAllowedTransition(TripStatus current, TripStatus requested) {
+        if (requested == null || current == requested) return false;
+        return switch (current) {
+            case SCHEDULED -> requested == TripStatus.ONGOING
+                    || requested == TripStatus.DELAYED || requested == TripStatus.CANCELLED;
+            case ONGOING -> requested == TripStatus.DELAYED
+                    || requested == TripStatus.COMPLETED || requested == TripStatus.CANCELLED;
+            case DELAYED -> requested == TripStatus.ONGOING || requested == TripStatus.CANCELLED;
+            case COMPLETED, CANCELLED -> false;
+        };
+    }
+
     private void validateStopSequences(TripRequest request) {
         List<Integer> sortedSequences = request.stops().stream()
                 .map(TripRequest.TripStopRequest::sequence)
@@ -270,25 +343,60 @@ public class TripService {
 
     private List<TripItemResponse> aggregateItems(Trip trip) {
         Map<String, TripItemResponse> itemMap = new LinkedHashMap<>();
+        boolean directOrderIncluded = false;
+        if (trip.getOrder() != null) {
+            addOrderItems(itemMap, trip.getOrder());
+            directOrderIncluded = true;
+        }
         for (TripStop stop : trip.getStops()) {
             if (stop.getOrder() != null) {
-                for (OrderItem item : stop.getOrder().getOrderItems()) {
-                    StockItem stock = item.getStockItem();
-                    String key = stock.getId().toString();
-                    TripItemResponse current = itemMap.getOrDefault(key,
-                            new TripItemResponse(key, stock.getName(), stock.getSku(), "unit", 0));
-                    itemMap.put(key, new TripItemResponse(current.id(), current.productName(), current.brand(),
-                            current.unitLabel(), current.quantity() + item.getQuantity()));
+                if (!directOrderIncluded || !stop.getOrder().getId().equals(trip.getOrder().getId())) {
+                    addOrderItems(itemMap, stop.getOrder());
                 }
             } else if (stop.getStockItem() != null) {
-                StockItem stock = stop.getStockItem();
-                String key = stock.getId().toString();
-                TripItemResponse current = itemMap.getOrDefault(key,
-                        new TripItemResponse(key, stock.getName(), stock.getSku(), "unit", 0));
-                itemMap.put(key, new TripItemResponse(current.id(), current.productName(), current.brand(),
-                        current.unitLabel(), current.quantity() + stop.getRestockQuantity()));
+                addStockItem(itemMap, stop.getStockItem(), stop.getRestockQuantity());
             }
         }
         return new ArrayList<>(itemMap.values());
+    }
+
+    private TripResponse customerResponse(Trip trip, UUID customerId) {
+        Map<String, TripItemResponse> itemMap = new LinkedHashMap<>();
+        if (trip.getOrder() != null && trip.getOrder().getCustomer() != null
+                && customerId.equals(trip.getOrder().getCustomer().getId())) {
+            addOrderItems(itemMap, trip.getOrder());
+        }
+        for (TripStop stop : trip.getStops()) {
+            if (stop.getOrder() != null && stop.getOrder().getCustomer() != null
+                    && customerId.equals(stop.getOrder().getCustomer().getId())
+                    && (trip.getOrder() == null || !stop.getOrder().getId().equals(trip.getOrder().getId()))) {
+                addOrderItems(itemMap, stop.getOrder());
+            }
+        }
+        return TripResponse.fromCustomer(trip, new ArrayList<>(itemMap.values()), customerId);
+    }
+
+    private static void addOrderItems(Map<String, TripItemResponse> itemMap, Order order) {
+        for (OrderItem item : order.getOrderItems()) {
+            StockItem stock = item.getStockItem();
+            String key = stock.getId().toString();
+            TripItemResponse current = itemMap.getOrDefault(key,
+                    new TripItemResponse(key, stock.getName(), stock.getSku(), "unit", 0));
+            itemMap.put(key, new TripItemResponse(current.id(), current.productName(), current.brand(),
+                    current.unitLabel(), current.quantity() + item.getQuantity()));
+        }
+    }
+
+    private static void addStockItem(Map<String, TripItemResponse> itemMap, StockItem stock, Integer quantity) {
+        String key = stock.getId().toString();
+        TripItemResponse current = itemMap.getOrDefault(key,
+                new TripItemResponse(key, stock.getName(), stock.getSku(), "unit", 0));
+        itemMap.put(key, new TripItemResponse(current.id(), current.productName(), current.brand(),
+                current.unitLabel(), current.quantity() + (quantity == null ? 0 : quantity)));
+    }
+
+    private static boolean allStopsCompleted(Trip trip) {
+        return !trip.getStops().isEmpty()
+                && trip.getStops().stream().allMatch(stop -> stop.getStatus() == StopStatus.COMPLETED);
     }
 }

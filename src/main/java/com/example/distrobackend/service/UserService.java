@@ -50,6 +50,14 @@ public class UserService {
                 .map(UserResponse::from);
     }
 
+    @Transactional(readOnly = true)
+    public UserResponse getForPlatform(AuthenticatedUser actor, UUID userId) {
+        requirePlatformAdmin(actor);
+        return userRepository.findWithOrganizationById(userId)
+                .map(UserResponse::from)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "User not found"));
+    }
+
     @Transactional
     public UserResponse updateStatusForPlatform(AuthenticatedUser actor, UUID userId,
                                                 UpdateUserStatusRequest request) {
@@ -178,11 +186,15 @@ public class UserService {
      */
     @Transactional
     public void deleteUserAccount(UUID userId) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "User not found"));
+        User user = lockTargetWithAdminSetIfRequired(userId);
         if (user.getRole() == UserRole.SUPER_ADMIN) {
             throw new ApiException(ErrorCode.ROLE_NOT_ALLOWED,
                     "Platform administrator accounts require a controlled operator workflow");
+        }
+        if (user.getOrganization() != null && isOrganizationAdmin(user.getRole())) {
+            List<User> administrators = userRepository.findOrganizationAdministratorsForUpdate(
+                    user.getOrganization().getId(), ORGANIZATION_ADMIN_ROLES);
+            ensureNotLastActiveAdministrator(user, UserStatus.DEACTIVATED, administrators);
         }
 
         otpRepository.deleteByUser_Id(userId);
@@ -194,5 +206,27 @@ public class UserService {
         userRepository.save(user);
         refreshTokenService.revokeAll(userId);
         log.info("Deactivated and anonymized user {}", userId);
+    }
+
+    /**
+     * Platform-admin deletion follows the same protections as a status change:
+     * a platform admin cannot delete themselves or another platform admin, and
+     * the last active organization administrator cannot be removed.
+     */
+    @Transactional
+    public void deleteUserAccount(AuthenticatedUser actor, UUID userId) {
+        requirePlatformAdmin(actor);
+        User target = lockTargetWithAdminSetIfRequired(userId);
+        ensurePlatformMayManage(target, actor, UserStatus.DEACTIVATED);
+
+        otpRepository.deleteByUser_Id(userId);
+        target.setStatus(UserStatus.DEACTIVATED);
+        target.setEmail("deleted_" + UUID.randomUUID() + "@anonymized.com");
+        target.setPhoneNumber("deleted_" + UUID.randomUUID().toString().substring(0, 8));
+        target.setPasswordHash("DELETED");
+        target.setFullName("Deleted User");
+        userRepository.save(target);
+        refreshTokenService.revokeAll(userId);
+        log.info("Platform administrator deactivated and anonymized user {}", userId);
     }
 }

@@ -3,9 +3,11 @@ package com.example.distrobackend.controller;
 import com.example.distrobackend.dto.PaymentInitiateRequest;
 import com.example.distrobackend.dto.PaymentInitiateResponse;
 import com.example.distrobackend.dto.PaymentStatusResponse;
+import com.example.distrobackend.dto.PaymentResponse;
 import com.example.distrobackend.dto.mpesa.MpesaCallbackRequest;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.service.PaymentService;
+import com.example.distrobackend.service.PaymentAdministrationService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -15,6 +17,8 @@ import org.springframework.web.bind.annotation.*;
 import io.swagger.v3.oas.annotations.security.SecurityRequirements;
 
 import java.util.UUID;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 
 @RestController
 @RequestMapping("/api/v1/payments")
@@ -22,6 +26,19 @@ import java.util.UUID;
 public class PaymentController {
 
     private final PaymentService paymentService;
+    private final PaymentAdministrationService paymentAdministrationService;
+
+    @GetMapping
+    public Page<PaymentResponse> listPayments(
+            @AuthenticationPrincipal AuthenticatedUser actor, Pageable pageable) {
+        return paymentAdministrationService.list(actor, pageable);
+    }
+
+    @GetMapping("/{paymentId}")
+    public PaymentResponse getPayment(
+            @AuthenticationPrincipal AuthenticatedUser actor, @PathVariable UUID paymentId) {
+        return paymentAdministrationService.get(actor, paymentId);
+    }
 
     @PostMapping("/initiate")
     @PreAuthorize("hasAnyRole('CUSTOMER', 'DISTRIBUTOR_ADMIN', 'DISTRIBUTOR_STAFF')")

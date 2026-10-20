@@ -22,6 +22,8 @@ public interface AccessRequestRepository extends JpaRepository<AccessRequest, UU
 
     boolean existsByPhoneNumberAndStatusIn(String phoneNumber, Collection<AccessRequestStatus> statuses);
 
+    long countByStatus(AccessRequestStatus status);
+
     Optional<AccessRequest> findByPersonalEmailAndStatus(String email, AccessRequestStatus status);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)

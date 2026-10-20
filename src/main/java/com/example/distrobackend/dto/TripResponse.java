@@ -3,8 +3,11 @@ package com.example.distrobackend.dto;
 import com.example.distrobackend.Domain.enums.TripStatus;
 import com.example.distrobackend.Domain.enums.TripType;
 import com.example.distrobackend.Domain.entity.Trip;
+import com.example.distrobackend.Domain.entity.TripStop;
 
 import java.util.List;
+import java.util.UUID;
+import java.util.function.Predicate;
 
 public record TripResponse(
         String id,
@@ -18,6 +21,18 @@ public record TripResponse(
         Integer totalDistanceKm
 ) {
     public static TripResponse from(Trip trip, List<TripItemResponse> items) {
+        return from(trip, items, stop -> true);
+    }
+
+    public static TripResponse fromCustomer(Trip trip, List<TripItemResponse> items,
+                                            UUID customerId) {
+        return from(trip, items, stop -> stop.getOrder() != null
+                && stop.getOrder().getCustomer() != null
+                && customerId.equals(stop.getOrder().getCustomer().getId()));
+    }
+
+    private static TripResponse from(Trip trip, List<TripItemResponse> items,
+                                     Predicate<TripStop> stopVisibility) {
         TripLocation origin = new TripLocation(
                 trip.getOriginName(),
                 trip.getOriginAddress(),
@@ -26,6 +41,7 @@ public record TripResponse(
         );
 
         List<TripStopResponse> stops = trip.getStops().stream()
+                .filter(stopVisibility)
                 .map(stop -> new TripStopResponse(
                         stop.getId().toString(),
                         stop.getSequence(),

@@ -14,6 +14,8 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.UUID;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 
 @RestController
 @RequestMapping("/api/v1/trips")
@@ -21,6 +23,18 @@ import java.util.UUID;
 public class TripController {
 
     private final TripService tripService;
+
+    @GetMapping
+    public Page<TripResponse> list(@AuthenticationPrincipal AuthenticatedUser me,
+                                   Pageable pageable) {
+        return tripService.list(me, pageable);
+    }
+
+    @GetMapping("/{tripId}")
+    public TripResponse get(@AuthenticationPrincipal AuthenticatedUser me,
+                            @PathVariable UUID tripId) {
+        return tripService.get(me, tripId);
+    }
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
@@ -91,7 +105,14 @@ public class TripController {
         return tripService.locationHistory(me, tripId);
     }
 
-    @PatchMapping("/{tripId}/assign")
+    @GetMapping("/{tripId}/tracking")
+    public List<LocationPingResponse> tracking(
+            @AuthenticationPrincipal AuthenticatedUser me,
+            @PathVariable UUID tripId) {
+        return tripService.tracking(me, tripId);
+    }
+
+    @PatchMapping({"/{tripId}/assign", "/{tripId}/driver"})
     public TripResponse assignRider(
             @AuthenticationPrincipal AuthenticatedUser me,
             @PathVariable UUID tripId,
@@ -102,5 +123,17 @@ public class TripController {
         }
 
         return tripService.assignRider(me, tripId, request.riderId());
+    }
+
+    @PatchMapping("/{tripId}/status")
+    public TripResponse updateStatus(
+            @AuthenticationPrincipal AuthenticatedUser me,
+            @PathVariable UUID tripId,
+            @Valid @RequestBody TripStatusUpdate request) {
+        if (me.role() == UserRole.CUSTOMER || me.role() == UserRole.DRIVER) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED,
+                    "Only organization staff may update trip status");
+        }
+        return tripService.updateStatus(me, tripId, request.status(), request.note());
     }
 }

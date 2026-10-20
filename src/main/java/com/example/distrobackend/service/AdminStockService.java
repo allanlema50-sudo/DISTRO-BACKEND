@@ -92,7 +92,13 @@ public class AdminStockService {
         }
         StockItem item = stockItemRepository.findByIdForUpdate(inventoryId)
                 .orElseThrow(() -> new ApiException(ErrorCode.STOCK_ITEM_NOT_FOUND));
-        if (request.name() != null) item.setName(request.name().trim());
+        if (request.name() != null) {
+            String name = request.name().trim();
+            if (name.isEmpty()) {
+                throw new ApiException(ErrorCode.BAD_REQUEST, "Product name must not be blank");
+            }
+            item.setName(name);
+        }
         if (request.category() != null) item.setCategory(trimToNull(request.category()));
         if (request.unitPrice() != null) item.setUnitPrice(request.unitPrice());
         if (request.reorderThreshold() != null) item.setReorderThreshold(request.reorderThreshold());

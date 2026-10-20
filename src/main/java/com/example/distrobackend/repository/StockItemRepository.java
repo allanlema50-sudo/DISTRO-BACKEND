@@ -10,6 +10,7 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import java.util.Optional;
+import java.util.List;
 import java.util.UUID;
 
 public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
@@ -105,6 +106,10 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
 
     long countByOrganization_Id(UUID organizationId);
 
+    @Query("select s.organization.id, count(s) from StockItem s "
+            + "where s.organization.id in :organizationIds group by s.organization.id")
+    List<Object[]> countByOrganizationIds(@Param("organizationIds") List<UUID> organizationIds);
+
     long countByOrganization_IdAndActiveTrue(UUID organizationId);
 
     long countByOrganization_IdAndActiveFalse(UUID organizationId);
@@ -113,10 +118,12 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
 
     long countByActiveFalse();
 
-    @Query("select count(s) from StockItem s where s.quantityOnHand - s.reservedQuantity <= s.reorderThreshold")
+    @Query("select count(s) from StockItem s where s.active = true "
+            + "and s.quantityOnHand - s.reservedQuantity <= s.reorderThreshold")
     long countLowStock();
 
-    @Query("select count(s) from StockItem s where s.organization.id = :organizationId "
+    @Query("select count(s) from StockItem s where s.active = true "
+            + "and s.organization.id = :organizationId "
             + "and s.quantityOnHand - s.reservedQuantity <= s.reorderThreshold")
     long countLowStockByOrganizationId(@Param("organizationId") UUID organizationId);
 

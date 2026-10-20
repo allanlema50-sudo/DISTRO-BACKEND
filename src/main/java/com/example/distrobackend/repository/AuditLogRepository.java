@@ -15,7 +15,7 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, Long> {
             + "where (:actorId is null or actor.id = :actorId) "
             + "and (:entityType is null or a.entityType = :entityType) "
             + "and (:entityId is null or a.entityId = :entityId) "
-            + "order by a.createdAt desc",
+            + "order by a.createdAt desc, a.id desc",
             countQuery = "select count(a) from AuditLog a left join a.actor actor "
                     + "where (:actorId is null or actor.id = :actorId) "
                     + "and (:entityType is null or a.entityType = :entityType) "
@@ -26,7 +26,7 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, Long> {
                           Pageable pageable);
 
     @Query(value = "select a from AuditLog a left join fetch a.actor actor "
-            + "where actor.organization.id = :organizationId order by a.createdAt desc",
+            + "where actor.organization.id = :organizationId order by a.createdAt desc, a.id desc",
             countQuery = "select count(a) from AuditLog a join a.actor actor "
                     + "where actor.organization.id = :organizationId")
     Page<AuditLog> findByOrganizationId(@Param("organizationId") UUID organizationId, Pageable pageable);

@@ -213,7 +213,7 @@ public class TripService {
             case DRIVER -> tripRepository.findByRiderId(actor.userId(), pageable)
                     .map(trip -> TripResponse.from(trip, aggregateItems(trip)));
             case CUSTOMER -> tripRepository.findByCustomerId(actor.userId(), pageable)
-                    .map(trip -> TripResponse.from(trip, aggregateItems(trip)));
+                    .map(trip -> customerResponse(trip, actor.userId()));
             case MANUFACTURER_ADMIN, MANUFACTURER_STAFF,
                     DISTRIBUTOR_ADMIN, DISTRIBUTOR_STAFF -> {
                 if (actor.organizationId() == null) throw new ApiException(ErrorCode.ACCESS_DENIED);
@@ -230,11 +230,10 @@ public class TripService {
         if (actor == null || actor.role() == null) throw new ApiException(ErrorCode.UNAUTHENTICATED);
         boolean allowed = actor.role() == UserRole.SUPER_ADMIN
                 || tripAccessService.canAccess(actor, tripId);
-        if (!allowed && actor.organizationId() != null && trip.getOrganization() != null) {
-            allowed = actor.organizationId().equals(trip.getOrganization().getId());
-        }
         if (!allowed) throw new ApiException(ErrorCode.ACCESS_DENIED);
-        return TripResponse.from(trip, aggregateItems(trip));
+        return actor.role() == UserRole.CUSTOMER
+                ? customerResponse(trip, actor.userId())
+                : TripResponse.from(trip, aggregateItems(trip));
     }
 
     @Transactional
@@ -244,6 +243,10 @@ public class TripService {
         if (!isAllowedTransition(trip.getStatus(), requested)) {
             throw new ApiException(ErrorCode.INVALID_STATE_TRANSITION,
                     "Trip cannot transition from " + trip.getStatus() + " to " + requested);
+        }
+        if (requested == TripStatus.COMPLETED && !allStopsCompleted(trip)) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    "A trip can only be completed after all stops are completed");
         }
         TripStatus previous = trip.getStatus();
         trip.setStatus(requested);
@@ -340,25 +343,60 @@ public class TripService {
 
     private List<TripItemResponse> aggregateItems(Trip trip) {
         Map<String, TripItemResponse> itemMap = new LinkedHashMap<>();
+        boolean directOrderIncluded = false;
+        if (trip.getOrder() != null) {
+            addOrderItems(itemMap, trip.getOrder());
+            directOrderIncluded = true;
+        }
         for (TripStop stop : trip.getStops()) {
             if (stop.getOrder() != null) {
-                for (OrderItem item : stop.getOrder().getOrderItems()) {
-                    StockItem stock = item.getStockItem();
-                    String key = stock.getId().toString();
-                    TripItemResponse current = itemMap.getOrDefault(key,
-                            new TripItemResponse(key, stock.getName(), stock.getSku(), "unit", 0));
-                    itemMap.put(key, new TripItemResponse(current.id(), current.productName(), current.brand(),
-                            current.unitLabel(), current.quantity() + item.getQuantity()));
+                if (!directOrderIncluded || !stop.getOrder().getId().equals(trip.getOrder().getId())) {
+                    addOrderItems(itemMap, stop.getOrder());
                 }
             } else if (stop.getStockItem() != null) {
-                StockItem stock = stop.getStockItem();
-                String key = stock.getId().toString();
-                TripItemResponse current = itemMap.getOrDefault(key,
-                        new TripItemResponse(key, stock.getName(), stock.getSku(), "unit", 0));
-                itemMap.put(key, new TripItemResponse(current.id(), current.productName(), current.brand(),
-                        current.unitLabel(), current.quantity() + stop.getRestockQuantity()));
+                addStockItem(itemMap, stop.getStockItem(), stop.getRestockQuantity());
             }
         }
         return new ArrayList<>(itemMap.values());
+    }
+
+    private TripResponse customerResponse(Trip trip, UUID customerId) {
+        Map<String, TripItemResponse> itemMap = new LinkedHashMap<>();
+        if (trip.getOrder() != null && trip.getOrder().getCustomer() != null
+                && customerId.equals(trip.getOrder().getCustomer().getId())) {
+            addOrderItems(itemMap, trip.getOrder());
+        }
+        for (TripStop stop : trip.getStops()) {
+            if (stop.getOrder() != null && stop.getOrder().getCustomer() != null
+                    && customerId.equals(stop.getOrder().getCustomer().getId())
+                    && (trip.getOrder() == null || !stop.getOrder().getId().equals(trip.getOrder().getId()))) {
+                addOrderItems(itemMap, stop.getOrder());
+            }
+        }
+        return TripResponse.fromCustomer(trip, new ArrayList<>(itemMap.values()), customerId);
+    }
+
+    private static void addOrderItems(Map<String, TripItemResponse> itemMap, Order order) {
+        for (OrderItem item : order.getOrderItems()) {
+            StockItem stock = item.getStockItem();
+            String key = stock.getId().toString();
+            TripItemResponse current = itemMap.getOrDefault(key,
+                    new TripItemResponse(key, stock.getName(), stock.getSku(), "unit", 0));
+            itemMap.put(key, new TripItemResponse(current.id(), current.productName(), current.brand(),
+                    current.unitLabel(), current.quantity() + item.getQuantity()));
+        }
+    }
+
+    private static void addStockItem(Map<String, TripItemResponse> itemMap, StockItem stock, Integer quantity) {
+        String key = stock.getId().toString();
+        TripItemResponse current = itemMap.getOrDefault(key,
+                new TripItemResponse(key, stock.getName(), stock.getSku(), "unit", 0));
+        itemMap.put(key, new TripItemResponse(current.id(), current.productName(), current.brand(),
+                current.unitLabel(), current.quantity() + (quantity == null ? 0 : quantity)));
+    }
+
+    private static boolean allStopsCompleted(Trip trip) {
+        return !trip.getStops().isEmpty()
+                && trip.getStops().stream().allMatch(stop -> stop.getStatus() == StopStatus.COMPLETED);
     }
 }

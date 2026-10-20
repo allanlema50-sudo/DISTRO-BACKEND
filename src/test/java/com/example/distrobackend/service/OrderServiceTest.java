@@ -63,7 +63,6 @@ class OrderServiceTest {
 
     @BeforeEach
     void setUp() {
-        when(platformSettingsService.resolveDeliveryFee()).thenReturn(BigDecimal.ZERO);
         ReflectionTestUtils.setField(orderService, "reservationTtl", Duration.ofMinutes(15));
         ReflectionTestUtils.setField(orderService, "maxOpenPendingOrdersPerCustomer", 5);
         customerId = UUID.randomUUID();
@@ -98,6 +97,7 @@ class OrderServiceTest {
 
     @Test
     void orderCreationAtomicallyReservesAvailableStock() {
+        when(platformSettingsService.resolveDeliveryFee()).thenReturn(BigDecimal.ZERO);
         when(userRepository.findByIdForUpdate(customerId)).thenReturn(Optional.of(customer));
         when(organizationRepository.findById(distributorId)).thenReturn(Optional.of(distributor));
         when(stockItemRepository.findByIdForUpdate(stockItemId)).thenReturn(Optional.of(offer));

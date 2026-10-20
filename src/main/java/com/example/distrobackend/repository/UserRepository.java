@@ -47,4 +47,8 @@ public interface UserRepository  extends JpaRepository<User, UUID> {
     long countByStatus(com.example.distrobackend.Domain.enums.UserStatus status);
 
     long countByOrganization_Id(UUID organizationId);
+
+    @Query("select u.organization.id, count(u) from User u "
+            + "where u.organization.id in :organizationIds group by u.organization.id")
+    List<Object[]> countByOrganizationIds(@Param("organizationIds") Collection<UUID> organizationIds);
 }

@@ -1,5 +1,6 @@
 package com.example.distrobackend.service;
 
+import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.enums.OrderStatus;
 import com.example.distrobackend.Domain.enums.PaymentStatus;
 import com.example.distrobackend.Domain.enums.TripStatus;
@@ -22,7 +23,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -84,13 +87,37 @@ public class ReportService {
     @Transactional(readOnly = true)
     public Page<OrganizationAnalyticsResponse> organizations(AuthenticatedUser actor, Pageable pageable) {
         requirePlatformAdmin(actor);
-        return organizationRepository.findAll(pageable).map(organization ->
-                new OrganizationAnalyticsResponse(organization.getId(), organization.getName(), organization.getType(),
-                        userRepository.countByOrganization_Id(organization.getId()),
-                        orderRepository.countByOrganization_Id(organization.getId()),
-                        paymentRepository.countByOrder_Organization_Id(organization.getId()),
-                        stockItemRepository.countByOrganization_Id(organization.getId()),
-                        tripRepository.countByOrganization_Id(organization.getId())));
+        Page<Organization> organizations = organizationRepository.findAll(pageable);
+        List<UUID> organizationIds = organizations.getContent().stream()
+                .map(Organization::getId)
+                .toList();
+        if (organizationIds.isEmpty()) {
+            return organizations.map(organization -> new OrganizationAnalyticsResponse(
+                    organization.getId(), organization.getName(), organization.getType(),
+                    0L, 0L, 0L, 0L, 0L));
+        }
+
+        Map<UUID, Long> usersByOrganization = toCountMap(userRepository.countByOrganizationIds(organizationIds));
+        Map<UUID, Long> ordersByOrganization = toCountMap(orderRepository.countByOrganizationIds(organizationIds));
+        Map<UUID, Long> paymentsByOrganization = toCountMap(paymentRepository.countByOrganizationIds(organizationIds));
+        Map<UUID, Long> stockByOrganization = toCountMap(stockItemRepository.countByOrganizationIds(organizationIds));
+        Map<UUID, Long> tripsByOrganization = toCountMap(tripRepository.countByOrganizationIds(organizationIds));
+
+        return organizations.map(organization -> new OrganizationAnalyticsResponse(
+                organization.getId(), organization.getName(), organization.getType(),
+                usersByOrganization.getOrDefault(organization.getId(), 0L),
+                ordersByOrganization.getOrDefault(organization.getId(), 0L),
+                paymentsByOrganization.getOrDefault(organization.getId(), 0L),
+                stockByOrganization.getOrDefault(organization.getId(), 0L),
+                tripsByOrganization.getOrDefault(organization.getId(), 0L)));
+    }
+
+    private static Map<UUID, Long> toCountMap(List<Object[]> rows) {
+        Map<UUID, Long> counts = new java.util.HashMap<>();
+        for (Object[] row : rows) {
+            counts.put((UUID) row[0], ((Number) row[1]).longValue());
+        }
+        return counts;
     }
 
     private ReportSummaryResponse summary(String report, BigDecimal amount, Map<String, Long> byStatus) {

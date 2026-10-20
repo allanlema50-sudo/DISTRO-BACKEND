@@ -39,6 +39,10 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
 
     long countByOrganization_Id(UUID organizationId);
 
+    @Query("select o.organization.id, count(o) from Order o "
+            + "where o.organization.id in :organizationIds group by o.organization.id")
+    List<Object[]> countByOrganizationIds(@Param("organizationIds") List<UUID> organizationIds);
+
     @Query("select coalesce(sum(o.totalAmount), 0) from Order o")
     java.math.BigDecimal sumTotalAmount();
 

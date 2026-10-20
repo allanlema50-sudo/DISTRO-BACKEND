@@ -39,10 +39,7 @@ public class OrderService {
     private final OrganizationRepository organizationRepository;
     private final PaymentRepository paymentRepository;
     private final OrganizationNotificationService notificationService;
-
-    // Placeholder until real distance/route-based pricing exists once Trips is built
-    @Value("${app.orders.delivery-fee:0.00}")
-    private BigDecimal deliveryFeeAmount;
+    private final PlatformSettingsService platformSettingsService;
 
     @Value("${app.orders.reservation-ttl:15m}")
     private Duration reservationTtl;
@@ -165,8 +162,9 @@ public class OrderService {
         }
 
         order.setSubtotalAmount(subtotal);
-        order.setDeliveryFee(deliveryFeeAmount);
-        order.setTotalAmount(subtotal.add(deliveryFeeAmount));
+        BigDecimal effectiveDeliveryFee = platformSettingsService.resolveDeliveryFee();
+        order.setDeliveryFee(effectiveDeliveryFee);
+        order.setTotalAmount(subtotal.add(effectiveDeliveryFee));
         order.setStatus(OrderStatus.PENDING);
         OffsetDateTime now = OffsetDateTime.now();
         order.setPlacedAt(now);

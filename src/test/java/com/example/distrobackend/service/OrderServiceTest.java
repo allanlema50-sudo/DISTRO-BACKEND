@@ -50,6 +50,7 @@ class OrderServiceTest {
     @Mock private OrganizationRepository organizationRepository;
     @Mock private PaymentRepository paymentRepository;
     @Mock private OrganizationNotificationService notificationService;
+    @Mock private PlatformSettingsService platformSettingsService;
 
     @InjectMocks private OrderService orderService;
 
@@ -62,7 +63,7 @@ class OrderServiceTest {
 
     @BeforeEach
     void setUp() {
-        ReflectionTestUtils.setField(orderService, "deliveryFeeAmount", BigDecimal.ZERO);
+        when(platformSettingsService.resolveDeliveryFee()).thenReturn(BigDecimal.ZERO);
         ReflectionTestUtils.setField(orderService, "reservationTtl", Duration.ofMinutes(15));
         ReflectionTestUtils.setField(orderService, "maxOpenPendingOrdersPerCustomer", 5);
         customerId = UUID.randomUUID();

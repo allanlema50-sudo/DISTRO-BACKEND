@@ -12,6 +12,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.Optional;
+import java.util.List;
 import java.util.UUID;
 
 public interface PaymentRepository extends JpaRepository<Payment, UUID> {
@@ -29,6 +30,10 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID> {
     Page<Payment> findByOrder_Organization_Id(UUID organizationId, Pageable pageable);
 
     long countByOrder_Organization_Id(UUID organizationId);
+
+    @Query("select p.order.organization.id, count(p) from Payment p "
+            + "where p.order.organization.id in :organizationIds group by p.order.organization.id")
+    List<Object[]> countByOrganizationIds(@Param("organizationIds") List<UUID> organizationIds);
 
     long countByStatus(PaymentStatus status);
 

@@ -9,6 +9,7 @@ import com.example.distrobackend.dto.UpdatePlatformSettingsRequest;
 import com.example.distrobackend.repository.PlatformSettingRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,11 +26,14 @@ public class PlatformSettingsService {
 
     private final PlatformSettingRepository repository;
 
+    @Value("${app.orders.delivery-fee:0.00}")
+    private BigDecimal configuredDeliveryFee;
+
     @Transactional(readOnly = true)
     public PlatformSettingsResponse get(AuthenticatedUser actor) {
         requirePlatformAdmin(actor);
         return new PlatformSettingsResponse(readBoolean(MAINTENANCE_MODE, false),
-                read(SUPPORT_EMAIL, ""), readDecimal(DEFAULT_DELIVERY_FEE, BigDecimal.ZERO));
+                read(SUPPORT_EMAIL, ""), resolveDeliveryFee());
     }
 
     @Transactional
@@ -39,6 +43,18 @@ public class PlatformSettingsService {
         if (request.supportEmail() != null) write(SUPPORT_EMAIL, request.supportEmail().trim().toLowerCase(Locale.ROOT));
         if (request.defaultDeliveryFee() != null) write(DEFAULT_DELIVERY_FEE, request.defaultDeliveryFee().toPlainString());
         return get(actor);
+    }
+
+    /**
+     * Resolves the effective fee used by order creation. Database settings
+     * override the environment default, while the environment value remains
+     * the fallback for a fresh deployment.
+     */
+    @Transactional(readOnly = true)
+    public BigDecimal resolveDeliveryFee() {
+        BigDecimal fallback = configuredDeliveryFee == null
+                ? BigDecimal.ZERO : configuredDeliveryFee;
+        return readDecimal(DEFAULT_DELIVERY_FEE, fallback);
     }
 
     private String read(String key, String fallback) {

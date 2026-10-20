@@ -8,6 +8,7 @@ import com.example.distrobackend.Domain.enums.UserStatus;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.dto.UpdateUserStatusRequest;
 import com.example.distrobackend.repository.UserRepository;
+import com.example.distrobackend.repository.OtpVerificationRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -30,6 +31,7 @@ import static org.mockito.Mockito.when;
 class UserServiceTest {
 
     @Mock private UserRepository userRepository;
+    @Mock private OtpVerificationRepository otpRepository;
     @Mock private RefreshTokenService refreshTokenService;
 
     private UserService userService;
@@ -37,7 +39,7 @@ class UserServiceTest {
 
     @BeforeEach
     void setUp() {
-        userService = new UserService(userRepository, refreshTokenService);
+        userService = new UserService(userRepository, otpRepository, refreshTokenService);
         organizationId = UUID.randomUUID();
     }
 

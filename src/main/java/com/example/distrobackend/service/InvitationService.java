@@ -208,6 +208,12 @@ public class InvitationService {
             UserRole invitedRole,
             Organization organization
     ) {
+        if (!organization.isActive()) {
+            throw new ApiException(
+                    ErrorCode.ACCOUNT_DEACTIVATED,
+                    "Invitations cannot be sent for a deactivated organization"
+            );
+        }
 
         String normalizedEmail =
                 email.trim().toLowerCase();
@@ -380,6 +386,13 @@ public class InvitationService {
             throw new ApiException(
                     ErrorCode.BAD_REQUEST,
                     "This invitation is no longer available"
+            );
+        }
+
+        if (!invitation.getOrganization().isActive()) {
+            throw new ApiException(
+                    ErrorCode.ACCOUNT_DEACTIVATED,
+                    "This invitation belongs to a deactivated organization"
             );
         }
 

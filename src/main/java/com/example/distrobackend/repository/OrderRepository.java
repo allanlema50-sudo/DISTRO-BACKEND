@@ -19,6 +19,8 @@ import java.util.UUID;
 @Repository
 public interface OrderRepository extends JpaRepository<Order, UUID> {
 
+    boolean existsByCustomer_Id(UUID customerId);
+
     long countByStatus(OrderStatus status);
 
     long countByOrganizationId(UUID organizationId);

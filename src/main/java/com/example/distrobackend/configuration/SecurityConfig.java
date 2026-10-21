@@ -1,5 +1,6 @@
 package com.example.distrobackend.configuration;
 
+import com.example.distrobackend.repository.OrganizationRepository;
 import com.example.distrobackend.security.JwtAuthFilter;
 import com.example.distrobackend.security.JwtService;
 import com.example.distrobackend.security.RestAccessDeniedHandler;
@@ -29,6 +30,8 @@ import java.util.List;
 public class SecurityConfig {
 
     private final JwtService jwtService;
+
+    private final OrganizationRepository organizationRepository;
 
     private final RestAuthenticationEntryPoint authenticationEntryPoint;
 
@@ -187,7 +190,7 @@ public class SecurityConfig {
                 )
 
                 .addFilterBefore(
-                        new JwtAuthFilter(jwtService),
+                        new JwtAuthFilter(jwtService, organizationRepository),
                         UsernamePasswordAuthenticationFilter.class
                 );
 

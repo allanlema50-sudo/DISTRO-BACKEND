@@ -2,6 +2,8 @@ package com.example.distrobackend.service;
 
 import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.enums.Organizationtype;
+import com.example.distrobackend.Exception.ApiException;
+import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.repository.OrganizationRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -49,6 +51,30 @@ public class OrganizationService {
         organization.setName(name);
         organization.setType(type);
 
+        return organizationRepository.save(organization);
+    }
+
+    @Transactional
+    public void deactivateOrganization(UUID id) {
+        Organization organization = organizationRepository.findById(id)
+                .orElseThrow(() -> new ApiException(
+                        ErrorCode.NOT_FOUND,
+                        "Organization not found"
+                ));
+
+        organization.setActive(false);
+        organizationRepository.save(organization);
+    }
+
+    @Transactional
+    public Organization setOrganizationActive(UUID id, boolean active) {
+        Organization organization = organizationRepository.findById(id)
+                .orElseThrow(() -> new ApiException(
+                        ErrorCode.NOT_FOUND,
+                        "Organization not found"
+                ));
+
+        organization.setActive(active);
         return organizationRepository.save(organization);
     }
 }

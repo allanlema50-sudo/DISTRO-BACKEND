@@ -6,9 +6,15 @@ import com.example.distrobackend.Domain.enums.UserStatus;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.dto.UserResponse;
+import com.example.distrobackend.repository.AuditLogRepository;
+import com.example.distrobackend.repository.NotificationRepository;
+import com.example.distrobackend.repository.OrderRepository;
+import com.example.distrobackend.repository.OtpVerificationRepository;
+import com.example.distrobackend.repository.RefreshTokenRepository;
 import com.example.distrobackend.repository.UserRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,6 +26,11 @@ import java.util.UUID;
 public class UserService {
 
     private final UserRepository userRepository;
+    private final OtpVerificationRepository otpVerificationRepository;
+    private final RefreshTokenRepository refreshTokenRepository;
+    private final NotificationRepository notificationRepository;
+    private final OrderRepository orderRepository;
+    private final AuditLogRepository auditLogRepository;
 
     // ================================================================
     // GET USERS
@@ -189,6 +200,51 @@ public class UserService {
         return UserResponse.from(savedUser);
     }
 
+    @Transactional
+    public void deleteUser(
+            UUID id,
+            AuthenticatedUser me
+    ) {
+        User user = findUserForViewer(id, me);
+
+        if (user.getRole().isPlatformAdmin()) {
+            throw new ApiException(
+                    ErrorCode.ROLE_NOT_ALLOWED,
+                    "Platform administrator accounts cannot be deleted here"
+            );
+        }
+
+        if (isOrganizationAdmin(me.role())
+                && user.getRole() != UserRole.MANUFACTURER_STAFF
+                && user.getRole() != UserRole.DISTRIBUTOR_STAFF) {
+            throw new ApiException(
+                    ErrorCode.ROLE_NOT_ALLOWED,
+                    "Organization administrators can only delete staff accounts"
+            );
+        }
+
+        if (orderRepository.existsByCustomer_Id(id)) {
+            throw new ApiException(
+                    ErrorCode.CONFLICT,
+                    "Users with existing orders cannot be deleted because order history must be retained"
+            );
+        }
+
+        otpVerificationRepository.deleteByUser_Id(id);
+        refreshTokenRepository.deleteByUser_Id(id);
+        notificationRepository.deleteByRecipient_Id(id);
+        auditLogRepository.clearActorForUser(id);
+
+        try {
+            userRepository.delete(user);
+            userRepository.flush();
+        } catch (DataIntegrityViolationException ex) {
+            throw new ApiException(
+                    ErrorCode.CONFLICT,
+                    "The user is still referenced by operational records and cannot be deleted"
+            );
+        }
+    }
     // ================================================================
     // FIND USER WITH ORGANIZATION SCOPE
     // ================================================================

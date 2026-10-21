@@ -11,6 +11,7 @@ public record OrganizationResponse(
         UUID id,
         String name,
         Organizationtype type,
+        boolean active,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt
 
@@ -24,6 +25,7 @@ public record OrganizationResponse(
                 organization.getId(),
                 organization.getName(),
                 organization.getType(),
+                organization.isActive(),
                 organization.getCreatedAt(),
                 organization.getUpdatedAt()
         );

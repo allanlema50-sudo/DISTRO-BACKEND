@@ -452,6 +452,13 @@ public class AuthService {
     private AuthResponse issueTokens(
             User user
     ) {
+        if (user.getOrganization() != null
+                && !user.getOrganization().isActive()) {
+            throw new ApiException(
+                    ErrorCode.ACCOUNT_DEACTIVATED,
+                    "Your organization is deactivated"
+            );
+        }
 
         String accessToken =
                 jwtService.generateAccessToken(

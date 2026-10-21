@@ -149,6 +149,7 @@ CREATE TABLE public.organizations (
     name character varying(150) NOT NULL,
     type character varying(255) NOT NULL,
     updated_at timestamp(6) with time zone NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
     CONSTRAINT organizations_type_check CHECK (((type)::text = ANY (ARRAY[('MANUFACTURER'::character varying)::text, ('DISTRIBUTOR'::character varying)::text])))
 );
 
@@ -959,4 +960,3 @@ ALTER TABLE ONLY public.otp_verifications
 --
 
 \unrestrict RgLC4mvvV9WbzzBa3vWzhV8T2DWUWQuoQeF4tzCecOXowjtU6m2pu51ygBDMxAi
-

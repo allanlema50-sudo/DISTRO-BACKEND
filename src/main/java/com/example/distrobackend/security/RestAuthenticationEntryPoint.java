@@ -36,6 +36,8 @@ public class RestAuthenticationEntryPoint implements AuthenticationEntryPoint {
         ErrorCode code =
                 "TOKEN_EXPIRED".equals(jwtError)
                         ? ErrorCode.TOKEN_EXPIRED
+                        : "ORGANIZATION_DEACTIVATED".equals(jwtError)
+                        ? ErrorCode.ACCOUNT_DEACTIVATED
                         : "INVALID_TOKEN".equals(jwtError)
                         ? ErrorCode.INVALID_TOKEN
                         : ErrorCode.UNAUTHENTICATED;

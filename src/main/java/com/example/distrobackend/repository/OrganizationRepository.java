@@ -11,5 +11,7 @@ public interface OrganizationRepository
 
     boolean existsByNameIgnoreCase(String name);
 
+    boolean existsByIdAndActiveTrue(UUID id);
+
     Optional<Organization> findByNameIgnoreCase(String name);
 }

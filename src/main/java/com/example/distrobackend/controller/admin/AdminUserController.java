@@ -107,6 +107,14 @@ public class AdminUserController {
         );
     }
 
+    @DeleteMapping("/{id}")
+    public void deleteUser(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal AuthenticatedUser me
+    ) {
+        userService.deleteUser(id, me);
+    }
+
     // ================================================================
     // REQUEST DTO
     // ================================================================

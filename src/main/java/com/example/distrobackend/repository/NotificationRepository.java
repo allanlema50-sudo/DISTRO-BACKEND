@@ -25,4 +25,6 @@ public interface NotificationRepository
             UUID recipientId,
             NotificationStatus status
     );
+
+    void deleteByRecipient_Id(UUID recipientId);
 }

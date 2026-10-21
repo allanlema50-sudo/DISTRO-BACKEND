@@ -15,4 +15,6 @@ public interface OtpVerificationRepository extends JpaRepository<OtpVerification
     Optional<OtpVerification> findFirstByUser_IdAndPurposeOrderByCreatedAtDesc(UUID userId, OtpPurpose purpose);
 
     List<OtpVerification> findByUser_IdAndPurposeAndStatus(UUID userId, OtpPurpose purpose, OtpStatus status);
+
+    void deleteByUser_Id(UUID userId);
 }

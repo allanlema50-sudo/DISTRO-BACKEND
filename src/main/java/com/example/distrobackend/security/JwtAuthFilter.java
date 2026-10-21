@@ -1,6 +1,7 @@
 package com.example.distrobackend.security;
 
 
+import com.example.distrobackend.repository.OrganizationRepository;
 import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.UserRole;
 import io.jsonwebtoken.Claims;
@@ -27,9 +28,14 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     public static final String AUTH_ERROR_ATTRIBUTE = "jwt_auth_error";
 
     private final JwtService jwtService;
+    private final OrganizationRepository organizationRepository;
 
-    public JwtAuthFilter(JwtService jwtService) {
+    public JwtAuthFilter(
+            JwtService jwtService,
+            OrganizationRepository organizationRepository
+    ) {
         this.jwtService = jwtService;
+        this.organizationRepository = organizationRepository;
     }
 
     @Override
@@ -39,6 +45,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         String header = request.getHeader("Authorization");
         if (header != null && header.startsWith("Bearer ")) {
             String token = header.substring(7);
+            AuthenticatedUser principal;
             try {
                 Claims claims = jwtService.parse(token);
 
@@ -46,22 +53,32 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 String orgId = claims.get("orgId", String.class);
                 String orgType = claims.get("orgType", String.class);
 
-                AuthenticatedUser principal = new AuthenticatedUser(
+                principal = new AuthenticatedUser(
                         UUID.fromString(claims.getSubject()),
                         role,
                         orgId == null ? null : UUID.fromString(orgId),
                         orgType == null ? null : Organizationtype.valueOf(orgType));
-
-                var authentication = new UsernamePasswordAuthenticationToken(
-                        principal, null, List.of(new SimpleGrantedAuthority("ROLE_" + role.name())));
-                SecurityContextHolder.getContext().setAuthentication(authentication);
-
             } catch (ExpiredJwtException e) {
                 request.setAttribute(AUTH_ERROR_ATTRIBUTE, "TOKEN_EXPIRED");
+                chain.doFilter(request, response);
+                return;
             } catch (RuntimeException e) {
                 // JwtException (bad signature/format), or a malformed/missing claim (NPE / IllegalArgumentException)
                 request.setAttribute(AUTH_ERROR_ATTRIBUTE, "INVALID_TOKEN");
+                chain.doFilter(request, response);
+                return;
             }
+
+            if (principal.organizationId() != null
+                    && !organizationRepository.existsByIdAndActiveTrue(principal.organizationId())) {
+                request.setAttribute(AUTH_ERROR_ATTRIBUTE, "ORGANIZATION_DEACTIVATED");
+                chain.doFilter(request, response);
+                return;
+            }
+
+            var authentication = new UsernamePasswordAuthenticationToken(
+                    principal, null, List.of(new SimpleGrantedAuthority("ROLE_" + principal.role().name())));
+            SecurityContextHolder.getContext().setAuthentication(authentication);
         }
         chain.doFilter(request, response);
     }

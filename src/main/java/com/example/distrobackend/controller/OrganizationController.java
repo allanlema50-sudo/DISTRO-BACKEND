@@ -5,6 +5,7 @@ import com.example.distrobackend.dto.organization.CreateOrganizationRequest;
 import com.example.distrobackend.dto.organization.OrganizationResponse;
 import com.example.distrobackend.service.OrganizationService;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -58,5 +59,29 @@ public class OrganizationController {
                 );
 
         return OrganizationResponse.from(organization);
+    }
+
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasAnyRole('PLATFORM_ADMIN','SUPER_ADMIN')")
+    public void deactivateOrganization(
+            @PathVariable UUID id
+    ) {
+        organizationService.deactivateOrganization(id);
+    }
+
+    @PatchMapping("/{id}/status")
+    @PreAuthorize("hasAnyRole('PLATFORM_ADMIN','SUPER_ADMIN')")
+    public OrganizationResponse setOrganizationActive(
+            @PathVariable UUID id,
+            @Valid @RequestBody OrganizationStatusUpdateRequest request
+    ) {
+        return OrganizationResponse.from(
+                organizationService.setOrganizationActive(id, request.active())
+        );
+    }
+
+    public record OrganizationStatusUpdateRequest(
+            @NotNull Boolean active
+    ) {
     }
 }

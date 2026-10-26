@@ -49,6 +49,24 @@ macOS/Linux:
 cp .env.example .env
 ```
 
+The repository also includes ignored profile files for local use:
+`.env.local` is a runnable Docker-oriented development profile, while
+`.env.production` is a production deployment template containing placeholders
+for provider-managed database, SMTP, M-Pesa, and SMS credentials. Docker
+Compose reads `.env` by default; to use the local profile explicitly, run
+commands from the repository root with:
+
+```powershell
+docker compose --env-file .env.local up --build -d
+```
+
+`.env.local`, `.env.production`, and `.env` are intentionally not tracked.
+Render and similar platforms do not automatically read `.env.production`; add
+the same variables through the platform's secret/environment settings instead.
+Maven also does not load dotenv files automatically, so use Docker for the
+least-surprising local setup or export the required variables in the shell
+before running Maven directly.
+
 At minimum, set these values in `.env` before starting Docker:
 
 ```dotenv
@@ -457,7 +475,7 @@ status.
 For a new environment, the recommended first-admin bootstrap uses the
 application's `CommandLineRunner`, rather than storing a password in SQL or
 source code. From the repository root, set the following values in the local
-`.env` file (never commit them):
+environment file (never commit them):
 
 ```dotenv
 BOOTSTRAP_SUPER_ADMIN_ENABLED=true
@@ -470,13 +488,26 @@ BOOTSTRAP_SUPER_ADMIN_PHONE=+254700000000
 Replace the password sentinel with a unique password before starting the API.
 It must satisfy the normal application policy: 8–72 characters containing an
 uppercase letter, a lowercase letter, and a digit. Use a longer password for
-the platform administrator in production.
+the platform administrator in production. The password is preserved exactly;
+do not add leading or trailing whitespace accidentally.
 
 Start the API once with `docker compose up --build -d`. The initializer creates
 the account with a BCrypt password hash, `SUPER_ADMIN` role, no organization,
-and verified email/phone flags. It is idempotent: if the same email already
-belongs to a platform administrator, it makes no changes. If it belongs to a
-non-platform account, startup fails rather than silently changing ownership.
+and verified email/phone flags. If the same email already belongs to an
+unscoped `SUPER_ADMIN`, bootstrap reconciles its configured name, phone,
+password, active status, and verification flags. This is intentional but means
+the bootstrap password can rotate that account on every startup while the flag
+is enabled. Disable it immediately after the controlled operation. If the email
+belongs to a tenant or another non-platform account, startup fails before any
+account is changed.
+
+The account-collision failure is deliberately operator-visible rather than an
+email notification: the service must not start while the configured bootstrap
+identity is ambiguous. Check the API logs (`docker compose logs api`), then
+either set `BOOTSTRAP_SUPER_ADMIN_ENABLED=false` or choose a dedicated email
+that is not already assigned to a tenant account. The log and startup exception
+include this remediation so the operator is not left with an unexplained
+failure.
 
 After confirming that the account can log in, set
 `BOOTSTRAP_SUPER_ADMIN_ENABLED=false`, clear the four bootstrap values from

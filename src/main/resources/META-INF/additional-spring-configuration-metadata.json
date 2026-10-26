@@ -4,7 +4,7 @@
     { "name": "app.jwt.issuer", "type": "java.lang.String", "description": "JWT issuer claim." },
     { "name": "app.jwt.access-token-ttl-minutes", "type": "java.lang.Integer", "description": "Access-token lifetime in minutes." },
     { "name": "app.jwt.refresh-token-ttl-days", "type": "java.lang.Integer", "description": "Refresh-token lifetime in days." },
-    { "name": "app.bootstrap.super-admin.enabled", "type": "java.lang.Boolean", "description": "Enable one-time bootstrap of the first platform administrator." },
+    { "name": "app.bootstrap.super-admin.enabled", "type": "java.lang.Boolean", "description": "Enable controlled creation or reconciliation of a platform administrator; disable after the operation." },
     { "name": "app.bootstrap.super-admin.email", "type": "java.lang.String", "description": "Email for the bootstrap platform administrator." },
     { "name": "app.bootstrap.super-admin.password", "type": "java.lang.String", "description": "Password for the bootstrap platform administrator." },
     { "name": "app.bootstrap.super-admin.full-name", "type": "java.lang.String", "description": "Full name for the bootstrap platform administrator." },

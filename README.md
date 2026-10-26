@@ -454,9 +454,36 @@ organization on every authenticated request. An organization must retain at
 least one active administrator, and administrators cannot change their own
 status.
 
-For a local environment, create and verify a normal account first, then run
-the following from the repository root. Replace the email with the verified
-account you intend to use for platform administration:
+For a new environment, the recommended first-admin bootstrap uses the
+application's `CommandLineRunner`, rather than storing a password in SQL or
+source code. From the repository root, set the following values in the local
+`.env` file (never commit them):
+
+```dotenv
+BOOTSTRAP_SUPER_ADMIN_ENABLED=true
+BOOTSTRAP_SUPER_ADMIN_EMAIL=admin@example.com
+BOOTSTRAP_SUPER_ADMIN_PASSWORD=use-a-strong-password-at-least-12-characters
+BOOTSTRAP_SUPER_ADMIN_FULL_NAME=Platform Administrator
+BOOTSTRAP_SUPER_ADMIN_PHONE=+254700000000
+```
+
+Start the API once with `docker compose up --build -d`. The initializer creates
+the account with a BCrypt password hash, `SUPER_ADMIN` role, no organization,
+and verified email/phone flags. It is idempotent: if the same email already
+belongs to a platform administrator, it makes no changes. If it belongs to a
+non-platform account, startup fails rather than silently changing ownership.
+
+After confirming that the account can log in, set
+`BOOTSTRAP_SUPER_ADMIN_ENABLED=false`, clear the four bootstrap values from
+`.env`, and recreate the API container:
+
+```powershell
+docker compose up -d --force-recreate api
+```
+
+For an existing environment, an operator with database access can still use a
+carefully reviewed SQL promotion as a recovery procedure. Replace the email
+with an already active, verified account:
 
 ```powershell
 docker compose exec db psql -U distro -d distro_backend -c "UPDATE users SET role = 'SUPER_ADMIN', organization_id = NULL WHERE lower(email) = lower('owner@example.com') AND is_phone_verified = true AND status = 'ACTIVE';"
@@ -465,7 +492,12 @@ docker compose exec db psql -U distro -d distro_backend -c "UPDATE users SET rol
 The command should be executed only by an operator who already has database
 access. Revoke existing sessions or sign in again after promotion so a fresh
 JWT contains the new role. Do not expose a public endpoint for assigning
-`SUPER_ADMIN`.
+`SUPER_ADMIN`, and do not leave the bootstrap password enabled in a long-running
+production deployment.
+
+For production, set `SPRING_PROFILES_ACTIVE=prod` and configure the real OTP
+provider variables. The default `local` profile uses the development OTP
+adapter and must not be used for a live deployment.
 
 ### Platform administration API
 

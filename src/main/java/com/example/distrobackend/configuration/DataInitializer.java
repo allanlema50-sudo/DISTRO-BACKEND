@@ -15,6 +15,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
 
 @Slf4j
@@ -57,14 +58,44 @@ public class DataInitializer implements CommandLineRunner {
         User existing = userRepository.findByEmailIgnoreCase(email).orElse(null);
         if (existing != null) {
             if (existing.getRole() != UserRole.SUPER_ADMIN || existing.getOrganization() != null) {
-                throw new IllegalStateException("Bootstrap email belongs to a non-platform account");
+                String message = "Bootstrap refused: " + email
+                        + " belongs to a tenant or non-platform account. "
+                        + "Set BOOTSTRAP_SUPER_ADMIN_ENABLED=false or use a dedicated platform-admin email; "
+                        + "no account was changed.";
+                log.error(message);
+                throw new IllegalStateException(message);
             }
-            log.info("Bootstrap SUPER_ADMIN account already exists; no changes made");
+            if (!Objects.equals(existing.getPhoneNumber(), phone)
+                    && userRepository.existsByPhoneNumber(phone)) {
+                String message = "Bootstrap refused: BOOTSTRAP_SUPER_ADMIN_PHONE is already assigned "
+                        + "to another account. No account was changed.";
+                log.error(message);
+                throw new IllegalStateException(message);
+            }
+
+            // Bootstrap is an explicit operator action. While enabled, reconcile
+            // the configured platform-admin profile so a corrected phone, name,
+            // or password is applied on the next startup. Disable it immediately
+            // after the intended account has been created or repaired.
+            existing.setFullName(fullName);
+            existing.setPhoneNumber(phone);
+            existing.setPasswordHash(passwordEncoder.encode(password));
+            existing.setRole(UserRole.SUPER_ADMIN);
+            existing.setOrganization(null);
+            existing.setStatus(UserStatus.ACTIVE);
+            existing.setPhoneVerified(true);
+            existing.setEmailVerified(true);
+            userRepository.save(existing);
+            log.warn("Reconciled configured SUPER_ADMIN account {}. "
+                    + "Disable BOOTSTRAP_SUPER_ADMIN_ENABLED after this controlled operation.", email);
             return;
         }
 
         if (userRepository.existsByPhoneNumber(phone)) {
-            throw new IllegalStateException("BOOTSTRAP_SUPER_ADMIN_PHONE is already assigned to another account");
+            String message = "Bootstrap refused: BOOTSTRAP_SUPER_ADMIN_PHONE is already assigned "
+                    + "to another account. No account was changed.";
+            log.error(message);
+            throw new IllegalStateException(message);
         }
 
         User admin = new User();

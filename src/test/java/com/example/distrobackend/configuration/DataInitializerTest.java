@@ -39,11 +39,12 @@ class DataInitializerTest {
         ReflectionTestUtils.setField(initializer, "bootstrapPassword", "AdminPassword1");
         ReflectionTestUtils.setField(initializer, "bootstrapFullName", "Platform Administrator");
         ReflectionTestUtils.setField(initializer, "bootstrapPhone", "+254700000001");
-        when(passwordEncoder.encode(anyString())).thenReturn("encoded-password");
     }
 
     @Test
     void reconcilesExistingPlatformAdminWhenBootstrapIsEnabled() {
+        when(passwordEncoder.encode(anyString())).thenReturn("encoded-password");
+
         User existing = new User();
         existing.setEmail("ADMIN@example.com");
         existing.setFullName("Old Name");

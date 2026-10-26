@@ -40,6 +40,21 @@ public class AccessRequest {
     @Column(name = "organization_name", nullable = false, length = 150)
     private String organizationName;
 
+    @Column(name = "country", length = 100)
+    private String country;
+
+    @Column(name = "registration_number", length = 100)
+    private String registrationNumber;
+
+    @Column(name = "tax_identifier", length = 50)
+    private String taxIdentifier;
+
+    @Column(name = "representative_role", length = 20)
+    private String representativeRole;
+
+    @Column(name = "authorized_representative")
+    private Boolean authorizedRepresentative;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "organization_id")
     private Organization organization;

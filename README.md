@@ -373,6 +373,7 @@ to an organization; organization users carry exactly one organization claim.
 | `POST` | `/api/access-requests` | Public | Request manufacturer/distributor administrator access |
 | `GET` | `/api/admin/access-requests` | `SUPER_ADMIN` | List access requests; optional `status` filter |
 | `GET` | `/api/admin/access-requests/{requestId}` | `SUPER_ADMIN` | View one access request |
+| `GET` | `/api/admin/access-requests/{requestId}/documents/{documentType}` | `SUPER_ADMIN` | Download one private review document; type is `INCORPORATION_CERTIFICATE` or `TAX_CERTIFICATE` |
 | `POST` | `/api/admin/access-requests/{requestId}/approve` | `SUPER_ADMIN` | Create the organization and email a one-time activation link |
 | `POST` | `/api/admin/access-requests/{requestId}/activation/resend` | `SUPER_ADMIN` | Issue a fresh activation token and resend the activation email |
 | `POST` | `/api/admin/access-requests/{requestId}/reject` | `SUPER_ADMIN` | Reject a pending access request |
@@ -385,19 +386,39 @@ to an organization; organization users carry exactly one organization claim.
 | `GET` | `/api/invitations/{token}` | Public | Validate an invitation link and show limited metadata |
 | `POST` | `/api/invitations/{token}/accept` | Public | Create the invited organization account; accepting the emailed invitation verifies the account email |
 
-Onboarding and invitation request bodies (JSON):
+The access-request submission uses `multipart/form-data` because it includes two
+private organization documents. The application accepts only PDF, JPG, or PNG
+content, validates the file signature as well as the declared content type, and
+limits each document to 5 MB. Files are stored privately and are not returned as
+public URLs.
+
+```bash
+# POST /api/access-requests
+curl -X POST "$API_URL/api/access-requests" \
+  -F 'organizationType=MANUFACTURER' \
+  -F 'organizationName=Example Manufacturing Ltd' \
+  -F 'country=Kenya' \
+  -F 'registrationNumber=CPR-123456' \
+  -F 'taxIdentifier=P123456789Z' \
+  -F 'fullName=Amina Owner' \
+  -F 'representativeRole=Manager' \
+  -F 'personalEmail=amina@example.com' \
+  -F 'organizationEmail=admin@example-manufacturer.com' \
+  -F 'phoneNumber=+254712345678' \
+  -F 'authorizedRepresentative=true' \
+  -F 'incorporationCertificate=@incorporation.pdf;type=application/pdf' \
+  -F 'taxCertificate=@tax-certificate.png;type=image/png'
+```
+
+`representativeRole` must be exactly `Manager` or `Supervisor`, and
+`authorizedRepresentative` must be `true`. A successful submission returns
+`202 Accepted` with the request id and status, and remains pending until a
+`SUPER_ADMIN` reviews it. Sensitive registration and tax values are returned
+only from authenticated administrator endpoints.
+
+The remaining onboarding and invitation request bodies are JSON:
 
 ```jsonc
-// POST /api/access-requests
-{
-  "organizationType": "MANUFACTURER",
-  "organizationName": "Example Manufacturing Ltd",
-  "fullName": "Amina Owner",
-  "phoneNumber": "254712345678",
-  "personalEmail": "amina@example.com",
-  "organizationEmail": "admin@example-manufacturer.com"
-}
-
 // POST /api/access-requests/activate
 {
   "email": "amina@example.com",

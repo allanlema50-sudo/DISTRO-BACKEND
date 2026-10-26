@@ -17,6 +17,8 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -63,6 +65,7 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler({MissingServletRequestParameterException.class,
+            MissingServletRequestPartException.class,
             MethodArgumentTypeMismatchException.class})
     public ResponseEntity<ApiError> handleRequestParameter(Exception ex, HttpServletRequest request) {
         return build(ErrorCode.BAD_REQUEST, "Invalid or missing request parameter", request);
@@ -72,6 +75,12 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handleUnsupportedMediaType(
             HttpMediaTypeNotSupportedException ex, HttpServletRequest request) {
         return build(ErrorCode.UNSUPPORTED_MEDIA_TYPE, ErrorCode.UNSUPPORTED_MEDIA_TYPE.defaultMessage(), request);
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ApiError> handleMaxUploadSize(
+            MaxUploadSizeExceededException ex, HttpServletRequest request) {
+        return build(ErrorCode.BAD_REQUEST, "Uploaded files exceed the allowed request size", request);
     }
 
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)

@@ -13,6 +13,7 @@ import com.example.distrobackend.Exception.OnboardingExpiredException;
 import com.example.distrobackend.dto.AccessRequestApprovalResponse;
 import com.example.distrobackend.dto.AccessRequestCreateRequest;
 import com.example.distrobackend.dto.AccessRequestResponse;
+import com.example.distrobackend.dto.AccessRequestSubmissionResponse;
 import com.example.distrobackend.dto.ActivateAccountRequest;
 import com.example.distrobackend.dto.RegisterResponse;
 import com.example.distrobackend.event.OnboardingEmailRequested;
@@ -28,6 +29,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 import lombok.extern.slf4j.Slf4j;
 
 import java.net.URLEncoder;
@@ -55,6 +57,7 @@ public class AccessRequestService {
     // private final OtpService otpService;
     private final ApplicationEventPublisher eventPublisher;
     private final NotificationService notificationService;
+    private final AccessRequestDocumentService accessRequestDocumentService;
 
     @Value("${app.frontend.base-url:http://localhost:4200}")
     private String frontendBaseUrl;
@@ -63,7 +66,9 @@ public class AccessRequestService {
     private Duration activationTtl;
 
     @Transactional
-    public AccessRequestResponse submit(AccessRequestCreateRequest request) {
+    public AccessRequestSubmissionResponse submit(AccessRequestCreateRequest request,
+                                                   MultipartFile incorporationCertificate,
+                                                   MultipartFile taxCertificate) {
         String email = normalizeEmail(request.personalEmail());
         String phone = PhoneNormalizer.normalize(request.phoneNumber());
 
@@ -89,15 +94,22 @@ public class AccessRequestService {
         accessRequest.setOrganizationEmail(normalizeEmail(request.organizationEmail()));
         accessRequest.setPhoneNumber(phone);
         accessRequest.setOrganizationName(request.organizationName().trim());
+        accessRequest.setCountry(request.country().trim());
+        accessRequest.setRegistrationNumber(request.registrationNumber().trim());
+        accessRequest.setTaxIdentifier(request.taxIdentifier().trim().toUpperCase(Locale.ROOT));
+        accessRequest.setRepresentativeRole(request.representativeRole().trim());
+        accessRequest.setAuthorizedRepresentative(request.authorizedRepresentative());
         accessRequest.setOrganizationType(request.organizationType());
         accessRequest.setStatus(AccessRequestStatus.PENDING);
 
         AccessRequest saved = accessRequestRepository.save(accessRequest);
+        accessRequestDocumentService.storeRequiredDocuments(
+                saved, incorporationCertificate, taxCertificate);
         List<User> superAdmins = userRepository.findByRole(UserRole.SUPER_ADMIN);
         if (superAdmins.isEmpty()) {
             log.warn("Access request {} was persisted without Super Admin notification because "
                     + "no SUPER_ADMIN account is configured", saved.getId());
-            return AccessRequestResponse.from(saved);
+            return AccessRequestSubmissionResponse.from(saved);
         }
 
         String notificationMessage = "New organization access request from " + saved.getFullName()
@@ -119,7 +131,7 @@ public class AccessRequestService {
                         notificationMessage));
             }
         }
-        return AccessRequestResponse.from(saved);
+        return AccessRequestSubmissionResponse.from(saved);
     }
 
     @Transactional(readOnly = true)

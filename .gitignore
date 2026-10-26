@@ -37,3 +37,9 @@ build/
 
 # Secrets
 application-secrets.properties
+
+# JVM crash and diagnostic artifacts
+debug.log
+hs_err_pid*.log
+replay_pid*.log
+*.hprof

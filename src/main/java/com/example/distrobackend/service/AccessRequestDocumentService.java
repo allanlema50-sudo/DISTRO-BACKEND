@@ -6,8 +6,11 @@ import com.example.distrobackend.Domain.enums.AccessRequestDocumentType;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.repository.AccessRequestDocumentRepository;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.util.unit.DataSize;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.ByteArrayOutputStream;
@@ -26,12 +29,31 @@ public class AccessRequestDocumentService {
 
     private final AccessRequestDocumentRepository documentRepository;
 
+    @Value("${app.onboarding.max-document-storage:1GB}")
+    private DataSize maxDocumentStorage;
+
+    @PostConstruct
+    void validateConfiguration() {
+        if (maxDocumentStorage.toBytes() <= 0) {
+            throw new IllegalStateException("app.onboarding.max-document-storage must be positive");
+        }
+    }
+
     public void storeRequiredDocuments(AccessRequest request,
                                        MultipartFile incorporationCertificate,
                                        MultipartFile taxCertificate) {
-        store(request, AccessRequestDocumentType.INCORPORATION_CERTIFICATE,
-                incorporationCertificate);
-        store(request, AccessRequestDocumentType.TAX_CERTIFICATE, taxCertificate);
+        ValidatedDocument incorporation = validate(incorporationCertificate,
+                AccessRequestDocumentType.INCORPORATION_CERTIFICATE.name());
+        ValidatedDocument tax = validate(taxCertificate,
+                AccessRequestDocumentType.TAX_CERTIFICATE.name());
+        long incomingBytes = (long) incorporation.content().length + tax.content().length;
+        long currentBytes = documentRepository.sumFileSize();
+        long limit = maxDocumentStorage.toBytes();
+        if (currentBytes > limit || incomingBytes > limit - currentBytes) {
+            throw new ApiException(ErrorCode.ONBOARDING_STORAGE_UNAVAILABLE);
+        }
+        store(request, AccessRequestDocumentType.INCORPORATION_CERTIFICATE, incorporation);
+        store(request, AccessRequestDocumentType.TAX_CERTIFICATE, tax);
     }
 
     public AccessRequestDocument findForAdmin(UUID accessRequestId,
@@ -43,20 +65,19 @@ public class AccessRequestDocumentService {
 
     private void store(AccessRequest request,
                        AccessRequestDocumentType documentType,
-                       MultipartFile file) {
-        byte[] content = readAndValidate(file, documentType.name());
-        String contentType = detectContentType(content);
+                       ValidatedDocument documentData) {
+        byte[] content = documentData.content();
 
         AccessRequestDocument document = new AccessRequestDocument();
         document.setAccessRequest(request);
         document.setDocumentType(documentType);
-        document.setContentType(contentType);
+        document.setContentType(documentData.contentType());
         document.setFileSize(content.length);
         document.setContent(content);
         documentRepository.save(document);
     }
 
-    private byte[] readAndValidate(MultipartFile file, String fieldName) {
+    private ValidatedDocument validate(MultipartFile file, String fieldName) {
         if (file == null || file.isEmpty()) {
             throw new ApiException(ErrorCode.BAD_REQUEST, fieldName + " is required");
         }
@@ -79,7 +100,7 @@ public class AccessRequestDocumentService {
             throw new ApiException(ErrorCode.BAD_REQUEST,
                     fieldName + " must be a valid PDF, JPG, or PNG file");
         }
-        return content;
+        return new ValidatedDocument(content, detected);
     }
 
     private static byte[] readAtMost(InputStream input, int maxBytes) throws IOException {
@@ -129,12 +150,16 @@ public class AccessRequestDocumentService {
         if (content.length >= 3
                 && (content[0] & 0xFF) == 0xFF
                 && (content[1] & 0xFF) == 0xD8
-                && (content[2] & 0xFF) == 0xFF
-                && content.length >= 4
-                && (content[content.length - 2] & 0xFF) == 0xFF
-                && (content[content.length - 1] & 0xFF) == 0xD9) {
-            return "image/jpeg";
+                && (content[2] & 0xFF) == 0xFF) {
+            for (int index = 3; index < content.length - 1; index++) {
+                if ((content[index] & 0xFF) == 0xFF
+                        && (content[index + 1] & 0xFF) == 0xD9) {
+                    return "image/jpeg";
+                }
+            }
         }
         return null;
     }
+
+    private record ValidatedDocument(byte[] content, String contentType) { }
 }

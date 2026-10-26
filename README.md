@@ -107,6 +107,11 @@ Important environment values:
 | `MAIL_HOST` / `MAIL_PORT` | empty / `587` | SMTP server settings when mail is enabled |
 | `ONBOARDING_ACTIVATION_TTL` | `24h` | Lifetime of an approved administrator activation link |
 | `ONBOARDING_INVITATION_TTL` | `7d` | Lifetime of an organization administrator/staff invitation link |
+| `ONBOARDING_SUBMISSION_WINDOW` | `15m` | Database-coordinated public access-request admission window |
+| `ONBOARDING_MAX_SUBMISSIONS_PER_WINDOW` | `100` | Maximum accepted access requests in one admission window |
+| `ONBOARDING_MAX_DOCUMENT_STORAGE` | `1GB` | Total private storage reserved for onboarding evidence |
+| `ONBOARDING_DOCUMENT_RETENTION` | `30d` | Retention period for evidence belonging to rejected or expired requests |
+| `ONBOARDING_DOCUMENT_RETENTION_SCAN_MS` | `86400000` | Scheduled cleanup interval for retained onboarding evidence |
 | `ORDER_RESERVATION_TTL` | `15m` | Unpaid stock-reservation lifetime |
 | `ORDER_MAX_OPEN_PENDING_PER_CUSTOMER` | `5` | Maximum open unpaid orders per customer |
 | `FLYWAY_BASELINE_ON_MIGRATE` | `false` | Only for a reviewed pre-Flyway database |
@@ -414,7 +419,11 @@ curl -X POST "$API_URL/api/access-requests" \
 `authorizedRepresentative` must be `true`. A successful submission returns
 `202 Accepted` with the request id and status, and remains pending until a
 `SUPER_ADMIN` reviews it. Sensitive registration and tax values are returned
-only from authenticated administrator endpoints.
+only from authenticated administrator endpoints. Public submissions are also
+bounded by a database-coordinated admission window and a total private-document
+storage quota, so the limit applies consistently when multiple API instances are
+running. Rejected and expired request records remain available for audit, while
+their private document bytes are purged after `ONBOARDING_DOCUMENT_RETENTION`.
 
 The remaining onboarding and invitation request bodies are JSON:
 

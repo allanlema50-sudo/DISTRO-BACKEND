@@ -48,6 +48,7 @@ class AccessRequestServiceTest {
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private NotificationService notificationService;
     @Mock private AccessRequestDocumentService accessRequestDocumentService;
+    @Mock private AccessRequestSubmissionLimiter accessRequestSubmissionLimiter;
 
     private AccessRequestService accessRequestService;
 
@@ -60,7 +61,8 @@ class AccessRequestServiceTest {
                 passwordEncoder,
                 eventPublisher,
                 notificationService,
-                accessRequestDocumentService);
+                accessRequestDocumentService,
+                accessRequestSubmissionLimiter);
         ReflectionTestUtils.setField(accessRequestService, "frontendBaseUrl", "https://app.example.test/");
         ReflectionTestUtils.setField(accessRequestService, "activationTtl", Duration.ofHours(24));
     }

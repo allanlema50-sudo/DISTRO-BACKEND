@@ -44,6 +44,10 @@ public enum ErrorCode {
     INVITATION_NOT_FOUND(HttpStatus.NOT_FOUND, "Invitation not found"),
     INVITATION_STATE_CONFLICT(HttpStatus.CONFLICT, "Invitation is no longer available"),
     INVITATION_EXPIRED(HttpStatus.BAD_REQUEST, "This invitation has expired"),
+    ONBOARDING_RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS,
+            "Too many onboarding submissions. Please try again later"),
+    ONBOARDING_STORAGE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE,
+            "Onboarding submissions are temporarily unavailable"),
 
     INVALID_OTP(HttpStatus.BAD_REQUEST, "The verification code is incorrect"),
     OTP_EXPIRED(HttpStatus.BAD_REQUEST, "The verification code has expired. Request a new one"),

@@ -58,6 +58,7 @@ public class AccessRequestService {
     private final ApplicationEventPublisher eventPublisher;
     private final NotificationService notificationService;
     private final AccessRequestDocumentService accessRequestDocumentService;
+    private final AccessRequestSubmissionLimiter accessRequestSubmissionLimiter;
 
     @Value("${app.frontend.base-url:http://localhost:4200}")
     private String frontendBaseUrl;
@@ -87,6 +88,8 @@ public class AccessRequestService {
             throw new ApiException(ErrorCode.CONFLICT,
                     "An access request for this phone number is already awaiting review or activation");
         }
+
+        accessRequestSubmissionLimiter.acquire();
 
         AccessRequest accessRequest = new AccessRequest();
         accessRequest.setFullName(request.fullName().trim());

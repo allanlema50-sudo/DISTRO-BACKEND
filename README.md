@@ -603,9 +603,9 @@ refresh the affected record.
 | `GET` | `/api/products/categories` | Authenticated catalog roles | List categories visible to the caller |
 | `POST` | `/api/products` | Manufacturer admin/staff | Create a manufacturer source product |
 | `PATCH` | `/api/products/{id}` | Manufacturer admin/staff | Update a manufacturer source product |
-| `GET` | `/api/v1/products` | Authenticated catalog roles | Versioned product/offer catalog |
-| `GET` | `/api/v1/products/{productId}` | Authenticated catalog roles | Read one visible product/offer |
-| `GET` | `/api/v1/products/categories` | Authenticated catalog roles | List visible categories |
+| `GET` | `/api/v1/products` | Customer, manufacturer/distributor roles, or `SUPER_ADMIN` | Versioned product/offer catalog; platform admins see active products across organizations |
+| `GET` | `/api/v1/products/{productId}` | Customer, manufacturer/distributor roles, or `SUPER_ADMIN` | Read one visible product/offer; platform admins can read any active product |
+| `GET` | `/api/v1/products/categories` | Customer, manufacturer/distributor roles, or `SUPER_ADMIN` | List visible categories; platform admins see categories across active products |
 | `GET` | `/api/v1/products/{productId}/inventory` | Authorized inventory scope | Read inventory details |
 | `GET` | `/api/v1/products/stats` | Manufacturer, distributor, or platform scope | Read product statistics |
 | `POST` | `/api/v1/products` | Manufacturer admin/staff | Create a manufacturer source product |
@@ -1117,6 +1117,68 @@ match `CORS_ALLOWED_ORIGINS`. An Android emulator commonly reaches the host at
 Docker binding. Use a controlled local network/tunnel setup for device testing
 and update CORS for the exact development origin; do not expose the API
 publicly with production secrets.
+
+#### Render and Angular integration
+
+When the API is deployed to Render, the frontend must use the Render service
+URL as its API base URL. It must not send production requests to its own
+development server at `http://localhost:4200/api`.
+
+For the deployed API in this project, configure the Angular environments and
+service URLs with:
+
+```text
+https://distro-backend-09e7.onrender.com
+```
+
+The login request is therefore:
+
+```http
+POST https://distro-backend-09e7.onrender.com/api/auth/login
+Content-Type: application/json
+
+{
+  "identifier": "admin@example.com",
+  "password": "your-password"
+}
+```
+
+For local `ng serve`, a proxy is also valid: keep frontend calls relative to
+`/api` and point the development proxy target at the Render URL. That proxy is
+only an Angular development convenience; a production frontend still needs
+the deployed API base URL.
+
+In the Render service environment, set `CORS_ALLOWED_ORIGINS` to the exact
+browser origin(s) that load the frontend, separated by commas and without
+trailing slashes. Examples:
+
+```text
+CORS_ALLOWED_ORIGINS=http://localhost:4200,https://admin.example.com
+```
+
+Do not put the backend URL in `CORS_ALLOWED_ORIGINS`; CORS validates the
+frontend's `Origin` header, not the API's own address. After changing an
+environment variable, redeploy the Render service. The backend accepts the
+`Authorization` and `Content-Type` headers and includes CORS headers on
+authenticated and error responses when the origin is allowed.
+
+To check the preflight from PowerShell, run:
+
+```powershell
+Invoke-WebRequest `
+  -Method Options `
+  -Uri https://distro-backend-09e7.onrender.com/api/v1/products `
+  -Headers @{
+    Origin = 'http://localhost:4200'
+    'Access-Control-Request-Method' = 'GET'
+    'Access-Control-Request-Headers' = 'authorization,content-type'
+  }
+```
+
+The response should include `Access-Control-Allow-Origin` with the same
+frontend origin and allow the requested method and headers. A `401` or `403`
+after a successful preflight is an authentication/authorization problem, not
+a CORS problem; sign in again to obtain a current token after a role change.
 
 ### API changes are not reflected
 

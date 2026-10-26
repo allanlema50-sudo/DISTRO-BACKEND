@@ -77,6 +77,13 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
     @Query("""
             select distinct s.category from StockItem s
             where s.active = true and s.category is not null
+            order by s.category
+            """)
+    java.util.List<String> findActiveCategoriesForPlatform();
+
+    @Query("""
+            select distinct s.category from StockItem s
+            where s.active = true and s.category is not null
               and s.organization.id = :organizationId
             order by s.category
             """)

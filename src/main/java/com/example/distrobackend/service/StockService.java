@@ -69,7 +69,7 @@ public class StockService {
         requireCatalogRole(user);
         String normalizedCategory = category == null || category.isBlank() ? null : category.trim();
         Page<StockItem> items = switch (user.role()) {
-            case SUPER_ADMIN -> stockItemRepository.findForPlatform(null, true, pageable);
+            case SUPER_ADMIN -> stockItemRepository.findActiveCatalogForPlatform(normalizedCategory, pageable);
             case CUSTOMER -> stockItemRepository.findActiveCatalog(normalizedCategory, pageable);
             case MANUFACTURER_ADMIN, MANUFACTURER_STAFF ->
                     stockItemRepository.findActiveCatalogForOrganization(

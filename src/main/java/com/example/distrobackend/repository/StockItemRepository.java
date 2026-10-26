@@ -37,6 +37,14 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
     @Query("""
             select s from StockItem s
             where s.active = true
+              and (:category is null or lower(s.category) = lower(:category))
+            """)
+    Page<StockItem> findActiveCatalogForPlatform(
+            @Param("category") String category, Pageable pageable);
+
+    @Query("""
+            select s from StockItem s
+            where s.active = true
               and s.organization.id = :organizationId
               and (:category is null or lower(s.category) = lower(:category))
             """)

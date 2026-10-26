@@ -186,12 +186,12 @@ class StockServiceTest {
         var pageable = org.springframework.data.domain.PageRequest.of(0, 20);
         AuthenticatedUser superAdmin = new AuthenticatedUser(
                 UUID.randomUUID(), UserRole.SUPER_ADMIN, null, null, Instant.now().plusSeconds(60));
-        when(stockItemRepository.findForPlatform(null, true, pageable))
+        when(stockItemRepository.findActiveCatalogForPlatform(null, pageable))
                 .thenReturn(org.springframework.data.domain.Page.empty());
 
         stockService.catalog(superAdmin, null, pageable);
 
-        verify(stockItemRepository).findForPlatform(null, true, pageable);
+        verify(stockItemRepository).findActiveCatalogForPlatform(null, pageable);
     }
 
     @Test

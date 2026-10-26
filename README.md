@@ -49,6 +49,24 @@ macOS/Linux:
 cp .env.example .env
 ```
 
+The repository also includes ignored profile files for local use:
+`.env.local` is a runnable Docker-oriented development profile, while
+`.env.production` is a production deployment template containing placeholders
+for provider-managed database, SMTP, M-Pesa, and SMS credentials. Docker
+Compose reads `.env` by default; to use the local profile explicitly, run
+commands from the repository root with:
+
+```powershell
+docker compose --env-file .env.local up --build -d
+```
+
+`.env.local`, `.env.production`, and `.env` are intentionally not tracked.
+Render and similar platforms do not automatically read `.env.production`; add
+the same variables through the platform's secret/environment settings instead.
+Maven also does not load dotenv files automatically, so use Docker for the
+least-surprising local setup or export the required variables in the shell
+before running Maven directly.
+
 At minimum, set these values in `.env` before starting Docker:
 
 ```dotenv
@@ -89,6 +107,11 @@ Important environment values:
 | `MAIL_HOST` / `MAIL_PORT` | empty / `587` | SMTP server settings when mail is enabled |
 | `ONBOARDING_ACTIVATION_TTL` | `24h` | Lifetime of an approved administrator activation link |
 | `ONBOARDING_INVITATION_TTL` | `7d` | Lifetime of an organization administrator/staff invitation link |
+| `ONBOARDING_SUBMISSION_WINDOW` | `15m` | Database-coordinated public access-request admission window |
+| `ONBOARDING_MAX_SUBMISSIONS_PER_WINDOW` | `100` | Maximum accepted access requests in one admission window |
+| `ONBOARDING_MAX_DOCUMENT_STORAGE` | `1GB` | Total private storage reserved for onboarding evidence |
+| `ONBOARDING_DOCUMENT_RETENTION` | `30d` | Retention period for evidence belonging to rejected or expired requests |
+| `ONBOARDING_DOCUMENT_RETENTION_SCAN_MS` | `86400000` | Scheduled cleanup interval for retained onboarding evidence |
 | `ORDER_RESERVATION_TTL` | `15m` | Unpaid stock-reservation lifetime |
 | `ORDER_MAX_OPEN_PENDING_PER_CUSTOMER` | `5` | Maximum open unpaid orders per customer |
 | `FLYWAY_BASELINE_ON_MIGRATE` | `false` | Only for a reviewed pre-Flyway database |
@@ -355,6 +378,7 @@ to an organization; organization users carry exactly one organization claim.
 | `POST` | `/api/access-requests` | Public | Request manufacturer/distributor administrator access |
 | `GET` | `/api/admin/access-requests` | `SUPER_ADMIN` | List access requests; optional `status` filter |
 | `GET` | `/api/admin/access-requests/{requestId}` | `SUPER_ADMIN` | View one access request |
+| `GET` | `/api/admin/access-requests/{requestId}/documents/{documentType}` | `SUPER_ADMIN` | Download one private review document; type is `INCORPORATION_CERTIFICATE` or `TAX_CERTIFICATE` |
 | `POST` | `/api/admin/access-requests/{requestId}/approve` | `SUPER_ADMIN` | Create the organization and email a one-time activation link |
 | `POST` | `/api/admin/access-requests/{requestId}/activation/resend` | `SUPER_ADMIN` | Issue a fresh activation token and resend the activation email |
 | `POST` | `/api/admin/access-requests/{requestId}/reject` | `SUPER_ADMIN` | Reject a pending access request |
@@ -367,19 +391,43 @@ to an organization; organization users carry exactly one organization claim.
 | `GET` | `/api/invitations/{token}` | Public | Validate an invitation link and show limited metadata |
 | `POST` | `/api/invitations/{token}/accept` | Public | Create the invited organization account; accepting the emailed invitation verifies the account email |
 
-Onboarding and invitation request bodies (JSON):
+The access-request submission uses `multipart/form-data` because it includes two
+private organization documents. The application accepts only PDF, JPG, or PNG
+content, validates the file signature as well as the declared content type, and
+limits each document to 5 MB. Files are stored privately and are not returned as
+public URLs.
+
+```bash
+# POST /api/access-requests
+curl -X POST "$API_URL/api/access-requests" \
+  -F 'organizationType=MANUFACTURER' \
+  -F 'organizationName=Example Manufacturing Ltd' \
+  -F 'country=Kenya' \
+  -F 'registrationNumber=CPR-123456' \
+  -F 'taxIdentifier=P123456789Z' \
+  -F 'fullName=Amina Owner' \
+  -F 'representativeRole=Manager' \
+  -F 'personalEmail=amina@example.com' \
+  -F 'organizationEmail=admin@example-manufacturer.com' \
+  -F 'phoneNumber=+254712345678' \
+  -F 'authorizedRepresentative=true' \
+  -F 'incorporationCertificate=@incorporation.pdf;type=application/pdf' \
+  -F 'taxCertificate=@tax-certificate.png;type=image/png'
+```
+
+`representativeRole` must be exactly `Manager` or `Supervisor`, and
+`authorizedRepresentative` must be `true`. A successful submission returns
+`202 Accepted` with the request id and status, and remains pending until a
+`SUPER_ADMIN` reviews it. Sensitive registration and tax values are returned
+only from authenticated administrator endpoints. Public submissions are also
+bounded by a database-coordinated admission window and a total private-document
+storage quota, so the limit applies consistently when multiple API instances are
+running. Rejected and expired request records remain available for audit, while
+their private document bytes are purged after `ONBOARDING_DOCUMENT_RETENTION`.
+
+The remaining onboarding and invitation request bodies are JSON:
 
 ```jsonc
-// POST /api/access-requests
-{
-  "organizationType": "MANUFACTURER",
-  "organizationName": "Example Manufacturing Ltd",
-  "fullName": "Amina Owner",
-  "phoneNumber": "254712345678",
-  "personalEmail": "amina@example.com",
-  "organizationEmail": "admin@example-manufacturer.com"
-}
-
 // POST /api/access-requests/activate
 {
   "email": "amina@example.com",
@@ -454,9 +502,54 @@ organization on every authenticated request. An organization must retain at
 least one active administrator, and administrators cannot change their own
 status.
 
-For a local environment, create and verify a normal account first, then run
-the following from the repository root. Replace the email with the verified
-account you intend to use for platform administration:
+For a new environment, the recommended first-admin bootstrap uses the
+application's `CommandLineRunner`, rather than storing a password in SQL or
+source code. From the repository root, set the following values in the local
+environment file (never commit them):
+
+```dotenv
+BOOTSTRAP_SUPER_ADMIN_ENABLED=true
+BOOTSTRAP_SUPER_ADMIN_EMAIL=admin@example.com
+BOOTSTRAP_SUPER_ADMIN_PASSWORD=REPLACE_ME_WITH_A_UNIQUE_PASSWORD
+BOOTSTRAP_SUPER_ADMIN_FULL_NAME=Platform Administrator
+BOOTSTRAP_SUPER_ADMIN_PHONE=+254700000000
+```
+
+Replace the password sentinel with a unique password before starting the API.
+It must satisfy the normal application policy: 8–72 characters containing an
+uppercase letter, a lowercase letter, and a digit. Use a longer password for
+the platform administrator in production. The password is preserved exactly;
+do not add leading or trailing whitespace accidentally.
+
+Start the API once with `docker compose up --build -d`. The initializer creates
+the account with a BCrypt password hash, `SUPER_ADMIN` role, no organization,
+and verified email/phone flags. If the same email already belongs to an
+unscoped `SUPER_ADMIN`, bootstrap reconciles its configured name, phone,
+password, active status, and verification flags. This is intentional but means
+the bootstrap password can rotate that account on every startup while the flag
+is enabled. Disable it immediately after the controlled operation. If the email
+belongs to a tenant or another non-platform account, startup fails before any
+account is changed.
+
+The account-collision failure is deliberately operator-visible rather than an
+email notification: the service must not start while the configured bootstrap
+identity is ambiguous. Check the API logs (`docker compose logs api`), then
+either set `BOOTSTRAP_SUPER_ADMIN_ENABLED=false` or choose a dedicated email
+that is not already assigned to a tenant account. The log and startup exception
+include this remediation so the operator is not left with an unexplained
+failure.
+
+After confirming that the account can log in, set
+`BOOTSTRAP_SUPER_ADMIN_ENABLED=false`, clear the four bootstrap values from
+`.env`, and recreate the API container:
+
+```powershell
+docker compose up -d --force-recreate api
+```
+
+For an existing environment, an operator with database access can still use a
+carefully reviewed SQL promotion as a recovery procedure. Replace the email
+with an already active, verified account:
 
 ```powershell
 docker compose exec db psql -U distro -d distro_backend -c "UPDATE users SET role = 'SUPER_ADMIN', organization_id = NULL WHERE lower(email) = lower('owner@example.com') AND is_phone_verified = true AND status = 'ACTIVE';"
@@ -465,7 +558,12 @@ docker compose exec db psql -U distro -d distro_backend -c "UPDATE users SET rol
 The command should be executed only by an operator who already has database
 access. Revoke existing sessions or sign in again after promotion so a fresh
 JWT contains the new role. Do not expose a public endpoint for assigning
-`SUPER_ADMIN`.
+`SUPER_ADMIN`, and do not leave the bootstrap password enabled in a long-running
+production deployment.
+
+For production, set `SPRING_PROFILES_ACTIVE=prod` and configure the real OTP
+provider variables. The default `local` profile uses the development OTP
+adapter and must not be used for a live deployment.
 
 ### Platform administration API
 
@@ -571,9 +669,9 @@ refresh the affected record.
 | `GET` | `/api/products/categories` | Authenticated catalog roles | List categories visible to the caller |
 | `POST` | `/api/products` | Manufacturer admin/staff | Create a manufacturer source product |
 | `PATCH` | `/api/products/{id}` | Manufacturer admin/staff | Update a manufacturer source product |
-| `GET` | `/api/v1/products` | Authenticated catalog roles | Versioned product/offer catalog |
-| `GET` | `/api/v1/products/{productId}` | Authenticated catalog roles | Read one visible product/offer |
-| `GET` | `/api/v1/products/categories` | Authenticated catalog roles | List visible categories |
+| `GET` | `/api/v1/products` | Customer, manufacturer/distributor roles, or `SUPER_ADMIN` | Versioned product/offer catalog; platform admins see active products across organizations |
+| `GET` | `/api/v1/products/{productId}` | Customer, manufacturer/distributor roles, or `SUPER_ADMIN` | Read one visible product/offer; platform admins can read any active product |
+| `GET` | `/api/v1/products/categories` | Customer, manufacturer/distributor roles, or `SUPER_ADMIN` | List visible categories; platform admins see categories across active products |
 | `GET` | `/api/v1/products/{productId}/inventory` | Authorized inventory scope | Read inventory details |
 | `GET` | `/api/v1/products/stats` | Manufacturer, distributor, or platform scope | Read product statistics |
 | `POST` | `/api/v1/products` | Manufacturer admin/staff | Create a manufacturer source product |
@@ -1085,6 +1183,71 @@ match `CORS_ALLOWED_ORIGINS`. An Android emulator commonly reaches the host at
 Docker binding. Use a controlled local network/tunnel setup for device testing
 and update CORS for the exact development origin; do not expose the API
 publicly with production secrets.
+
+#### Render and Angular integration
+
+When the API is deployed to Render, the frontend must use the Render service
+URL as its API base URL. It must not send production requests to its own
+development server at `http://localhost:4200/api`.
+
+For the deployed API in this project, configure the Angular environments and
+service URLs with:
+
+```text
+https://distro-backend-09e7.onrender.com
+```
+
+The login request is therefore:
+
+```http
+POST https://distro-backend-09e7.onrender.com/api/auth/login
+Content-Type: application/json
+
+{
+  "identifier": "admin@example.com",
+  "password": "your-password"
+}
+```
+
+For local `ng serve`, a proxy is also valid: keep frontend calls relative to
+`/api` and point the development proxy target at the Render URL. That proxy is
+only an Angular development convenience; a production frontend still needs
+the deployed API base URL.
+
+In the Render service environment, set `CORS_ALLOWED_ORIGINS` to the exact
+browser origin(s) that load the frontend, separated by commas and without
+trailing slashes. Examples:
+
+```text
+CORS_ALLOWED_ORIGINS=http://localhost:4200,https://admin.example.com
+```
+
+Do not put the backend URL in `CORS_ALLOWED_ORIGINS`; CORS validates the
+frontend's `Origin` header, not the API's own address. After changing an
+environment variable, redeploy the Render service. The backend accepts the
+`Authorization` and `Content-Type` headers and includes CORS headers on
+authenticated and error responses when the origin is allowed.
+
+Render supplies the `PORT` environment variable automatically; the application
+uses it in deployment and retains `SERVER_PORT`/8080 for local development.
+
+To check the preflight from PowerShell, run:
+
+```powershell
+Invoke-WebRequest `
+  -Method Options `
+  -Uri https://distro-backend-09e7.onrender.com/api/v1/products `
+  -Headers @{
+    Origin = 'http://localhost:4200'
+    'Access-Control-Request-Method' = 'GET'
+    'Access-Control-Request-Headers' = 'authorization,content-type'
+  }
+```
+
+The response should include `Access-Control-Allow-Origin` with the same
+frontend origin and allow the requested method and headers. A `401` or `403`
+after a successful preflight is an authentication/authorization problem, not
+a CORS problem; sign in again to obtain a current token after a role change.
 
 ### API changes are not reflected
 

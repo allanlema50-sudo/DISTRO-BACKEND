@@ -69,6 +69,7 @@ public class StockService {
         requireCatalogRole(user);
         String normalizedCategory = category == null || category.isBlank() ? null : category.trim();
         Page<StockItem> items = switch (user.role()) {
+            case SUPER_ADMIN -> stockItemRepository.findActiveCatalogForPlatform(normalizedCategory, pageable);
             case CUSTOMER -> stockItemRepository.findActiveCatalog(normalizedCategory, pageable);
             case MANUFACTURER_ADMIN, MANUFACTURER_STAFF ->
                     stockItemRepository.findActiveCatalogForOrganization(
@@ -89,6 +90,7 @@ public class StockService {
                 .filter(StockItem::isActive)
                 .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.STOCK_ITEM_NOT_FOUND));
         boolean visible = switch (user.role()) {
+            case SUPER_ADMIN -> true;
             case CUSTOMER -> item.getSourceStockItem() != null
                     && item.getOrganization() != null
                     && item.getOrganization().getType() == Organizationtype.DISTRIBUTOR
@@ -117,6 +119,7 @@ public class StockService {
     public java.util.List<String> categories(AuthenticatedUser user) {
         requireCatalogRole(user);
         return switch (user.role()) {
+            case SUPER_ADMIN -> stockItemRepository.findActiveCategoriesForPlatform();
             case CUSTOMER -> stockItemRepository.findActiveCategories();
             case MANUFACTURER_ADMIN, MANUFACTURER_STAFF ->
                     stockItemRepository.findActiveCategoriesForOrganization(requiredCatalogOrganization(user));

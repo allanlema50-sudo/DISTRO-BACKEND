@@ -182,6 +182,31 @@ class StockServiceTest {
     }
 
     @Test
+    void superAdminCanBrowseActiveProductsAcrossOrganizations() {
+        var pageable = org.springframework.data.domain.PageRequest.of(0, 20);
+        AuthenticatedUser superAdmin = new AuthenticatedUser(
+                UUID.randomUUID(), UserRole.SUPER_ADMIN, null, null, Instant.now().plusSeconds(60));
+        when(stockItemRepository.findActiveCatalogForPlatform(null, pageable))
+                .thenReturn(org.springframework.data.domain.Page.empty());
+
+        stockService.catalog(superAdmin, null, pageable);
+
+        verify(stockItemRepository).findActiveCatalogForPlatform(null, pageable);
+    }
+
+    @Test
+    void superAdminCanBrowsePlatformProductCategories() {
+        AuthenticatedUser superAdmin = new AuthenticatedUser(
+                UUID.randomUUID(), UserRole.SUPER_ADMIN, null, null, Instant.now().plusSeconds(60));
+        when(stockItemRepository.findActiveCategoriesForPlatform())
+                .thenReturn(java.util.List.of("Food", "Medicine"));
+
+        assertThat(stockService.categories(superAdmin)).containsExactly("Food", "Medicine");
+
+        verify(stockItemRepository).findActiveCategoriesForPlatform();
+    }
+
+    @Test
     void driverCannotBrowseTheProductCatalog() {
         AuthenticatedUser driver = new AuthenticatedUser(
                 UUID.randomUUID(), UserRole.DRIVER, null, null, Instant.now().plusSeconds(60));

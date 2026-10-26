@@ -3,6 +3,7 @@ package com.example.distrobackend.configuration;
 import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Domain.enums.UserStatus;
+import com.example.distrobackend.Util.PasswordRules;
 import com.example.distrobackend.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -14,12 +15,17 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
 import java.util.Locale;
+import java.util.Set;
 
 @Slf4j
 @Component
 @ConditionalOnProperty(name = "app.bootstrap.super-admin.enabled", havingValue = "true")
 @RequiredArgsConstructor
 public class DataInitializer implements CommandLineRunner {
+
+    private static final Set<String> PASSWORD_PLACEHOLDERS = Set.of(
+            "REPLACE_ME_WITH_A_UNIQUE_PASSWORD",
+            "use-a-strong-password-at-least-12-characters");
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -40,13 +46,10 @@ public class DataInitializer implements CommandLineRunner {
     @Transactional
     public void run(String... args) {
         String email = requireValue(bootstrapEmail, "BOOTSTRAP_SUPER_ADMIN_EMAIL").toLowerCase(Locale.ROOT);
-        String password = requireValue(bootstrapPassword, "BOOTSTRAP_SUPER_ADMIN_PASSWORD");
+        String password = requirePassword(bootstrapPassword);
         String fullName = requireValue(bootstrapFullName, "BOOTSTRAP_SUPER_ADMIN_FULL_NAME");
         String phone = requireValue(bootstrapPhone, "BOOTSTRAP_SUPER_ADMIN_PHONE");
 
-        if (password.length() < 12) {
-            throw new IllegalStateException("BOOTSTRAP_SUPER_ADMIN_PASSWORD must contain at least 12 characters");
-        }
         if (fullName.length() > 150 || phone.length() > 20) {
             throw new IllegalStateException("Bootstrap administrator profile values exceed database limits");
         }
@@ -84,5 +87,23 @@ public class DataInitializer implements CommandLineRunner {
             throw new IllegalStateException(environmentVariable + " must be set when bootstrap is enabled");
         }
         return value.trim();
+    }
+
+    private static String requirePassword(String value) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalStateException(
+                    "BOOTSTRAP_SUPER_ADMIN_PASSWORD must be set when bootstrap is enabled");
+        }
+        if (PASSWORD_PLACEHOLDERS.contains(value.trim())) {
+            throw new IllegalStateException(
+                    "BOOTSTRAP_SUPER_ADMIN_PASSWORD must be replaced with a unique password");
+        }
+        if (!value.matches(PasswordRules.PATTERN)) {
+            throw new IllegalStateException(
+                    "BOOTSTRAP_SUPER_ADMIN_PASSWORD is invalid: " + PasswordRules.MESSAGE);
+        }
+        // Do not trim: whitespace is part of the configured password and must
+        // be preserved exactly when BCrypt creates the stored hash.
+        return value;
     }
 }

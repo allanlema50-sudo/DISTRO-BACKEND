@@ -462,10 +462,15 @@ source code. From the repository root, set the following values in the local
 ```dotenv
 BOOTSTRAP_SUPER_ADMIN_ENABLED=true
 BOOTSTRAP_SUPER_ADMIN_EMAIL=admin@example.com
-BOOTSTRAP_SUPER_ADMIN_PASSWORD=use-a-strong-password-at-least-12-characters
+BOOTSTRAP_SUPER_ADMIN_PASSWORD=REPLACE_ME_WITH_A_UNIQUE_PASSWORD
 BOOTSTRAP_SUPER_ADMIN_FULL_NAME=Platform Administrator
 BOOTSTRAP_SUPER_ADMIN_PHONE=+254700000000
 ```
+
+Replace the password sentinel with a unique password before starting the API.
+It must satisfy the normal application policy: 8–72 characters containing an
+uppercase letter, a lowercase letter, and a digit. Use a longer password for
+the platform administrator in production.
 
 Start the API once with `docker compose up --build -d`. The initializer creates
 the account with a BCrypt password hash, `SUPER_ADMIN` role, no organization,
@@ -1161,6 +1166,9 @@ frontend's `Origin` header, not the API's own address. After changing an
 environment variable, redeploy the Render service. The backend accepts the
 `Authorization` and `Content-Type` headers and includes CORS headers on
 authenticated and error responses when the origin is allowed.
+
+Render supplies the `PORT` environment variable automatically; the application
+uses it in deployment and retains `SERVER_PORT`/8080 for local development.
 
 To check the preflight from PowerShell, run:
 

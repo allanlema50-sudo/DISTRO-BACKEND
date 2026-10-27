@@ -448,6 +448,18 @@ The member-status payload is the same as the platform status payload:
 { "status": "ACTIVE" }
 ```
 
+Organization profile endpoints:
+
+| Method | Endpoint | Access | Purpose |
+|---|---|---|---|
+| `GET` | `/api/v1/organization` | Organization admin/staff | Read the caller's organization profile |
+| `PATCH` | `/api/v1/organization` | Organization admin | Update name or email using the current `version` |
+
+Organization profile updates use optimistic concurrency. The client must send
+the `version` returned by the latest response; a stale version returns `409`
+and the client should reload before retrying. Organization type is assigned by
+the platform and cannot be changed through this endpoint.
+
 Status changes revoke refresh tokens for disabled accounts. Existing access
 tokens are also checked against the current database account, role, and
 organization on every authenticated request. An organization must retain at
@@ -580,8 +592,11 @@ refresh the affected record.
 | `PUT` | `/api/v1/products/{productId}` | Manufacturer admin/staff | Update a manufacturer source product |
 | `PATCH` | `/api/v1/products/{productId}/status` | Manufacturer admin/staff | Activate/deactivate own product |
 | `PATCH` | `/api/v1/products/{productId}/approval` | `SUPER_ADMIN` | Apply platform approval state |
-| `POST` | `/api/v1/warehouses` | Distributor admin | Create a distributor warehouse |
-| `GET` | `/api/v1/warehouses` | Distributor admin/staff | List the caller's warehouses |
+| `POST` | `/api/v1/warehouses` | Manufacturer/distributor admin | Create a warehouse owned by the caller's organization |
+| `GET` | `/api/v1/warehouses` | Manufacturer/distributor admin/staff | List all warehouses owned by the caller's organization |
+| `GET` | `/api/v1/warehouses/{warehouseId}` | Manufacturer/distributor admin/staff | Read one tenant-owned warehouse |
+| `PATCH` | `/api/v1/warehouses/{warehouseId}` | Manufacturer/distributor admin | Update warehouse name/address using the response `version` |
+| `PATCH` | `/api/v1/warehouses/{warehouseId}/status` | Manufacturer/distributor admin | Activate/deactivate a warehouse; active stock blocks deactivation |
 | `GET` | `/api/stock` | Manufacturer/distributor admin/staff | List organization stock records |
 | `GET` | `/api/stock/items` | Manufacturer/distributor admin/staff | Same organization stock listing under the inventory path |
 | `GET` | `/api/stock/items/{id}` | Manufacturer/distributor admin/staff | Get one organization stock record |
@@ -622,6 +637,23 @@ Product, warehouse, offer, and stock request bodies (JSON):
   "name": "Nairobi Warehouse",
   "address": "Industrial Area, Nairobi"
 }
+
+// PATCH /api/v1/organization
+{
+  "name": "Updated Organization Name",
+  "email": "operations@example.com",
+  "version": 0
+}
+
+// PATCH /api/v1/warehouses/{warehouseId}
+{
+  "name": "Nairobi Distribution Warehouse",
+  "address": "Industrial Area, Nairobi",
+  "version": 0
+}
+
+// PATCH /api/v1/warehouses/{warehouseId}/status
+{ "active": false, "version": 1 }
 
 // POST /api/stock/offers
 {

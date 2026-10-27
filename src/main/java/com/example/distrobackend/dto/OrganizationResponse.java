@@ -12,11 +12,12 @@ public record OrganizationResponse(
         String email,
         Organizationtype type,
         OffsetDateTime createdAt,
-        OffsetDateTime updatedAt
+        OffsetDateTime updatedAt,
+        long version
 ) {
     public static OrganizationResponse from(Organization organization) {
         return new OrganizationResponse(organization.getId(), organization.getName(),
                 organization.getEmail(), organization.getType(), organization.getCreatedAt(),
-                organization.getUpdatedAt());
+                organization.getUpdatedAt(), organization.getVersion());
     }
 }

@@ -23,21 +23,35 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
     Page<StockItem> findForPlatform(@Param("organizationId") UUID organizationId,
                                     @Param("active") Boolean active, Pageable pageable);
 
-    @Query("""
+    @Query(value = """
             select s from StockItem s
             where s.active = true
               and s.sourceStockItem is not null
               and s.sourceStockItem.organization.type = com.example.distrobackend.Domain.enums.Organizationtype.MANUFACTURER
               and s.organization.type = com.example.distrobackend.Domain.enums.Organizationtype.DISTRIBUTOR
               and s.warehouse.active = true
-              and (:category is null or lower(s.category) = lower(:category))
+              and (cast(:category as string) is null or lower(s.category) = lower(cast(:category as string)))
+            """,
+            countQuery = """
+            select count(s) from StockItem s
+            where s.active = true
+              and s.sourceStockItem is not null
+              and s.sourceStockItem.organization.type = com.example.distrobackend.Domain.enums.Organizationtype.MANUFACTURER
+              and s.organization.type = com.example.distrobackend.Domain.enums.Organizationtype.DISTRIBUTOR
+              and s.warehouse.active = true
+              and (cast(:category as string) is null or lower(s.category) = lower(cast(:category as string)))
             """)
     Page<StockItem> findActiveCatalog(@Param("category") String category, Pageable pageable);
 
-    @Query("""
+    @Query(value = """
             select s from StockItem s
             where s.active = true
-              and (:category is null or lower(s.category) = lower(:category))
+              and (cast(:category as string) is null or lower(s.category) = lower(cast(:category as string)))
+            """,
+            countQuery = """
+            select count(s) from StockItem s
+            where s.active = true
+              and (cast(:category as string) is null or lower(s.category) = lower(cast(:category as string)))
             """)
     Page<StockItem> findActiveCatalogForPlatform(
             @Param("category") String category, Pageable pageable);
@@ -46,14 +60,20 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
             select s from StockItem s
             where s.active = true
               and s.organization.id = :organizationId
-              and (:category is null or lower(s.category) = lower(:category))
+              and (cast(:category as string) is null or lower(s.category) = lower(cast(:category as string)))
+            """,
+            countQuery = """
+            select count(s) from StockItem s
+            where s.active = true
+              and s.organization.id = :organizationId
+              and (cast(:category as string) is null or lower(s.category) = lower(cast(:category as string)))
             """)
     Page<StockItem> findActiveCatalogForOrganization(
             @Param("organizationId") UUID organizationId,
             @Param("category") String category,
             Pageable pageable);
 
-    @Query("""
+    @Query(value = """
             select s from StockItem s
             where s.active = true
               and (s.organization.type = :manufacturerType
@@ -61,7 +81,17 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
                        and s.sourceStockItem is not null
                        and s.sourceStockItem.organization.type = :manufacturerType
                        and s.warehouse.active = true))
-              and (:category is null or lower(s.category) = lower(:category))
+              and (cast(:category as string) is null or lower(s.category) = lower(cast(:category as string)))
+            """,
+            countQuery = """
+            select count(s) from StockItem s
+            where s.active = true
+              and (s.organization.type = :manufacturerType
+                   or (s.organization.id = :organizationId
+                       and s.sourceStockItem is not null
+                       and s.sourceStockItem.organization.type = :manufacturerType
+                       and s.warehouse.active = true))
+              and (cast(:category as string) is null or lower(s.category) = lower(cast(:category as string)))
             """)
     Page<StockItem> findActiveCatalogForDistributor(
             @Param("organizationId") UUID organizationId,

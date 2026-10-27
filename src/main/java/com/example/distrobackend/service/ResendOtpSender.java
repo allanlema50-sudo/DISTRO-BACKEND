@@ -2,6 +2,8 @@ package com.example.distrobackend.service;
 
 import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.OtpPurpose;
+import com.example.distrobackend.Exception.ApiException;
+import com.example.distrobackend.Exception.ErrorCode;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -32,11 +34,12 @@ public class ResendOtpSender implements OtpSender {
 
     @Override
     public void send(User user, OtpPurpose purpose, String code, long ttlMinutes) {
-        if (user.getEmail() != null && !user.getEmail().isEmpty()) {
+        if (user.getEmail() != null && !user.getEmail().isBlank()) {
             sendViaEmail(user.getEmail(), purpose, code, ttlMinutes);
-        } else {
-            // Fallback to WhatsApp/SMS if no email (you can add Twilio here later)
-            log.info("[FALLBACK] User {} has no email. Code {} not sent.", user.getPhoneNumber(), code);
+        }
+        else {
+            throw new ApiException(ErrorCode.INTERNAL_ERROR,
+                    "OTP delivery is not configured for users without an email address");
         }
     }
 
@@ -56,7 +59,8 @@ public class ResendOtpSender implements OtpSender {
             restTemplate.postForObject("https://api.resend.com/emails", request, String.class);
             log.info("Successfully sent OTP email via Resend to {}", email);
         } catch (Exception e) {
-            log.error("Failed to send OTP email to {}: {}", email, e.getMessage());
+            log.error("Failed to send OTP email to {}", email, e);
+            throw new ApiException(ErrorCode.INTERNAL_ERROR, "OTP provider unavailable");
         }
     }
 }

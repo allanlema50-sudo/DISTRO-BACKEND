@@ -42,8 +42,13 @@ public class AccessRequestSubmissionLimiter {
     public void acquire() {
         AccessRequestSubmissionLimit limit = repository
                 .findByIdForUpdate(AccessRequestSubmissionLimit.GLOBAL_ID)
-                .orElseThrow(() -> new IllegalStateException(
-                        "Onboarding submission limit row is missing; run the latest database migration"));
+                .orElse(null);
+        if (limit == null) {
+            repository.ensureGlobalRow();
+            limit = repository.findByIdForUpdate(AccessRequestSubmissionLimit.GLOBAL_ID)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "Onboarding submission limit row could not be initialized; verify the database schema"));
+        }
 
         OffsetDateTime now = OffsetDateTime.now();
         if (!limit.getWindowStartedAt().plus(submissionWindow).isAfter(now)) {

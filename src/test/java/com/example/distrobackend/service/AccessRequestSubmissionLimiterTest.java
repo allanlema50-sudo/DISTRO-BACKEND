@@ -67,6 +67,18 @@ class AccessRequestSubmissionLimiterTest {
         assertThat(row.getSubmissionCount()).isEqualTo(1);
     }
 
+    @Test
+    void initializesTheGlobalRowWhenTheSchemaExistsWithoutItsSeedData() {
+        AccessRequestSubmissionLimit row = row(0, OffsetDateTime.now());
+        when(repository.findByIdForUpdate(AccessRequestSubmissionLimit.GLOBAL_ID))
+                .thenReturn(Optional.empty(), Optional.of(row));
+
+        limiter.acquire();
+
+        verify(repository).ensureGlobalRow();
+        assertThat(row.getSubmissionCount()).isEqualTo(1);
+    }
+
     private AccessRequestSubmissionLimit row(int count, OffsetDateTime startedAt) {
         AccessRequestSubmissionLimit row = new AccessRequestSubmissionLimit();
         row.setId(AccessRequestSubmissionLimit.GLOBAL_ID);

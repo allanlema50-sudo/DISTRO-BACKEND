@@ -67,7 +67,8 @@ public class StockService {
     @Transactional(readOnly = true)
     public Page<ProductResponse> catalog(AuthenticatedUser user, String category, Pageable pageable) {
         requireCatalogRole(user);
-        String normalizedCategory = category == null || category.isBlank() ? null : category.trim();
+        // Empty string (not null) so PostgreSQL can type the JPQL category parameter.
+        String normalizedCategory = category == null || category.isBlank() ? "" : category.trim();
         Page<StockItem> items = switch (user.role()) {
             case SUPER_ADMIN -> stockItemRepository.findActiveCatalogForPlatform(normalizedCategory, pageable);
             case CUSTOMER -> stockItemRepository.findActiveCatalog(normalizedCategory, pageable);

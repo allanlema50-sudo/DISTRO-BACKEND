@@ -159,13 +159,13 @@ class StockServiceTest {
     void distributorCatalogIncludesManufacturersButNotOtherDistributors() {
         var pageable = org.springframework.data.domain.PageRequest.of(0, 20);
         when(stockItemRepository.findActiveCatalogForDistributor(
-                eq(organizationId), eq(Organizationtype.MANUFACTURER), isNull(String.class), eq(pageable)))
+                eq(organizationId), eq(Organizationtype.MANUFACTURER), eq(""), eq(pageable)))
                 .thenReturn(org.springframework.data.domain.Page.empty());
 
         stockService.catalog(user, null, pageable);
 
         verify(stockItemRepository).findActiveCatalogForDistributor(
-                organizationId, Organizationtype.MANUFACTURER, null, pageable);
+                organizationId, Organizationtype.MANUFACTURER, "", pageable);
     }
 
     @Test
@@ -173,12 +173,12 @@ class StockServiceTest {
         var pageable = org.springframework.data.domain.PageRequest.of(0, 20);
         AuthenticatedUser customer = new AuthenticatedUser(
                 UUID.randomUUID(), UserRole.CUSTOMER, null, null, Instant.now().plusSeconds(60));
-        when(stockItemRepository.findActiveCatalog(isNull(String.class), eq(pageable)))
+        when(stockItemRepository.findActiveCatalog(eq(""), eq(pageable)))
                 .thenReturn(org.springframework.data.domain.Page.empty());
 
         stockService.catalog(customer, null, pageable);
 
-        verify(stockItemRepository).findActiveCatalog(null, pageable);
+        verify(stockItemRepository).findActiveCatalog("", pageable);
     }
 
     @Test
@@ -186,12 +186,12 @@ class StockServiceTest {
         var pageable = org.springframework.data.domain.PageRequest.of(0, 20);
         AuthenticatedUser superAdmin = new AuthenticatedUser(
                 UUID.randomUUID(), UserRole.SUPER_ADMIN, null, null, Instant.now().plusSeconds(60));
-        when(stockItemRepository.findActiveCatalogForPlatform(null, pageable))
+        when(stockItemRepository.findActiveCatalogForPlatform(eq(""), eq(pageable)))
                 .thenReturn(org.springframework.data.domain.Page.empty());
 
         stockService.catalog(superAdmin, null, pageable);
 
-        verify(stockItemRepository).findActiveCatalogForPlatform(null, pageable);
+        verify(stockItemRepository).findActiveCatalogForPlatform("", pageable);
     }
 
     @Test

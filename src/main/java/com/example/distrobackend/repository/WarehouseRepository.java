@@ -9,6 +9,8 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface WarehouseRepository extends JpaRepository<Warehouse, UUID> {
+    Page<Warehouse> findByOrganization_Id(UUID organizationId, Pageable pageable);
+
     Page<Warehouse> findByOrganization_IdAndActiveTrue(UUID organizationId, Pageable pageable);
 
     Optional<Warehouse> findByIdAndOrganization_Id(UUID id, UUID organizationId);

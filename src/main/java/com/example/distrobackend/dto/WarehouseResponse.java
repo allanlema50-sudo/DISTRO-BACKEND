@@ -13,7 +13,8 @@ public record WarehouseResponse(
         String address,
         boolean active,
         OffsetDateTime createdAt,
-        OffsetDateTime updatedAt
+        OffsetDateTime updatedAt,
+        long version
 ) {
     public static WarehouseResponse from(Warehouse warehouse) {
         return new WarehouseResponse(
@@ -24,6 +25,7 @@ public record WarehouseResponse(
                 warehouse.getAddress(),
                 warehouse.isActive(),
                 warehouse.getCreatedAt(),
-                warehouse.getUpdatedAt());
+                warehouse.getUpdatedAt(),
+                warehouse.getVersion());
     }
 }

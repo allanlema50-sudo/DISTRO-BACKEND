@@ -104,6 +104,8 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
 
     boolean existsByOrganization_IdAndSkuIgnoreCase(UUID organizationId, String sku);
 
+    boolean existsByWarehouse_IdAndActiveTrue(UUID warehouseId);
+
     long countByOrganization_Id(UUID organizationId);
 
     @Query("select s.organization.id, count(s) from StockItem s "

@@ -460,6 +460,44 @@ the `version` returned by the latest response; a stale version returns `409`
 and the client should reload before retrying. Organization type is assigned by
 the platform and cannot be changed through this endpoint.
 
+### Product catalog, publication, and distributor authorization
+
+Products are manufacturer-owned source products. A distributor must receive
+manufacturer approval before creating a warehouse offer for that product.
+Customers browse published distributor offers that have an active warehouse;
+they do not browse manufacturer source inventory directly.
+
+| Method | Endpoint | Access | Purpose |
+|---|---|---|---|
+| `GET` | `/api/v1/products` | Authenticated catalog role | Browse products visible to the caller; supports `category`, `page`, `size`, and `sort` |
+| `GET` | `/api/v1/products/{productId}` | Authenticated catalog role | Read one visible published product |
+| `GET` | `/api/v1/products/categories` | Authenticated catalog role | List categories visible to the caller |
+| `GET` | `/api/v1/products/{productId}/image` | Authenticated catalog role | Stream a private product image; no public file URL is exposed |
+| `POST` | `/api/v1/products` | Manufacturer admin/staff | Create a source product with a multipart image |
+| `PATCH` | `/api/v1/products/{productId}` | Manufacturer admin/staff | Update source metadata and optionally replace the image using multipart form data |
+| `PATCH` | `/api/v1/products/{productId}/publication` | Manufacturer admin | Set `DRAFT`, `PUBLISHED`, or `DISCONTINUED` |
+| `GET` | `/api/v1/products/authorizations` | Distributor admin/staff | List that distributor's authorization requests |
+| `POST` | `/api/v1/products/{productId}/authorization-requests` | Distributor admin/staff | Request permission to offer a published manufacturer product |
+| `GET` | `/api/v1/products/authorizations/incoming` | Manufacturer admin/staff | List requests for that manufacturer's products |
+| `PATCH` | `/api/v1/products/authorizations/{authorizationId}/decision` | Manufacturer admin | Approve or reject a pending request |
+| `PATCH` | `/api/v1/products/authorizations/{authorizationId}/revocation` | Manufacturer admin | Revoke an approved authorization |
+
+Source-product creation uses `multipart/form-data`. The required text fields
+include `name`, `sku`, `unitPrice`, `initialQuantity`, `reorderThreshold`,
+`publicationStatus`, and `image`; optional fields are `category`, `brand`,
+`unit`, and `description`. Images must be genuine PNG, JPEG, or WebP files and
+are limited to 5 MiB. A product can only be published after an image is
+stored. Authorization decisions use JSON such as:
+
+```json
+{ "status": "APPROVED", "note": "Approved for the Nairobi warehouse" }
+```
+
+The valid authorization transitions are `PENDING` to `APPROVED` or
+`REJECTED`, and `APPROVED` to `REVOKED`. Draft and discontinued source
+products, inactive warehouses, and offers whose source product is no longer
+published are excluded from customer and distributor catalogs.
+
 Status changes revoke refresh tokens for disabled accounts. Existing access
 tokens are also checked against the current database account, role, and
 organization on every authenticated request. An organization must retain at

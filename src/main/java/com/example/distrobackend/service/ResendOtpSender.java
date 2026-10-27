@@ -4,6 +4,7 @@ import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.OtpPurpose;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -18,6 +19,7 @@ import java.util.Map;
 @Slf4j
 @Component
 @Profile("prod")
+@ConditionalOnProperty(prefix = "otp", name = "provider", havingValue = "resend")
 public class ResendOtpSender implements OtpSender {
 
     private final RestTemplate restTemplate = new RestTemplate();

@@ -6,6 +6,7 @@ import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -21,6 +22,7 @@ import java.util.Map;
  */
 @Component
 @Profile("prod")
+@ConditionalOnProperty(prefix = "otp", name = "provider", havingValue = "http", matchIfMissing = true)
 @RequiredArgsConstructor
 public class HttpOtpSender implements OtpSender {
 

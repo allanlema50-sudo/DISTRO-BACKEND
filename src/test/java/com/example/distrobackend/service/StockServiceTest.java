@@ -59,6 +59,9 @@ class StockServiceTest {
     @Mock
     private WarehouseRepository warehouseRepository;
 
+    @Mock
+    private ProductAuthorizationService productAuthorizationService;
+
     @InjectMocks
     private StockService stockService;
 
@@ -242,6 +245,7 @@ class StockServiceTest {
 
         when(organizationRepository.findById(organizationId)).thenReturn(java.util.Optional.of(distributor));
         when(stockItemRepository.findById(source.getId())).thenReturn(java.util.Optional.of(source));
+        when(productAuthorizationService.isApproved(source.getId(), organizationId)).thenReturn(true);
         when(warehouseRepository.findByIdAndOrganization_IdAndActiveTrue(
                 warehouse.getId(), organizationId)).thenReturn(java.util.Optional.of(warehouse));
         when(stockItemRepository.existsByOrganization_IdAndSkuIgnoreCase(organizationId, "DIST-CEMENT"))

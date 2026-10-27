@@ -12,6 +12,7 @@ import org.hibernate.type.SqlTypes;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.UUID;
+import com.example.distrobackend.Domain.enums.ProductPublicationStatus;
 
 
 @Entity
@@ -73,6 +74,22 @@ public class StockItem {
 
     @Column(name = "is_active", nullable = false)
     private boolean active = true;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "publication_status", nullable = false, length = 20)
+    private ProductPublicationStatus publicationStatus = ProductPublicationStatus.PUBLISHED;
+
+    @Column(name = "brand", length = 100)
+    private String brand;
+
+    @Column(name = "unit", length = 30)
+    private String unit;
+
+    @Column(name = "description", columnDefinition = "TEXT")
+    private String description;
+
+    @Column(name = "image_available", nullable = false)
+    private boolean imageAvailable;
 
     @Version
     @Column(name = "version", nullable = false)

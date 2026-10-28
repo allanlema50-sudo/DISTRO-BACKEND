@@ -10,6 +10,8 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
 
+import java.net.URI;
+
 @Component
 public class MailgunEmailClient {
 
@@ -42,19 +44,43 @@ public class MailgunEmailClient {
         }
 
         HttpHeaders headers = new HttpHeaders();
-        headers.setBasicAuth("api", apiKey);
-        headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+        headers.setBasicAuth("api", apiKey.trim());
+        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
 
-        MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
-        body.add("from", "Distro <postmaster@" + domain + ">");
-        body.add("to", recipient);
+        String mailgunDomain = domain.trim();
+        MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+        body.add("from", "Distro <postmaster@" + mailgunDomain + ">");
+        body.add("to", recipient.trim());
         body.add("subject", subject);
         body.add("text", text);
 
-        String baseUrl = apiBaseUrl.endsWith("/")
-                ? apiBaseUrl.substring(0, apiBaseUrl.length() - 1)
-                : apiBaseUrl;
-        restTemplate.postForEntity(baseUrl + "/v3/" + domain + "/messages",
+        String baseUrl = apiBaseUrl == null || apiBaseUrl.isBlank()
+                ? "https://api.mailgun.net"
+                : apiBaseUrl.trim();
+        boolean quoted = baseUrl.length() >= 2
+                && ((baseUrl.startsWith("\"") && baseUrl.endsWith("\""))
+                || (baseUrl.startsWith("'") && baseUrl.endsWith("'")));
+        if (quoted) {
+            baseUrl = baseUrl.substring(1, baseUrl.length() - 1).trim();
+        }
+        while (baseUrl.endsWith("/")) {
+            baseUrl = baseUrl.substring(0, baseUrl.length() - 1);
+        }
+        URI apiOrigin;
+        try {
+            apiOrigin = URI.create(baseUrl);
+        } catch (IllegalArgumentException ex) {
+            throw new IllegalStateException(
+                    "MAILGUN_API_BASE_URL must be https://api.mailgun.net or https://api.eu.mailgun.net", ex);
+        }
+        if (!"https".equalsIgnoreCase(apiOrigin.getScheme()) || apiOrigin.getHost() == null
+                || (apiOrigin.getRawPath() != null && !apiOrigin.getRawPath().isEmpty())
+                || apiOrigin.getRawQuery() != null || apiOrigin.getRawFragment() != null) {
+            throw new IllegalStateException(
+                    "MAILGUN_API_BASE_URL must contain only the HTTPS Mailgun API origin, e.g. https://api.mailgun.net");
+        }
+
+        restTemplate.postForEntity(apiOrigin + "/v3/" + mailgunDomain + "/messages",
                 new HttpEntity<>(body, headers), String.class);
     }
 }

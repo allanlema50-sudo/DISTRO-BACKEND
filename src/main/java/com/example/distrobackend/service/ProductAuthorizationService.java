@@ -30,6 +30,8 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class ProductAuthorizationService {
 
+    private static final int MAX_DECISION_NOTE_LENGTH = 1000;
+
     private final DistributorProductAuthorizationRepository authorizationRepository;
     private final StockItemRepository stockItemRepository;
     private final OrganizationRepository organizationRepository;
@@ -88,6 +90,7 @@ public class ProductAuthorizationService {
     public ProductAuthorizationResponse decide(AuthenticatedUser actor, UUID authorizationId,
                                                ProductAuthorizationDecisionRequest request) {
         UUID manufacturerId = requireOrganization(actor, Organizationtype.MANUFACTURER);
+        validateDecisionNote(request.note());
         if (request.status() != ProductAuthorizationStatus.APPROVED
                 && request.status() != ProductAuthorizationStatus.REJECTED
                 && request.status() != ProductAuthorizationStatus.REVOKED) {
@@ -118,6 +121,13 @@ public class ProductAuthorizationService {
     public boolean isApproved(UUID productId, UUID distributorId) {
         return authorizationRepository.existsByProduct_IdAndDistributorOrganization_IdAndStatus(
                 productId, distributorId, ProductAuthorizationStatus.APPROVED);
+    }
+
+    private static void validateDecisionNote(String note) {
+        if (note != null && note.length() > MAX_DECISION_NOTE_LENGTH) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    "Authorization decision note must not exceed " + MAX_DECISION_NOTE_LENGTH + " characters");
+        }
     }
 
     private Organization organization(AuthenticatedUser actor, Organizationtype type) {

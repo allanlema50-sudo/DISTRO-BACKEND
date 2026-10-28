@@ -84,6 +84,20 @@ class ProductAuthorizationServiceTest {
                 .hasMessage("The authorization status transition is not allowed");
     }
 
+    @Test
+    void decisionNoteCannotExceedStorageLimit() {
+        UUID manufacturerId = UUID.randomUUID();
+        ProductAuthorizationService service = new ProductAuthorizationService(
+                authorizationRepository, stockItemRepository, organizationRepository, userRepository);
+
+        assertThatThrownBy(() -> service.decide(
+                actor(manufacturerId, Organizationtype.MANUFACTURER), UUID.randomUUID(),
+                new ProductAuthorizationDecisionRequest(
+                        ProductAuthorizationStatus.APPROVED, "x".repeat(1001))))
+                .isInstanceOf(ApiException.class)
+                .hasMessage("Authorization decision note must not exceed 1000 characters");
+    }
+
     private static Organization organization(UUID id, Organizationtype type) {
         Organization organization = new Organization();
         organization.setId(id);

@@ -146,6 +146,51 @@ class StockServiceTest {
     }
 
     @Test
+    void legacyJsonCreateStartsAsDraftUntilProductIsPublishedWithAnImage() {
+        UUID manufacturerId = UUID.randomUUID();
+        com.example.distrobackend.Domain.entity.Organization manufacturer = organization(
+                manufacturerId, Organizationtype.MANUFACTURER);
+        AuthenticatedUser manufacturerAdmin = new AuthenticatedUser(
+                UUID.randomUUID(), UserRole.MANUFACTURER_ADMIN, manufacturerId,
+                Organizationtype.MANUFACTURER, Instant.now().plusSeconds(60));
+        when(organizationRepository.findById(manufacturerId)).thenReturn(java.util.Optional.of(manufacturer));
+        when(stockItemRepository.existsByOrganization_IdAndSkuIgnoreCase(manufacturerId, "MFG-1"))
+                .thenReturn(false);
+        when(stockItemRepository.saveAndFlush(any(StockItem.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        StockItemResponse response = stockService.create(manufacturerAdmin,
+                new com.example.distrobackend.dto.CreateStockItemRequest(
+                        "mfg-1", "Cement", "Building", new java.math.BigDecimal("10.00"), 0, 0));
+
+        assertThat(response.active()).isFalse();
+        assertThat(response.publicationStatus())
+                .isEqualTo(com.example.distrobackend.Domain.enums.ProductPublicationStatus.DRAFT);
+    }
+
+    @Test
+    void legacyJsonUpdateCannotPublishAProduct() {
+        UUID manufacturerId = UUID.randomUUID();
+        com.example.distrobackend.Domain.entity.Organization manufacturer = organization(
+                manufacturerId, Organizationtype.MANUFACTURER);
+        AuthenticatedUser manufacturerAdmin = new AuthenticatedUser(
+                UUID.randomUUID(), UserRole.MANUFACTURER_ADMIN, manufacturerId,
+                Organizationtype.MANUFACTURER, Instant.now().plusSeconds(60));
+        StockItem item = itemWithQuantity(0);
+        item.setOrganization(manufacturer);
+        item.setPublicationStatus(com.example.distrobackend.Domain.enums.ProductPublicationStatus.DRAFT);
+        when(stockItemRepository.findByIdAndOrganizationIdForUpdate(stockItemId, manufacturerId))
+                .thenReturn(java.util.Optional.of(item));
+
+        assertThatThrownBy(() -> stockService.update(manufacturerAdmin, stockItemId,
+                new com.example.distrobackend.dto.UpdateStockItemRequest(null, null, null, null, true)))
+                .isInstanceOf(ApiException.class)
+                .hasMessage("Use the product publication endpoint to publish a product");
+
+        verify(stockItemRepository, never()).save(any(StockItem.class));
+    }
+
+    @Test
     void outboundMovementCannotConsumeReservedUnits() {
         StockItem item = itemWithQuantity(10);
         item.setReservedQuantity(8);

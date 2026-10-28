@@ -173,12 +173,14 @@ public class StockService {
         item.setOrganization(manufacturer);
         item.setSku(sku);
         item.setName(request.name().trim());
-        item.setPublicationStatus(com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED);
+        // The legacy JSON endpoint has no image field. Keep the product hidden
+        // until the multipart lifecycle endpoint publishes it after image validation.
+        item.setPublicationStatus(ProductPublicationStatus.DRAFT);
         item.setCategory(trimToNull(request.category()));
         item.setUnitPrice(request.unitPrice());
         item.setQuantityOnHand(request.initialQuantity());
         item.setReorderThreshold(request.reorderThreshold());
-        item.setActive(true);
+        item.setActive(false);
         stockItemRepository.saveAndFlush(item);
 
         if (request.initialQuantity() > 0) {
@@ -304,10 +306,11 @@ public class StockService {
             item.setReorderThreshold(request.reorderThreshold());
         }
         if (request.active() != null) {
-            item.setActive(request.active());
-            item.setPublicationStatus(request.active()
-                    ? com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED
-                    : com.example.distrobackend.Domain.enums.ProductPublicationStatus.DRAFT);
+            if (request.active()) {
+                throw new ApiException(ErrorCode.BAD_REQUEST,
+                        "Use the product publication endpoint to publish a product");
+            }
+            item.setActive(false);
         }
         return StockItemResponse.from(stockItemRepository.save(item));
     }

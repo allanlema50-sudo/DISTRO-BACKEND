@@ -75,7 +75,7 @@ public class ProductAuthorizationController {
     public ProductAuthorizationResponse revoke(
             @AuthenticationPrincipal AuthenticatedUser actor,
             @PathVariable UUID authorizationId,
-            @RequestBody(required = false) ProductAuthorizationDecisionRequest request) {
+            @Valid @RequestBody(required = false) ProductAuthorizationDecisionRequest request) {
         ProductAuthorizationDecisionRequest revocation = request == null
                 ? new ProductAuthorizationDecisionRequest(
                 ProductAuthorizationStatus.REVOKED, null)

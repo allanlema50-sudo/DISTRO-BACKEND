@@ -108,7 +108,7 @@ public class ProductLifecycleService {
         if (request.getDescription() != null) item.setDescription(trimToNull(request.getDescription()));
         if (request.getUnitPrice() != null) item.setUnitPrice(request.getUnitPrice());
         if (request.getSku() != null) {
-            String sku = normalize(request.getSku());
+            String sku = normalize(requireText(request.getSku(), "SKU"));
             if (!sku.equalsIgnoreCase(item.getSku())
                     && stockItemRepository.existsByOrganization_IdAndSkuIgnoreCase(manufacturer.getId(), sku)) {
                 throw new ApiException(ErrorCode.DUPLICATE_SKU);
@@ -214,12 +214,14 @@ public class ProductLifecycleService {
     }
 
     private boolean visibleTo(AuthenticatedUser actor, StockItem item) {
-        if (actor == null || !isPublishedAndActive(item)) return false;
+        if (actor == null) return false;
+        if (actor.role() == com.example.distrobackend.Domain.enums.UserRole.SUPER_ADMIN) return true;
         if (actor.role() != null && actor.role().name().startsWith("MANUFACTURER_")) {
             return actor.organizationId() != null && item.getOrganization() != null
                     && item.getOrganization().getType() == Organizationtype.MANUFACTURER
                     && actor.organizationId().equals(item.getOrganization().getId());
         }
+        if (!isPublishedAndActive(item)) return false;
         if (actor.role() != null && actor.organizationId() != null
                 && actor.role().name().startsWith("DISTRIBUTOR_")) {
             return (item.getOrganization() != null

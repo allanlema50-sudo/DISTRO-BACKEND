@@ -85,6 +85,8 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
               and s.publicationStatus = com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED
               and s.category is not null
               and s.sourceStockItem is not null
+              and s.sourceStockItem.active = true
+              and s.sourceStockItem.publicationStatus = com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED
               and s.sourceStockItem.organization.type = com.example.distrobackend.Domain.enums.Organizationtype.MANUFACTURER
               and s.organization.type = com.example.distrobackend.Domain.enums.Organizationtype.DISTRIBUTOR
               and s.warehouse.active = true

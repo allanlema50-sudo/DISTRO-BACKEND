@@ -105,6 +105,7 @@ Important environment values:
 | `FRONTEND_BASE_URL` | `http://localhost:4200` | Base URL used in onboarding and invitation links |
 | `MAIL_ENABLED` | `false` | Enables post-commit onboarding email delivery |
 | `MAIL_HOST` / `MAIL_PORT` | empty / `587` | SMTP server settings when mail is enabled |
+| `GMAIL_SMTP_USERNAME` / `GMAIL_SMTP_APP_PASSWORD` | empty | Gmail SMTP account and app password; configure only in the deployment secret settings |
 | `ONBOARDING_ACTIVATION_TTL` | `24h` | Lifetime of an approved administrator activation link |
 | `ONBOARDING_INVITATION_TTL` | `7d` | Lifetime of an organization administrator/staff invitation link |
 | `ONBOARDING_SUBMISSION_WINDOW` | `15m` | Database-coordinated public access-request admission window |
@@ -574,8 +575,14 @@ JWT contains the new role. Do not expose a public endpoint for assigning
 production deployment.
 
 For production, set `SPRING_PROFILES_ACTIVE=prod` and configure the real OTP
-provider variables. The default `local` profile uses the development OTP
-adapter and must not be used for a live deployment.
+provider variables. `OTP_PROVIDER=mailgun` sends OTPs through Mailgun's HTTPS
+API and works with the sandbox domain for up to five individually verified
+recipient addresses. Set `MAILGUN_API_KEY` and `MAILGUN_DOMAIN` in Render; use
+`MAILGUN_API_BASE_URL=https://api.mailgun.net` for the US region or
+`https://api.eu.mailgun.net` for the EU region. Set `MAIL_ENABLED=true` to send
+post-approval activation links and invitations through the same Mailgun HTTPS
+API. The local profile logs OTP codes for development and must not be used for
+a live deployment.
 
 ### Platform administration API
 

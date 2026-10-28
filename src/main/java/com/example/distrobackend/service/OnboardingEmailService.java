@@ -1,6 +1,7 @@
 package com.example.distrobackend.service;
 
 import com.example.distrobackend.event.OnboardingEmailRequested;
+import com.example.distrobackend.integration.notification.MailgunEmailClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
@@ -20,6 +21,7 @@ import org.springframework.transaction.event.TransactionalEventListener;
 @Slf4j
 public class OnboardingEmailService {
     private final ObjectProvider<JavaMailSender> mailSender;
+    private final MailgunEmailClient mailgunEmailClient;
 
     @Value("${app.mail.enabled:false}")
     private boolean enabled;
@@ -31,6 +33,15 @@ public class OnboardingEmailService {
     public void deliver(OnboardingEmailRequested event) {
         if (!enabled) {
             log.debug("Onboarding email delivery is disabled");
+            return;
+        }
+        if (mailgunEmailClient.isConfigured()) {
+            try {
+                mailgunEmailClient.send(event.recipient(), event.subject(), event.body());
+            } catch (RuntimeException ex) {
+                // The onboarding record and token remain the source of truth.
+                log.error("Onboarding email delivery failed for recipient domain", ex);
+            }
             return;
         }
         JavaMailSender sender = mailSender.getIfAvailable();

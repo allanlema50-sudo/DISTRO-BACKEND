@@ -38,6 +38,9 @@ public class OtpService {
     @Value("${app.otp.resend-cooldown-seconds:60}")
     private long cooldownSeconds;
 
+    @Value("${otp.provider:http}")
+    private String otpProvider;
+
     /**
      * Generates a 6-digit code, stores only its hash, invalidates older pending codes, and sends it.
      * noRollbackFor: the cooldown check throws before any write, and forgotPassword deliberately catches it;
@@ -58,7 +61,9 @@ public class OtpService {
 
         OtpVerification otp = new OtpVerification();
         otp.setUser(user);
-        otp.setDestination(user.getPhoneNumber());
+        boolean emailDelivery = "resend".equalsIgnoreCase(otpProvider)
+                || "mailgun".equalsIgnoreCase(otpProvider);
+        otp.setDestination(emailDelivery ? user.getEmail() : user.getPhoneNumber());
         otp.setCodeHash(passwordEncoder.encode(code));
         otp.setPurpose(purpose);
         otp.setStatus(OtpStatus.PENDING);

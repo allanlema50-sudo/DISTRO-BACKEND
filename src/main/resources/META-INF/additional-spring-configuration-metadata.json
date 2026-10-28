@@ -26,6 +26,7 @@
     { "name": "app.onboarding.max-submissions-per-window", "type": "java.lang.Integer", "description": "Maximum accepted public onboarding submissions per window." },
     { "name": "app.onboarding.max-document-storage", "type": "org.springframework.util.unit.DataSize", "description": "Maximum private onboarding evidence storage." },
     { "name": "app.onboarding.document-retention", "type": "java.time.Duration", "description": "Retention period for rejected or expired onboarding evidence." },
+    { "name": "app.product.image-max-size-bytes", "type": "java.lang.Long", "description": "Maximum actual product-image size accepted by the multipart product API." },
     { "name": "app.mail.enabled", "type": "java.lang.Boolean", "description": "Whether onboarding email delivery is enabled." },
     { "name": "app.mail.from", "type": "java.lang.String", "description": "Sender address for onboarding email." },
     { "name": "app.orders.delivery-fee", "type": "java.math.BigDecimal", "description": "Default delivery fee." },

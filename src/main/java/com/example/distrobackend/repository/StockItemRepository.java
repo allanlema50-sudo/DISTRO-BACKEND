@@ -26,7 +26,10 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
     @Query("""
             select s from StockItem s
             where s.active = true
+              and s.publicationStatus = com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED
               and s.sourceStockItem is not null
+              and s.sourceStockItem.active = true
+              and s.sourceStockItem.publicationStatus = com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED
               and s.sourceStockItem.organization.type = com.example.distrobackend.Domain.enums.Organizationtype.MANUFACTURER
               and s.organization.type = com.example.distrobackend.Domain.enums.Organizationtype.DISTRIBUTOR
               and s.warehouse.active = true
@@ -37,6 +40,7 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
     @Query("""
             select s from StockItem s
             where s.active = true
+              and s.publicationStatus = com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED
               and (:category = '' or lower(s.category) = lower(:category))
             """)
     Page<StockItem> findActiveCatalogForPlatform(
@@ -45,6 +49,7 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
     @Query("""
             select s from StockItem s
             where s.active = true
+              and s.publicationStatus = com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED
               and s.organization.id = :organizationId
               and (:category = '' or lower(s.category) = lower(:category))
             """)
@@ -56,9 +61,12 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
     @Query("""
             select s from StockItem s
             where s.active = true
+              and s.publicationStatus = com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED
               and (s.organization.type = :manufacturerType
                    or (s.organization.id = :organizationId
                        and s.sourceStockItem is not null
+                       and s.sourceStockItem.active = true
+                       and s.sourceStockItem.publicationStatus = com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED
                        and s.sourceStockItem.organization.type = :manufacturerType
                        and s.warehouse.active = true))
               and (:category = '' or lower(s.category) = lower(:category))
@@ -73,8 +81,12 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
 
     @Query("""
             select distinct s.category from StockItem s
-            where s.active = true and s.category is not null
+            where s.active = true
+              and s.publicationStatus = com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED
+              and s.category is not null
               and s.sourceStockItem is not null
+              and s.sourceStockItem.active = true
+              and s.sourceStockItem.publicationStatus = com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED
               and s.sourceStockItem.organization.type = com.example.distrobackend.Domain.enums.Organizationtype.MANUFACTURER
               and s.organization.type = com.example.distrobackend.Domain.enums.Organizationtype.DISTRIBUTOR
               and s.warehouse.active = true
@@ -84,14 +96,18 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
 
     @Query("""
             select distinct s.category from StockItem s
-            where s.active = true and s.category is not null
+            where s.active = true
+              and s.publicationStatus = com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED
+              and s.category is not null
             order by s.category
             """)
     java.util.List<String> findActiveCategoriesForPlatform();
 
     @Query("""
             select distinct s.category from StockItem s
-            where s.active = true and s.category is not null
+            where s.active = true
+              and s.publicationStatus = com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED
+              and s.category is not null
               and s.organization.id = :organizationId
             order by s.category
             """)
@@ -99,10 +115,14 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
 
     @Query("""
             select distinct s.category from StockItem s
-            where s.active = true and s.category is not null
+            where s.active = true
+              and s.publicationStatus = com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED
+              and s.category is not null
               and (s.organization.type = :manufacturerType
                    or (s.organization.id = :organizationId
                        and s.sourceStockItem is not null
+                       and s.sourceStockItem.active = true
+                       and s.sourceStockItem.publicationStatus = com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED
                        and s.sourceStockItem.organization.type = :manufacturerType
                        and s.warehouse.active = true))
             order by s.category

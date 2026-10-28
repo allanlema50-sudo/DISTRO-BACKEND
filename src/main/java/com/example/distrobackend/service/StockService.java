@@ -7,6 +7,7 @@ import com.example.distrobackend.Domain.entity.StockMovement;
 import com.example.distrobackend.Domain.entity.Warehouse;
 import com.example.distrobackend.Domain.enums.StockMovementType;
 import com.example.distrobackend.Domain.enums.Organizationtype;
+import com.example.distrobackend.Domain.enums.ProductPublicationStatus;
 import com.example.distrobackend.Domain.enums.RestockRequestStatus;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
@@ -49,6 +50,7 @@ public class StockService {
     private final UserRepository userRepository;
     private final RestockRequestRepository restockRequestRepository;
     private final WarehouseRepository warehouseRepository;
+    private final ProductAuthorizationService productAuthorizationService;
 
     @Transactional(readOnly = true)
     public Page<StockItemResponse> list(AuthenticatedUser user, Pageable pageable) {
@@ -88,7 +90,7 @@ public class StockService {
     public ProductResponse catalogItem(AuthenticatedUser user, UUID productId) {
         requireCatalogRole(user);
         StockItem item = stockItemRepository.findById(productId)
-                .filter(StockItem::isActive)
+                .filter(this::isPublishedAndActive)
                 .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.STOCK_ITEM_NOT_FOUND));
         boolean visible = switch (user.role()) {
             case SUPER_ADMIN -> true;
@@ -97,9 +99,11 @@ public class StockService {
                     && item.getOrganization().getType() == Organizationtype.DISTRIBUTOR
                     && item.getSourceStockItem().getOrganization() != null
                     && item.getSourceStockItem().getOrganization().getType() == Organizationtype.MANUFACTURER
+                    && isPublishedAndActive(item.getSourceStockItem())
                     && item.getWarehouse() != null && item.getWarehouse().isActive();
             case MANUFACTURER_ADMIN, MANUFACTURER_STAFF -> user.organizationId() != null
                     && item.getOrganization() != null
+                    && item.getOrganization().getType() == Organizationtype.MANUFACTURER
                     && user.organizationId().equals(item.getOrganization().getId());
             case DISTRIBUTOR_ADMIN, DISTRIBUTOR_STAFF -> user.organizationId() != null
                     && ((item.getOrganization() != null
@@ -109,6 +113,7 @@ public class StockService {
                     && item.getSourceStockItem() != null
                     && item.getSourceStockItem().getOrganization() != null
                     && item.getSourceStockItem().getOrganization().getType() == Organizationtype.MANUFACTURER
+                    && isPublishedAndActive(item.getSourceStockItem())
                     && item.getWarehouse() != null && item.getWarehouse().isActive()));
             default -> false;
         };
@@ -168,11 +173,14 @@ public class StockService {
         item.setOrganization(manufacturer);
         item.setSku(sku);
         item.setName(request.name().trim());
+        // The legacy JSON endpoint has no image field. Keep the product hidden
+        // until the multipart lifecycle endpoint publishes it after image validation.
+        item.setPublicationStatus(ProductPublicationStatus.DRAFT);
         item.setCategory(trimToNull(request.category()));
         item.setUnitPrice(request.unitPrice());
         item.setQuantityOnHand(request.initialQuantity());
         item.setReorderThreshold(request.reorderThreshold());
-        item.setActive(true);
+        item.setActive(false);
         stockItemRepository.saveAndFlush(item);
 
         if (request.initialQuantity() > 0) {
@@ -206,6 +214,10 @@ public class StockService {
             throw new ApiException(ErrorCode.BAD_REQUEST,
                     "The source stock item must be an active manufacturer product");
         }
+        if (!productAuthorizationService.isApproved(source.getId(), distributor.getId())) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED,
+                    "The distributor is not authorized to offer this manufacturer product");
+        }
 
         Warehouse warehouse = warehouseRepository
                 .findByIdAndOrganization_IdForUpdate(request.warehouseId(), distributor.getId())
@@ -228,6 +240,11 @@ public class StockService {
         offer.setSku(sku);
         offer.setName(source.getName());
         offer.setCategory(source.getCategory());
+        offer.setBrand(source.getBrand());
+        offer.setUnit(source.getUnit());
+        offer.setDescription(source.getDescription());
+        offer.setPublicationStatus(source.getPublicationStatus());
+        offer.setImageAvailable(source.isImageAvailable());
         offer.setUnitPrice(request.sellingPrice());
         offer.setQuantityOnHand(0);
         offer.setReservedQuantity(0);
@@ -289,7 +306,16 @@ public class StockService {
             item.setReorderThreshold(request.reorderThreshold());
         }
         if (request.active() != null) {
-            item.setActive(request.active());
+            if (request.active()) {
+                if (!item.isActive()) {
+                    throw new ApiException(ErrorCode.BAD_REQUEST,
+                            "Use the product publication endpoint to publish a product");
+                }
+                // An already-active product remains active; this makes the
+                // legacy metadata update idempotent without granting activation.
+            } else {
+                item.setActive(false);
+            }
         }
         return StockItemResponse.from(stockItemRepository.save(item));
     }
@@ -456,6 +482,11 @@ public class StockService {
         if (user == null || user.role() == null) {
             throw new ApiException(ErrorCode.ACCESS_DENIED);
         }
+    }
+
+    private boolean isPublishedAndActive(StockItem item) {
+        return item != null && item.isActive()
+                && item.getPublicationStatus() == ProductPublicationStatus.PUBLISHED;
     }
 
     private static void validateMovement(StockMovementType type, Integer delta) {

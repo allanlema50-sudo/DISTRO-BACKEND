@@ -9,6 +9,7 @@ import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.InsufficientStockException;
 import com.example.distrobackend.dto.StockAdjustmentRequest;
+import com.example.distrobackend.dto.StockItemResponse;
 import com.example.distrobackend.dto.CreateRestockRequest;
 import com.example.distrobackend.dto.CreateDistributorOfferRequest;
 import com.example.distrobackend.dto.UpdateDistributorOfferRequest;
@@ -33,7 +34,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -59,6 +59,9 @@ class StockServiceTest {
 
     @Mock
     private WarehouseRepository warehouseRepository;
+
+    @Mock
+    private ProductAuthorizationService productAuthorizationService;
 
     @InjectMocks
     private StockService stockService;
@@ -140,6 +143,75 @@ class StockServiceTest {
                 .hasMessage("At least one product field must be supplied");
 
         verifyNoInteractions(stockItemRepository);
+    }
+
+    @Test
+    void legacyJsonCreateStartsAsDraftUntilProductIsPublishedWithAnImage() {
+        UUID manufacturerId = UUID.randomUUID();
+        com.example.distrobackend.Domain.entity.Organization manufacturer = organization(
+                manufacturerId, Organizationtype.MANUFACTURER);
+        AuthenticatedUser manufacturerAdmin = new AuthenticatedUser(
+                UUID.randomUUID(), UserRole.MANUFACTURER_ADMIN, manufacturerId,
+                Organizationtype.MANUFACTURER, Instant.now().plusSeconds(60));
+        when(organizationRepository.findById(manufacturerId)).thenReturn(java.util.Optional.of(manufacturer));
+        when(stockItemRepository.existsByOrganization_IdAndSkuIgnoreCase(manufacturerId, "MFG-1"))
+                .thenReturn(false);
+        when(stockItemRepository.saveAndFlush(any(StockItem.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        StockItemResponse response = stockService.create(manufacturerAdmin,
+                new com.example.distrobackend.dto.CreateStockItemRequest(
+                        "mfg-1", "Cement", "Building", new java.math.BigDecimal("10.00"), 0, 0));
+
+        assertThat(response.active()).isFalse();
+        assertThat(response.publicationStatus())
+                .isEqualTo(com.example.distrobackend.Domain.enums.ProductPublicationStatus.DRAFT);
+    }
+
+    @Test
+    void legacyJsonUpdateCannotPublishAProduct() {
+        UUID manufacturerId = UUID.randomUUID();
+        com.example.distrobackend.Domain.entity.Organization manufacturer = organization(
+                manufacturerId, Organizationtype.MANUFACTURER);
+        AuthenticatedUser manufacturerAdmin = new AuthenticatedUser(
+                UUID.randomUUID(), UserRole.MANUFACTURER_ADMIN, manufacturerId,
+                Organizationtype.MANUFACTURER, Instant.now().plusSeconds(60));
+        StockItem item = itemWithQuantity(0);
+        item.setOrganization(manufacturer);
+        item.setPublicationStatus(com.example.distrobackend.Domain.enums.ProductPublicationStatus.DRAFT);
+        when(stockItemRepository.findByIdAndOrganization_Id(stockItemId, manufacturerId))
+                .thenReturn(java.util.Optional.of(item));
+
+        assertThatThrownBy(() -> stockService.update(manufacturerAdmin, stockItemId,
+                new com.example.distrobackend.dto.UpdateStockItemRequest(null, null, null, null, true)))
+                .isInstanceOf(ApiException.class)
+                .hasMessage("Use the product publication endpoint to publish a product");
+
+        verify(stockItemRepository, never()).save(any(StockItem.class));
+    }
+
+    @Test
+    void legacyJsonUpdateTreatsActiveTrueAsNoOpForAnAlreadyActiveProduct() {
+        UUID manufacturerId = UUID.randomUUID();
+        com.example.distrobackend.Domain.entity.Organization manufacturer = organization(
+                manufacturerId, Organizationtype.MANUFACTURER);
+        AuthenticatedUser manufacturerAdmin = new AuthenticatedUser(
+                UUID.randomUUID(), UserRole.MANUFACTURER_ADMIN, manufacturerId,
+                Organizationtype.MANUFACTURER, Instant.now().plusSeconds(60));
+        StockItem item = itemWithQuantity(0);
+        item.setOrganization(manufacturer);
+        item.setActive(true);
+        item.setPublicationStatus(com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED);
+        when(stockItemRepository.findByIdAndOrganization_Id(stockItemId, manufacturerId))
+                .thenReturn(java.util.Optional.of(item));
+        when(stockItemRepository.save(any(StockItem.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        StockItemResponse response = stockService.update(manufacturerAdmin, stockItemId,
+                new com.example.distrobackend.dto.UpdateStockItemRequest(null, null, null, null, true));
+
+        assertThat(response.active()).isTrue();
+        verify(stockItemRepository).save(item);
     }
 
     @Test
@@ -268,6 +340,7 @@ class StockServiceTest {
 
         when(organizationRepository.findById(organizationId)).thenReturn(java.util.Optional.of(distributor));
         when(stockItemRepository.findById(source.getId())).thenReturn(java.util.Optional.of(source));
+        when(productAuthorizationService.isApproved(source.getId(), organizationId)).thenReturn(true);
         when(warehouseRepository.findByIdAndOrganization_IdForUpdate(
                 warehouse.getId(), organizationId)).thenReturn(java.util.Optional.of(warehouse));
         when(stockItemRepository.existsByOrganization_IdAndSkuIgnoreCase(organizationId, "DIST-CEMENT"))

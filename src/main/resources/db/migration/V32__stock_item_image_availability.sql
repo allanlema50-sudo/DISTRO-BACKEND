@@ -1,0 +1,2 @@
+ALTER TABLE stock_items
+    ADD COLUMN image_available BOOLEAN NOT NULL DEFAULT FALSE;

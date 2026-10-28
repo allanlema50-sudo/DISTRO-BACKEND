@@ -90,6 +90,9 @@ services:
       OTP_RESEND_COOLDOWN_SECONDS: ${OTP_RESEND_COOLDOWN_SECONDS:-60}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-onboarding@resend.dev}
+      MAILGUN_API_KEY: ${MAILGUN_API_KEY:-}
+      MAILGUN_DOMAIN: ${MAILGUN_DOMAIN:-}
+      MAILGUN_API_BASE_URL: ${MAILGUN_API_BASE_URL:-https://api.mailgun.net}
     ports:
       - "127.0.0.1:${API_PORT:-8080}:8080"
     depends_on:

@@ -579,8 +579,10 @@ provider variables. `OTP_PROVIDER=mailgun` sends OTPs through Mailgun's HTTPS
 API and works with the sandbox domain for up to five individually verified
 recipient addresses. Set `MAILGUN_API_KEY` and `MAILGUN_DOMAIN` in Render; use
 `MAILGUN_API_BASE_URL=https://api.mailgun.net` for the US region or
-`https://api.eu.mailgun.net` for the EU region. The local profile logs OTP
-codes for development and must not be used for a live deployment.
+`https://api.eu.mailgun.net` for the EU region. Set `MAIL_ENABLED=true` to send
+post-approval activation links and invitations through the same Mailgun HTTPS
+API. The local profile logs OTP codes for development and must not be used for
+a live deployment.
 
 ### Platform administration API
 

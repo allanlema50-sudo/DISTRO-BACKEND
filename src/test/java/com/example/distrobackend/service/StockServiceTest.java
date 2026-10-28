@@ -179,7 +179,7 @@ class StockServiceTest {
         StockItem item = itemWithQuantity(0);
         item.setOrganization(manufacturer);
         item.setPublicationStatus(com.example.distrobackend.Domain.enums.ProductPublicationStatus.DRAFT);
-        when(stockItemRepository.findByIdAndOrganizationIdForUpdate(stockItemId, manufacturerId))
+        when(stockItemRepository.findByIdAndOrganization_Id(stockItemId, manufacturerId))
                 .thenReturn(java.util.Optional.of(item));
 
         assertThatThrownBy(() -> stockService.update(manufacturerAdmin, stockItemId,
@@ -202,7 +202,7 @@ class StockServiceTest {
         item.setOrganization(manufacturer);
         item.setActive(true);
         item.setPublicationStatus(com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED);
-        when(stockItemRepository.findByIdAndOrganizationIdForUpdate(stockItemId, manufacturerId))
+        when(stockItemRepository.findByIdAndOrganization_Id(stockItemId, manufacturerId))
                 .thenReturn(java.util.Optional.of(item));
         when(stockItemRepository.save(any(StockItem.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));

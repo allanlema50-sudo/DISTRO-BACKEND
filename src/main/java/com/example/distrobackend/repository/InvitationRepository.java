@@ -19,6 +19,7 @@ public interface InvitationRepository
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select invitation from Invitation invitation join fetch invitation.organization "
+            + "left join fetch invitation.invitedUser "
             + "where invitation.tokenHash = :tokenHash")
     Optional<Invitation> findByTokenHashForUpdate(@Param("tokenHash") String tokenHash);
 
@@ -36,4 +37,6 @@ public interface InvitationRepository
             UUID organizationId,
             InvitationStatus status
     );
+
+    Optional<Invitation> findTopByInvitedUser_IdOrderByCreatedAtDesc(UUID userId);
 }

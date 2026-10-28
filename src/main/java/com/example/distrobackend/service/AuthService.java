@@ -133,6 +133,9 @@ public class AuthService {
         if (user.getStatus() == UserStatus.DEACTIVATED) {
             throw new ApiException(ErrorCode.ACCOUNT_DEACTIVATED);
         }
+        if (user.getStatus() == UserStatus.INVITED) {
+            throw new ApiException(ErrorCode.ACCOUNT_INVITED);
+        }
         if (requiresPhoneVerification(user) && !user.isPhoneVerified()) {
             throw new ApiException(ErrorCode.ACCOUNT_NOT_VERIFIED);
         }
@@ -154,6 +157,9 @@ public class AuthService {
         }
         if (user.getStatus() == UserStatus.DEACTIVATED) {
             throw new ApiException(ErrorCode.ACCOUNT_DEACTIVATED);
+        }
+        if (user.getStatus() == UserStatus.INVITED) {
+            throw new ApiException(ErrorCode.ACCOUNT_INVITED);
         }
         return issueTokens(user);
     }
@@ -232,6 +238,9 @@ public class AuthService {
         }
         if (user.getStatus() == UserStatus.DEACTIVATED) {
             throw new ApiException(ErrorCode.ACCOUNT_DEACTIVATED);
+        }
+        if (user.getStatus() == UserStatus.INVITED) {
+            throw new ApiException(ErrorCode.ACCOUNT_INVITED);
         }
     }
 

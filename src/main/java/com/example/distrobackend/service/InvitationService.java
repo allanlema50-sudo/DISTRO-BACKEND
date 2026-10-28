@@ -13,6 +13,7 @@ import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.Exception.OnboardingExpiredException;
 import com.example.distrobackend.Util.PhoneNormalizer;
 import com.example.distrobackend.dto.AcceptInvitationRequest;
+import com.example.distrobackend.dto.CreateDriverInvitationRequest;
 import com.example.distrobackend.dto.CreateInvitationRequest;
 import com.example.distrobackend.dto.InvitationPublicResponse;
 import com.example.distrobackend.dto.InvitationResponse;
@@ -107,6 +108,113 @@ public class InvitationService {
         return InvitationResponse.from(saved, null);
     }
 
+    /**
+     * Creates the driver account in an INVITED state before sending the email.
+     * The account cannot authenticate until the invitation is accepted.
+     */
+    @Transactional
+    public InvitationResponse createDriver(AuthenticatedUser actor,
+                                           CreateDriverInvitationRequest request) {
+        UUID organizationId = requireOrganizationAdmin(actor);
+        Organization organization = organizationRepository.findById(organizationId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Organization not found"));
+        if (organization.getType() != com.example.distrobackend.Domain.enums.Organizationtype.DISTRIBUTOR) {
+            throw new ApiException(ErrorCode.ROLE_NOT_ALLOWED,
+                    "Drivers can only be onboarded by distributor organizations");
+        }
+
+        String email = normalizeEmail(request.email());
+        String phone = PhoneNormalizer.normalize(request.phoneNumber());
+        if (userRepository.existsByEmail(email)) throw new ApiException(ErrorCode.DUPLICATE_EMAIL);
+        if (userRepository.existsByPhoneNumber(phone)) throw new ApiException(ErrorCode.DUPLICATE_PHONE);
+        if (invitationRepository.existsByEmailIgnoreCaseAndOrganizationIdAndStatus(
+                email, organizationId, InvitationStatus.PENDING)) {
+            throw new ApiException(ErrorCode.CONFLICT, "A pending driver invitation already exists");
+        }
+
+        User invitedUser = new User();
+        invitedUser.setFullName(request.fullName().trim());
+        invitedUser.setEmail(email);
+        invitedUser.setPhoneNumber(phone);
+        invitedUser.setPasswordHash(passwordEncoder.encode(SecretTokenService.generate()));
+        invitedUser.setRole(UserRole.DRIVER);
+        invitedUser.setOrganization(organization);
+        invitedUser.setStatus(com.example.distrobackend.Domain.enums.UserStatus.INVITED);
+        invitedUser.setEmailVerified(false);
+        invitedUser.setPhoneVerified(false);
+        User savedUser = userRepository.save(invitedUser);
+
+        // RiderProfile is created on first driver-profile read/update so the
+        // invitation transaction does not need a second persistence aggregate.
+        String rawToken = SecretTokenService.generate();
+        Invitation invitation = new Invitation();
+        invitation.setOrganization(organization);
+        invitation.setInvitedUser(savedUser);
+        invitation.setDriverLicenseNumber(request.licenseNumber().trim());
+        invitation.setFullName(request.fullName().trim());
+        invitation.setEmail(email);
+        invitation.setPhoneNumber(phone);
+        invitation.setRole(UserRole.DRIVER);
+        invitation.setTokenHash(SecretTokenService.sha256(rawToken));
+        invitation.setStatus(InvitationStatus.PENDING);
+        invitation.setExpiresAt(OffsetDateTime.now().plus(invitationTtl));
+        Invitation saved = invitationRepository.save(invitation);
+
+        String link = buildLink("/accept-invitation?token=" + rawToken);
+        eventPublisher.publishEvent(new OnboardingEmailRequested(
+                saved.getEmail(), "You have been invited to drive for LogiFlow",
+                "You have been invited to join " + organization.getName()
+                        + " as a driver. Complete setup here:\n\n" + link));
+        return InvitationResponse.from(saved, null);
+    }
+
+    @Transactional
+    public InvitationResponse resendDriverInvitation(AuthenticatedUser actor, UUID driverId) {
+        UUID organizationId = requireOrganizationAdmin(actor);
+        User driver = userRepository.findWithOrganizationById(driverId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Driver not found"));
+        if (driver.getRole() != UserRole.DRIVER || driver.getOrganization() == null
+                || !organizationId.equals(driver.getOrganization().getId())) {
+            throw new ApiException(ErrorCode.NOT_FOUND, "Driver not found");
+        }
+        if (driver.getStatus() != com.example.distrobackend.Domain.enums.UserStatus.INVITED) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "Only an invited driver can receive another invitation");
+        }
+
+        Invitation previous = invitationRepository.findTopByInvitedUser_IdOrderByCreatedAtDesc(driverId)
+                .orElseThrow(() -> new ApiException(ErrorCode.INVITATION_NOT_FOUND));
+        OffsetDateTime now = OffsetDateTime.now();
+        if (previous.getStatus() == InvitationStatus.PENDING
+                && previous.getExpiresAt().isAfter(now)) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "The driver's current invitation is still valid");
+        }
+        if (previous.getStatus() == InvitationStatus.PENDING) {
+            previous.setStatus(InvitationStatus.EXPIRED);
+            invitationRepository.save(previous);
+        }
+
+        String rawToken = SecretTokenService.generate();
+        Invitation invitation = new Invitation();
+        invitation.setOrganization(driver.getOrganization());
+        invitation.setInvitedUser(driver);
+        invitation.setDriverLicenseNumber(previous.getDriverLicenseNumber());
+        invitation.setFullName(driver.getFullName());
+        invitation.setEmail(driver.getEmail());
+        invitation.setPhoneNumber(driver.getPhoneNumber());
+        invitation.setRole(UserRole.DRIVER);
+        invitation.setTokenHash(SecretTokenService.sha256(rawToken));
+        invitation.setStatus(InvitationStatus.PENDING);
+        invitation.setExpiresAt(now.plus(invitationTtl));
+        Invitation saved = invitationRepository.save(invitation);
+        String link = buildLink("/accept-invitation?token=" + rawToken);
+        eventPublisher.publishEvent(new OnboardingEmailRequested(
+                saved.getEmail(), "Your LogiFlow driver invitation",
+                "Complete your driver account setup here:\n\n" + link));
+        return InvitationResponse.from(saved, null);
+    }
+
     @Transactional(readOnly = true)
     public List<InvitationResponse> list(AuthenticatedUser actor) {
         List<Invitation> invitations = isPlatformAdmin(actor)
@@ -143,20 +251,28 @@ public class InvitationService {
             throw new ApiException(ErrorCode.BAD_REQUEST,
                     "The phone number does not match the invitation");
         }
-        if (userRepository.existsByEmail(invitation.getEmail())) {
-            throw new ApiException(ErrorCode.DUPLICATE_EMAIL);
+        User user = invitation.getInvitedUser();
+        if (user == null) {
+            if (userRepository.existsByEmail(invitation.getEmail())) {
+                throw new ApiException(ErrorCode.DUPLICATE_EMAIL);
+            }
+            if (userRepository.existsByPhoneNumber(phone)) {
+                throw new ApiException(ErrorCode.DUPLICATE_PHONE);
+            }
+            user = new User();
+            user.setFullName(invitation.getFullName());
+            user.setEmail(invitation.getEmail());
+            user.setPhoneNumber(phone);
+            user.setRole(invitation.getRole());
+            user.setOrganization(invitation.getOrganization());
+        } else if (user.getStatus() != com.example.distrobackend.Domain.enums.UserStatus.INVITED) {
+            throw new ApiException(ErrorCode.INVITATION_STATE_CONFLICT,
+                    "The invited account is no longer available");
+        } else {
+            user.setPhoneNumber(phone);
         }
-        if (userRepository.existsByPhoneNumber(phone)) {
-            throw new ApiException(ErrorCode.DUPLICATE_PHONE);
-        }
-
-        User user = new User();
-        user.setFullName(invitation.getFullName());
-        user.setEmail(invitation.getEmail());
-        user.setPhoneNumber(phone);
         user.setPasswordHash(passwordEncoder.encode(request.password()));
-        user.setRole(invitation.getRole());
-        user.setOrganization(invitation.getOrganization());
+        user.setStatus(com.example.distrobackend.Domain.enums.UserStatus.ACTIVE);
         user.setPhoneVerified(false);
         // Accepting the emailed invitation verifies the organization user's email.
         user.setEmailVerified(true);
@@ -185,6 +301,10 @@ public class InvitationService {
                     "Only pending invitations can be revoked");
         }
         invitation.setStatus(InvitationStatus.REVOKED);
+        if (invitation.getInvitedUser() != null) {
+            invitation.getInvitedUser().setStatus(
+                    com.example.distrobackend.Domain.enums.UserStatus.DEACTIVATED);
+        }
     }
 
     private Invitation findPending(String rawToken) {

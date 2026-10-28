@@ -20,6 +20,7 @@ public enum ErrorCode {
     ACCOUNT_NOT_VERIFIED(HttpStatus.FORBIDDEN, "Account is not verified. Enter the code sent to your phone"),
     ACCOUNT_SUSPENDED(HttpStatus.FORBIDDEN, "Account is suspended. Contact your administrator"),
     ACCOUNT_DEACTIVATED(HttpStatus.FORBIDDEN, "Account is deactivated"),
+    ACCOUNT_INVITED(HttpStatus.FORBIDDEN, "Accept the invitation before signing in"),
 
     NOT_FOUND(HttpStatus.NOT_FOUND, "Resource not found"),
     STOCK_ITEM_NOT_FOUND(HttpStatus.NOT_FOUND, "Stock item not found"),

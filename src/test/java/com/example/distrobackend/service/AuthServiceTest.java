@@ -71,4 +71,24 @@ class AuthServiceTest {
                 .accessToken()).isEqualTo("access-token");
         verify(otpService, never()).issue(any(), any());
     }
+
+    @Test
+    void invitedDriverCannotLogInBeforeInvitationAcceptance() {
+        AuthService authService = new AuthService(
+                userRepository, passwordEncoder, jwtService, refreshTokenService, otpService);
+        User user = new User();
+        user.setRole(com.example.distrobackend.Domain.enums.UserRole.DRIVER);
+        user.setEmail("driver@example.test");
+        user.setStatus(UserStatus.INVITED);
+        user.setPasswordHash("encoded-password");
+        when(userRepository.findByEmail("driver@example.test")).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("StrongPassword1!", "encoded-password")).thenReturn(true);
+
+        assertThatThrownBy(() -> authService.login(
+                new LoginRequest("driver@example.test", "StrongPassword1!")))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("invitation");
+        verify(jwtService, never()).generateAccessToken(any());
+        verify(refreshTokenService, never()).create(any());
+    }
 }

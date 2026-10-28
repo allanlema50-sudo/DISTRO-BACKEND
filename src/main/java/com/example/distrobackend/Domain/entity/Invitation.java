@@ -30,6 +30,13 @@ public class Invitation {
     @JoinColumn(name = "organization_id", nullable = false)
     private Organization organization;
 
+    @OneToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "invited_user_id", unique = true)
+    private User invitedUser;
+
+    @Column(name = "driver_license_number", length = 50)
+    private String driverLicenseNumber;
+
     @Column(name = "full_name", nullable = false, length = 150)
     private String fullName;
 

@@ -43,9 +43,9 @@ public class MailgunEmailClient {
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBasicAuth("api", apiKey);
-        headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
 
-        MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
+        MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
         body.add("from", "Distro <postmaster@" + domain + ">");
         body.add("to", recipient);
         body.add("subject", subject);

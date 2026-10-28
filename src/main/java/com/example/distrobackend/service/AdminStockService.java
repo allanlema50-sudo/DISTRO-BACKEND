@@ -3,6 +3,7 @@ package com.example.distrobackend.service;
 import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.StockItem;
 import com.example.distrobackend.Domain.entity.StockMovement;
+import com.example.distrobackend.Domain.entity.Warehouse;
 import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.StockMovementType;
 import com.example.distrobackend.Domain.enums.UserRole;
@@ -17,6 +18,7 @@ import com.example.distrobackend.repository.OrganizationRepository;
 import com.example.distrobackend.repository.StockItemRepository;
 import com.example.distrobackend.repository.StockMovementRepository;
 import com.example.distrobackend.repository.UserRepository;
+import com.example.distrobackend.repository.WarehouseRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -35,6 +37,7 @@ public class AdminStockService {
     private final StockMovementRepository stockMovementRepository;
     private final OrganizationRepository organizationRepository;
     private final UserRepository userRepository;
+    private final WarehouseRepository warehouseRepository;
 
     @Transactional(readOnly = true)
     public Page<StockItemResponse> list(AuthenticatedUser actor, UUID organizationId,
@@ -92,6 +95,20 @@ public class AdminStockService {
         }
         StockItem item = stockItemRepository.findByIdForUpdate(inventoryId)
                 .orElseThrow(() -> new ApiException(ErrorCode.STOCK_ITEM_NOT_FOUND));
+        if (Boolean.TRUE.equals(request.active())
+                && item.getSourceStockItem() != null
+                && item.getWarehouse() != null
+                && item.getOrganization() != null) {
+            Warehouse warehouse = warehouseRepository
+                    .findByIdAndOrganization_IdForUpdate(
+                            item.getWarehouse().getId(), item.getOrganization().getId())
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND,
+                            "Warehouse not found for this offer"));
+            if (!warehouse.isActive()) {
+                throw new ApiException(ErrorCode.CONFLICT,
+                        "An offer cannot be activated while its warehouse is inactive");
+            }
+        }
         if (request.name() != null) {
             String name = request.name().trim();
             if (name.isEmpty()) {

@@ -46,4 +46,8 @@ public class Organization {
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
+
+    @Version
+    @Column(name = "version", nullable = false)
+    private long version;
 }

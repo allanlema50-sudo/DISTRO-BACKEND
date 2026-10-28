@@ -11,6 +11,7 @@ import com.example.distrobackend.Exception.InsufficientStockException;
 import com.example.distrobackend.dto.StockAdjustmentRequest;
 import com.example.distrobackend.dto.CreateRestockRequest;
 import com.example.distrobackend.dto.CreateDistributorOfferRequest;
+import com.example.distrobackend.dto.UpdateDistributorOfferRequest;
 import com.example.distrobackend.repository.WarehouseRepository;
 import com.example.distrobackend.repository.OrganizationRepository;
 import com.example.distrobackend.repository.StockItemRepository;
@@ -242,7 +243,7 @@ class StockServiceTest {
 
         when(organizationRepository.findById(organizationId)).thenReturn(java.util.Optional.of(distributor));
         when(stockItemRepository.findById(source.getId())).thenReturn(java.util.Optional.of(source));
-        when(warehouseRepository.findByIdAndOrganization_IdAndActiveTrue(
+        when(warehouseRepository.findByIdAndOrganization_IdForUpdate(
                 warehouse.getId(), organizationId)).thenReturn(java.util.Optional.of(warehouse));
         when(stockItemRepository.existsByOrganization_IdAndSkuIgnoreCase(organizationId, "DIST-CEMENT"))
                 .thenReturn(false);
@@ -256,6 +257,31 @@ class StockServiceTest {
         assertThat(response.organizationId()).isEqualTo(organizationId);
         assertThat(response.quantityOnHand()).isZero();
         verify(stockItemRepository).saveAndFlush(any(StockItem.class));
+    }
+
+    @Test
+    void distributorCannotReactivateOfferInInactiveWarehouse() {
+        var distributor = organization(organizationId, Organizationtype.DISTRIBUTOR);
+        Warehouse warehouse = new Warehouse();
+        warehouse.setId(UUID.randomUUID());
+        warehouse.setOrganization(distributor);
+        warehouse.setActive(false);
+        StockItem offer = itemWithQuantity(0);
+        offer.setOrganization(distributor);
+        offer.setWarehouse(warehouse);
+        offer.setSourceStockItem(new StockItem());
+
+        when(organizationRepository.findById(organizationId)).thenReturn(java.util.Optional.of(distributor));
+        when(stockItemRepository.findByIdAndOrganizationIdForUpdate(stockItemId, organizationId))
+                .thenReturn(java.util.Optional.of(offer));
+        when(warehouseRepository.findByIdAndOrganization_IdForUpdate(
+                warehouse.getId(), organizationId)).thenReturn(java.util.Optional.of(warehouse));
+
+        assertThatThrownBy(() -> stockService.updateDistributorOffer(user, stockItemId,
+                new UpdateDistributorOfferRequest(null, null, true)))
+                .isInstanceOf(ApiException.class)
+                .hasMessage("An offer cannot be activated while its warehouse is inactive");
+        verify(stockItemRepository, never()).save(any(StockItem.class));
     }
 
     private static com.example.distrobackend.Domain.entity.Organization organization(

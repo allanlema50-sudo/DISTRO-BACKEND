@@ -1203,8 +1203,11 @@ src/main/resources/db/migration/
 For a new Docker database, no manual schema setup is required. Flyway runs on
 API startup. For a database that already contains data, do not edit applied
 migrations or use `flyway repair` to hide a mismatch. Review the existing
-schema and organization ownership data first, then follow the migration
-recovery instructions in the migration files and project history.
+schema and organization ownership data first, then follow [the Flyway
+migration-history reconciliation runbook](docs/flyway-migration-reconciliation.md).
+The deployed Supabase database uses V29 for the order-version migration and
+V34 for the organization-version migration; this history must not be changed
+by renaming migration files.
 
 Useful local database commands:
 

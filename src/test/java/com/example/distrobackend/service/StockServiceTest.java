@@ -9,6 +9,7 @@ import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.InsufficientStockException;
 import com.example.distrobackend.dto.StockAdjustmentRequest;
+import com.example.distrobackend.dto.StockItemResponse;
 import com.example.distrobackend.dto.CreateRestockRequest;
 import com.example.distrobackend.dto.CreateDistributorOfferRequest;
 import com.example.distrobackend.dto.UpdateDistributorOfferRequest;
@@ -188,6 +189,30 @@ class StockServiceTest {
                 .hasMessage("Use the product publication endpoint to publish a product");
 
         verify(stockItemRepository, never()).save(any(StockItem.class));
+    }
+
+    @Test
+    void legacyJsonUpdateTreatsActiveTrueAsNoOpForAnAlreadyActiveProduct() {
+        UUID manufacturerId = UUID.randomUUID();
+        com.example.distrobackend.Domain.entity.Organization manufacturer = organization(
+                manufacturerId, Organizationtype.MANUFACTURER);
+        AuthenticatedUser manufacturerAdmin = new AuthenticatedUser(
+                UUID.randomUUID(), UserRole.MANUFACTURER_ADMIN, manufacturerId,
+                Organizationtype.MANUFACTURER, Instant.now().plusSeconds(60));
+        StockItem item = itemWithQuantity(0);
+        item.setOrganization(manufacturer);
+        item.setActive(true);
+        item.setPublicationStatus(com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED);
+        when(stockItemRepository.findByIdAndOrganizationIdForUpdate(stockItemId, manufacturerId))
+                .thenReturn(java.util.Optional.of(item));
+        when(stockItemRepository.save(any(StockItem.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        StockItemResponse response = stockService.update(manufacturerAdmin, stockItemId,
+                new com.example.distrobackend.dto.UpdateStockItemRequest(null, null, null, null, true));
+
+        assertThat(response.active()).isTrue();
+        verify(stockItemRepository).save(item);
     }
 
     @Test

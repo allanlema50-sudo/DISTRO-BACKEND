@@ -307,10 +307,15 @@ public class StockService {
         }
         if (request.active() != null) {
             if (request.active()) {
-                throw new ApiException(ErrorCode.BAD_REQUEST,
-                        "Use the product publication endpoint to publish a product");
+                if (!item.isActive()) {
+                    throw new ApiException(ErrorCode.BAD_REQUEST,
+                            "Use the product publication endpoint to publish a product");
+                }
+                // An already-active product remains active; this makes the
+                // legacy metadata update idempotent without granting activation.
+            } else {
+                item.setActive(false);
             }
-            item.setActive(false);
         }
         return StockItemResponse.from(stockItemRepository.save(item));
     }

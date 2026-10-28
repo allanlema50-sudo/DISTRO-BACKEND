@@ -105,6 +105,7 @@ Important environment values:
 | `FRONTEND_BASE_URL` | `http://localhost:4200` | Base URL used in onboarding and invitation links |
 | `MAIL_ENABLED` | `false` | Enables post-commit onboarding email delivery |
 | `MAIL_HOST` / `MAIL_PORT` | empty / `587` | SMTP server settings when mail is enabled |
+| `GMAIL_SMTP_USERNAME` / `GMAIL_SMTP_APP_PASSWORD` | empty | Gmail SMTP account and app password; configure only in the deployment secret settings |
 | `ONBOARDING_ACTIVATION_TTL` | `24h` | Lifetime of an approved administrator activation link |
 | `ONBOARDING_INVITATION_TTL` | `7d` | Lifetime of an organization administrator/staff invitation link |
 | `ONBOARDING_SUBMISSION_WINDOW` | `15m` | Database-coordinated public access-request admission window |

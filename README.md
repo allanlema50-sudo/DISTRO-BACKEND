@@ -1081,6 +1081,69 @@ record location only for trips assigned to them. Location coordinates are
 validated against latitude/longitude ranges. Delivery OTPs are requested by
 the customer and submitted by the assigned driver.
 
+### Driver onboarding and fleet dispatch
+
+Drivers are organization users with `DRIVER` role and `INVITED` status until
+they accept their email invitation. An invited driver cannot log in or receive
+trip assignments. Drivers are currently onboarded by distributor administrators
+because distributors own the delivery fleet.
+
+| Method | Endpoint | Access | Purpose |
+|---|---|---|---|
+| `POST` | `/api/v1/drivers/invitations` | Distributor admin | Create an invited driver and send the email activation link |
+| `POST` | `/api/v1/drivers/{driverId}/invitation` | Distributor admin | Reissue an expired driver invitation |
+| `GET` | `/api/v1/drivers` | Organization staff/admin | List drivers in the caller's organization |
+| `GET` | `/api/v1/drivers/{driverId}` | Organization staff/admin | Read one organization driver |
+| `PATCH` | `/api/v1/drivers/{driverId}` | Organization admin | Update driver profile and license details |
+| `PATCH` | `/api/v1/drivers/{driverId}/status` | Organization admin | Activate, suspend, or deactivate a driver |
+| `PATCH` | `/api/v1/drivers/{driverId}/availability` | Driver or organization admin | Set whether an active driver is available |
+| `POST` | `/api/v1/drivers/me/location` | Driver | Update the driver's latest profile location |
+| `GET` | `/api/v1/vehicles` | Organization staff/admin | List organization vehicles; optional `status` filter |
+| `GET` | `/api/v1/vehicles/{vehicleId}` | Organization staff/admin | Read one organization vehicle |
+| `POST` | `/api/v1/vehicles` | Organization admin | Register a vehicle |
+| `PATCH` | `/api/v1/vehicles/{vehicleId}` | Organization admin | Update vehicle details |
+| `PATCH` | `/api/v1/vehicles/{vehicleId}/status` | Organization admin | Set `ACTIVE`, `INACTIVE`, or `MAINTENANCE` |
+| `PATCH` | `/api/v1/trips/{tripId}/assign` | Organization admin/staff | Assign an active driver and optional active vehicle |
+| `POST` | `/api/v1/trips/{tripId}/actions` | Assigned driver or organization staff | Record delay, reroute, pause, resume, or cancellation action |
+| `GET` | `/api/v1/trips/{tripId}/actions` | Authorized trip viewer | Read the trip operational-action history |
+
+Driver invitation payload:
+
+```json
+{
+  "fullName": "Brian Driver",
+  "email": "brian@example.com",
+  "phoneNumber": "+254700000000",
+  "licenseNumber": "DL-123456"
+}
+```
+
+Vehicle payload:
+
+```json
+{
+  "registrationNumber": "KDA 123A",
+  "vehicleType": "VAN",
+  "make": "Toyota",
+  "model": "Hiace",
+  "capacityKg": 1200
+}
+```
+
+Trip assignment accepts both resources and validates that neither is already
+assigned to another scheduled, ongoing, or delayed trip:
+
+```json
+{
+  "riderId": "<driver-user-id>",
+  "vehicleId": "<vehicle-id>"
+}
+```
+
+Operational actions require a non-blank note. Drivers may report delays and
+reroutes for their own assigned trip; organization staff may perform the
+broader operational actions within their organization.
+
 ### Notifications and organization workspaces
 
 | Method | Endpoint | Access | Purpose |

@@ -33,7 +33,7 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
               and s.sourceStockItem.organization.type = com.example.distrobackend.Domain.enums.Organizationtype.MANUFACTURER
               and s.organization.type = com.example.distrobackend.Domain.enums.Organizationtype.DISTRIBUTOR
               and s.warehouse.active = true
-              and (:category is null or lower(s.category) = lower(:category))
+              and (:category = '' or lower(s.category) = lower(:category))
             """)
     Page<StockItem> findActiveCatalog(@Param("category") String category, Pageable pageable);
 
@@ -41,7 +41,7 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
             select s from StockItem s
             where s.active = true
               and s.publicationStatus = com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED
-              and (:category is null or lower(s.category) = lower(:category))
+              and (:category = '' or lower(s.category) = lower(:category))
             """)
     Page<StockItem> findActiveCatalogForPlatform(
             @Param("category") String category, Pageable pageable);
@@ -51,7 +51,7 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
             where s.active = true
               and s.publicationStatus = com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED
               and s.organization.id = :organizationId
-              and (:category is null or lower(s.category) = lower(:category))
+              and (:category = '' or lower(s.category) = lower(:category))
             """)
     Page<StockItem> findActiveCatalogForOrganization(
             @Param("organizationId") UUID organizationId,
@@ -69,7 +69,7 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
                        and s.sourceStockItem.publicationStatus = com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED
                        and s.sourceStockItem.organization.type = :manufacturerType
                        and s.warehouse.active = true))
-              and (:category is null or lower(s.category) = lower(:category))
+              and (:category = '' or lower(s.category) = lower(:category))
             """)
     Page<StockItem> findActiveCatalogForDistributor(
             @Param("organizationId") UUID organizationId,

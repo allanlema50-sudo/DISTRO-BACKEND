@@ -69,7 +69,8 @@ public class StockService {
     @Transactional(readOnly = true)
     public Page<ProductResponse> catalog(AuthenticatedUser user, String category, Pageable pageable) {
         requireCatalogRole(user);
-        String normalizedCategory = category == null || category.isBlank() ? null : category.trim();
+        // Empty string (not null) so PostgreSQL can type the JPQL category parameter.
+        String normalizedCategory = category == null || category.isBlank() ? "" : category.trim();
         Page<StockItem> items = switch (user.role()) {
             case SUPER_ADMIN -> stockItemRepository.findActiveCatalogForPlatform(normalizedCategory, pageable);
             case CUSTOMER -> stockItemRepository.findActiveCatalog(normalizedCategory, pageable);
@@ -217,9 +218,13 @@ public class StockService {
         }
 
         Warehouse warehouse = warehouseRepository
-                .findByIdAndOrganization_IdAndActiveTrue(request.warehouseId(), distributor.getId())
+                .findByIdAndOrganization_IdForUpdate(request.warehouseId(), distributor.getId())
                 .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.NOT_FOUND,
-                        "Active warehouse not found for this distributor"));
+                        "Warehouse not found for this distributor"));
+        if (!warehouse.isActive()) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "The selected warehouse is inactive and cannot receive an offer");
+        }
 
         String sku = normalizeSku(request.sku());
         if (stockItemRepository.existsByOrganization_IdAndSkuIgnoreCase(distributor.getId(), sku)) {
@@ -260,6 +265,14 @@ public class StockService {
                 .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.STOCK_ITEM_NOT_FOUND));
         if (offer.getSourceStockItem() == null || offer.getWarehouse() == null) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "The selected stock item is not a distributor offer");
+        }
+        Warehouse warehouse = warehouseRepository
+                .findByIdAndOrganization_IdForUpdate(offer.getWarehouse().getId(), distributor.getId())
+                .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.NOT_FOUND,
+                        "Warehouse not found for this distributor"));
+        if (request.active() != null && request.active() && !warehouse.isActive()) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "An offer cannot be activated while its warehouse is inactive");
         }
         if (request.sellingPrice() != null) offer.setUnitPrice(request.sellingPrice());
         if (request.reorderThreshold() != null) offer.setReorderThreshold(request.reorderThreshold());

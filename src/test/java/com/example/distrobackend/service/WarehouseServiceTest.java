@@ -52,7 +52,7 @@ class WarehouseServiceTest {
         UUID organizationId = UUID.randomUUID();
         UUID warehouseId = UUID.randomUUID();
         Warehouse warehouse = warehouse(warehouseId, organizationId);
-        when(warehouseRepository.findByIdAndOrganization_Id(warehouseId, organizationId))
+        when(warehouseRepository.findByIdAndOrganization_IdForUpdate(warehouseId, organizationId))
                 .thenReturn(Optional.of(warehouse));
         when(stockItemRepository.existsByWarehouse_IdAndActiveTrue(warehouseId)).thenReturn(true);
 
@@ -68,7 +68,7 @@ class WarehouseServiceTest {
         UUID warehouseId = UUID.randomUUID();
         Warehouse warehouse = warehouse(warehouseId, organizationId);
         warehouse.setVersion(4);
-        when(warehouseRepository.findByIdAndOrganization_Id(warehouseId, organizationId))
+        when(warehouseRepository.findByIdAndOrganization_IdForUpdate(warehouseId, organizationId))
                 .thenReturn(Optional.of(warehouse));
 
         assertThatThrownBy(() -> service().updateStatus(actor(organizationId), warehouseId,

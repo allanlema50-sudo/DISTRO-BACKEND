@@ -9,8 +9,10 @@ import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.dto.AccessRequestApprovalResponse;
 import com.example.distrobackend.dto.AccessRequestCreateRequest;
 import com.example.distrobackend.dto.AccessRequestResponse;
+import com.example.distrobackend.dto.AccessRequestSubmissionResponse;
 import com.example.distrobackend.event.OnboardingEmailRequested;
 import com.example.distrobackend.repository.AccessRequestRepository;
+import org.springframework.mock.web.MockMultipartFile;
 import com.example.distrobackend.repository.OrganizationRepository;
 import com.example.distrobackend.repository.UserRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
@@ -45,6 +47,8 @@ class AccessRequestServiceTest {
     @Mock private PasswordEncoder passwordEncoder;
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private NotificationService notificationService;
+    @Mock private AccessRequestDocumentService accessRequestDocumentService;
+    @Mock private AccessRequestSubmissionLimiter accessRequestSubmissionLimiter;
 
     private AccessRequestService accessRequestService;
 
@@ -56,7 +60,9 @@ class AccessRequestServiceTest {
                 userRepository,
                 passwordEncoder,
                 eventPublisher,
-                notificationService);
+                notificationService,
+                accessRequestDocumentService,
+                accessRequestSubmissionLimiter);
         ReflectionTestUtils.setField(accessRequestService, "frontendBaseUrl", "https://app.example.test/");
         ReflectionTestUtils.setField(accessRequestService, "activationTtl", Duration.ofHours(24));
     }
@@ -76,13 +82,9 @@ class AccessRequestServiceTest {
             return request;
         });
 
-        AccessRequestResponse response = accessRequestService.submit(new AccessRequestCreateRequest(
-                Organizationtype.MANUFACTURER,
-                "Example Manufacturer",
-                "Amina Owner",
-                "+254712345678",
-                "amina@example.test",
-                "admin@example-manufacturer.test"));
+        AccessRequestSubmissionResponse response = accessRequestService.submit(request(
+                        Organizationtype.MANUFACTURER, "amina@example.test", "admin@example-manufacturer.test"),
+                validPdf("incorporation.pdf"), validPng("tax.png"));
 
         assertThat(response.status()).isEqualTo(AccessRequestStatus.PENDING);
         verify(notificationService, org.mockito.Mockito.times(2)).create(
@@ -108,13 +110,9 @@ class AccessRequestServiceTest {
             return request;
         });
 
-        AccessRequestResponse response = accessRequestService.submit(new AccessRequestCreateRequest(
-                Organizationtype.DISTRIBUTOR,
-                "Example Distributor",
-                "Brian Owner",
-                "+254712345679",
-                "brian@example.test",
-                "admin@example-distributor.test"));
+        AccessRequestSubmissionResponse response = accessRequestService.submit(request(
+                        Organizationtype.DISTRIBUTOR, "brian@example.test", "admin@example-distributor.test"),
+                validPdf("incorporation.pdf"), validPng("tax.png"));
 
         assertThat(response.status()).isEqualTo(AccessRequestStatus.PENDING);
         verify(accessRequestRepository).save(any(AccessRequest.class));
@@ -212,6 +210,32 @@ class AccessRequestServiceTest {
         request.setOrganizationType(Organizationtype.MANUFACTURER);
         request.setStatus(AccessRequestStatus.PENDING);
         return request;
+    }
+
+    private AccessRequestCreateRequest request(Organizationtype type, String personalEmail,
+                                               String organizationEmail) {
+        return new AccessRequestCreateRequest(
+                type,
+                type == Organizationtype.MANUFACTURER ? "Example Manufacturer" : "Example Distributor",
+                "Kenya",
+                "CPR-123456",
+                "P123456789Z",
+                type == Organizationtype.MANUFACTURER ? "Amina Owner" : "Brian Owner",
+                "Manager",
+                personalEmail,
+                organizationEmail,
+                type == Organizationtype.MANUFACTURER ? "+254712345678" : "+254712345679",
+                true);
+    }
+
+    private MockMultipartFile validPdf(String filename) {
+        return new MockMultipartFile("incorporationCertificate", filename, "application/pdf",
+                "%PDF-1.7\n".getBytes());
+    }
+
+    private MockMultipartFile validPng(String filename) {
+        return new MockMultipartFile("taxCertificate", filename, "image/png",
+                new byte[]{(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A});
     }
 
     private User superAdmin(String email) {

@@ -90,7 +90,7 @@ public class WarehouseService {
     @Transactional
     public WarehouseResponse updateStatus(AuthenticatedUser user, UUID warehouseId,
                                          UpdateWarehouseStatusRequest request) {
-        Warehouse warehouse = findOwnedWarehouse(user, warehouseId);
+        Warehouse warehouse = findOwnedWarehouseForUpdate(user, warehouseId);
         checkVersion(warehouse, request.version());
         if (!request.active() && warehouse.isActive()
                 && stockItemRepository.existsByWarehouse_IdAndActiveTrue(warehouseId)) {
@@ -104,6 +104,12 @@ public class WarehouseService {
     private Warehouse findOwnedWarehouse(AuthenticatedUser user, UUID warehouseId) {
         UUID organizationId = userOrganizationId(user);
         return warehouseRepository.findByIdAndOrganization_Id(warehouseId, organizationId)
+                .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.NOT_FOUND));
+    }
+
+    private Warehouse findOwnedWarehouseForUpdate(AuthenticatedUser user, UUID warehouseId) {
+        UUID organizationId = userOrganizationId(user);
+        return warehouseRepository.findByIdAndOrganization_IdForUpdate(warehouseId, organizationId)
                 .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.NOT_FOUND));
     }
 

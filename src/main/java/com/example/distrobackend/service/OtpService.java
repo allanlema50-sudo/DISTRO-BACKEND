@@ -13,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.interceptor.TransactionAspectSupport;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.security.SecureRandom;
@@ -65,7 +66,15 @@ public class OtpService {
         otp.setExpiresAt(now.plusMinutes(ttlMinutes));
         repository.save(otp);
 
-        otpSender.send(user, purpose, code, ttlMinutes);
+        try {
+            otpSender.send(user, purpose, code, ttlMinutes);
+        } catch (ApiException ex) {
+            // ApiException is generally excluded from rollback here so cooldown and failed-attempt
+            // state can be returned to the caller. Delivery failures are different: a pending OTP
+            // must not survive when the provider did not accept it.
+            TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+            throw ex;
+        }
     }
 
     /**

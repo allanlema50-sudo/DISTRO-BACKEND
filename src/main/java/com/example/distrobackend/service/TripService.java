@@ -8,6 +8,7 @@ import com.example.distrobackend.dto.*;
 import com.example.distrobackend.repository.*;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.security.TripAccessService;
+import com.example.distrobackend.Domain.enums.UserStatus;
 import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
@@ -362,7 +363,7 @@ public class TripService {
     @Transactional(readOnly = true)
     public Page<TripOperationalActionResponse> operationalActions(
             AuthenticatedUser actor, UUID tripId, Pageable pageable) {
-        getTrip(actor, tripId);
+        get(actor, tripId);
         return tripOperationalActionRepository.findByTrip_IdOrderByCreatedAtDesc(tripId, pageable)
                 .map(TripOperationalActionResponse::from);
     }

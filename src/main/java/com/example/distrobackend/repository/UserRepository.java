@@ -37,6 +37,8 @@ public interface UserRepository  extends JpaRepository<User, UUID> {
             @Param("status") com.example.distrobackend.Domain.enums.UserStatus status,
             @Param("role") com.example.distrobackend.Domain.enums.UserRole role,
             Pageable pageable);
+    Page<User> findByOrganization_IdAndRole(
+            UUID organizationId, UserRole role, Pageable pageable);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select u from User u where u.organization.id = :organizationId and u.role in :roles")
     List<User> findOrganizationAdministratorsForUpdate(

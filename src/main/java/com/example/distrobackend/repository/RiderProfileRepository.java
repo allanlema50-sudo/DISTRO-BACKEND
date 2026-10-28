@@ -1,4 +1,9 @@
 package com.example.distrobackend.repository;
 
-public interface RiderProfileRepository {
+import com.example.distrobackend.Domain.entity.RiderProfile;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+import java.util.UUID;
+
+public interface RiderProfileRepository extends JpaRepository<RiderProfile, UUID> {
 }

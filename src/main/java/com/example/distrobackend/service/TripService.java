@@ -28,6 +28,9 @@ public class TripService {
     private final OrganizationRepository organizationRepository;
     private final TripLocationPingRepository locationPingRepository;
     private final TripStatusHistoryRepository tripStatusHistoryRepository;
+    private final TripOperationalActionRepository tripOperationalActionRepository;
+    private final RiderProfileRepository riderProfileRepository;
+    private final VehicleRepository vehicleRepository;
     private final TripAccessService tripAccessService;
     private final OtpService otpService;
     private final OrderService orderService;
@@ -102,15 +105,41 @@ public class TripService {
 
     @Transactional
     public TripResponse assignRider(AuthenticatedUser actor, UUID tripId, UUID riderId) {
-        Trip trip = getOrganizationTrip(actor, tripId);
-        User rider = userRepository.findById(riderId)
+        return assignRider(actor, tripId, riderId, null);
+    }
+
+    @Transactional
+    public TripResponse assignRider(AuthenticatedUser actor, UUID tripId, UUID riderId, UUID vehicleId) {
+        Trip trip = getOrganizationTripForUpdate(actor, tripId);
+        User rider = userRepository.findByIdForUpdate(riderId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Rider not found"));
         if (rider.getRole() != UserRole.DRIVER || rider.getOrganization() == null
                 || !trip.getOrganization().getId().equals(rider.getOrganization().getId())) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Rider is not valid for this organization");
         }
+        if (rider.getStatus() != UserStatus.ACTIVE) {
+            throw new ApiException(ErrorCode.CONFLICT, "Only an active driver can be assigned");
+        }
         if (trip.getStatus() == TripStatus.COMPLETED || trip.getStatus() == TripStatus.CANCELLED) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Completed or cancelled trips cannot be assigned");
+        }
+        List<TripStatus> activeStatuses = List.of(TripStatus.SCHEDULED, TripStatus.ONGOING, TripStatus.DELAYED);
+        if (tripRepository.existsByRider_IdAndStatusInAndIdNot(riderId, activeStatuses, tripId)) {
+            throw new ApiException(ErrorCode.CONFLICT, "The driver is already assigned to another active trip");
+        }
+        if (vehicleId != null) {
+            Vehicle vehicle = vehicleRepository.findByIdAndOrganizationForUpdate(
+                            vehicleId, trip.getOrganization().getId())
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Vehicle not found"));
+            if (vehicle.getStatus() != VehicleStatus.ACTIVE) {
+                throw new ApiException(ErrorCode.CONFLICT, "Only an active vehicle can be assigned");
+            }
+            if (tripRepository.existsByVehicle_IdAndStatusInAndIdNot(vehicleId, activeStatuses, tripId)) {
+                throw new ApiException(ErrorCode.CONFLICT, "The vehicle is already assigned to another active trip");
+            }
+            trip.setVehicle(vehicle);
+        } else {
+            trip.setVehicle(null);
         }
         trip.setRider(rider);
         Trip saved = tripRepository.save(trip);
@@ -189,6 +218,12 @@ public class TripService {
         ping.setLat(request.lat());
         ping.setLng(request.lng());
         LocationPingResponse response = LocationPingResponse.from(locationPingRepository.save(ping));
+        riderProfileRepository.findById(actor.userId()).ifPresent(profile -> {
+            profile.setCurrentLat(request.lat());
+            profile.setCurrentLng(request.lng());
+            profile.setLastLocationAt(java.time.OffsetDateTime.now());
+            riderProfileRepository.save(profile);
+        });
         messagingTemplate.convertAndSend("/topic/trips/" + tripId + "/location", response);
         return response;
     }
@@ -239,7 +274,7 @@ public class TripService {
     @Transactional
     public TripResponse updateStatus(AuthenticatedUser actor, UUID tripId, TripStatus requested,
                                      String note) {
-        Trip trip = getOrganizationTrip(actor, tripId);
+        Trip trip = getOrganizationTripForUpdate(actor, tripId);
         if (!isAllowedTransition(trip.getStatus(), requested)) {
             throw new ApiException(ErrorCode.INVALID_STATE_TRANSITION,
                     "Trip cannot transition from " + trip.getStatus() + " to " + requested);
@@ -259,6 +294,77 @@ public class TripService {
     @Transactional(readOnly = true)
     public List<LocationPingResponse> tracking(AuthenticatedUser actor, UUID tripId) {
         return locationHistory(actor, tripId);
+    }
+
+    @Transactional
+    public TripOperationalActionResponse operationalAction(
+            AuthenticatedUser actor, UUID tripId, TripOperationalActionRequest request) {
+        Trip trip = getOrganizationTripForUpdate(actor, tripId);
+        TripOperationalActionType action = request.action();
+        if (action == null) throw new ApiException(ErrorCode.BAD_REQUEST, "Action is required");
+        String note = request.note() == null ? "" : request.note().trim();
+        if (note.isBlank()) throw new ApiException(ErrorCode.BAD_REQUEST, "Action note is required");
+        if (actor.role() == UserRole.DRIVER) {
+            if (trip.getRider() == null || !actor.userId().equals(trip.getRider().getId())
+                    || (action != TripOperationalActionType.REPORT_DELAY
+                    && action != TripOperationalActionType.REROUTE)) {
+                throw new ApiException(ErrorCode.ACCESS_DENIED);
+            }
+        } else if (actor.role() != UserRole.MANUFACTURER_ADMIN
+                && actor.role() != UserRole.MANUFACTURER_STAFF
+                && actor.role() != UserRole.DISTRIBUTOR_ADMIN
+                && actor.role() != UserRole.DISTRIBUTOR_STAFF) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+
+        TripStatus previous = trip.getStatus();
+        switch (action) {
+            case REPORT_DELAY -> {
+                if (trip.getStatus() == TripStatus.COMPLETED || trip.getStatus() == TripStatus.CANCELLED) {
+                    throw new ApiException(ErrorCode.INVALID_STATE_TRANSITION,
+                            "A closed trip cannot be marked delayed");
+                }
+                trip.setStatus(TripStatus.DELAYED);
+            }
+            case RESUME -> {
+                if (trip.getStatus() != TripStatus.DELAYED) {
+                    throw new ApiException(ErrorCode.INVALID_STATE_TRANSITION,
+                            "Only a delayed trip can be resumed");
+                }
+                trip.setStatus(TripStatus.ONGOING);
+            }
+            case CANCEL -> {
+                if (!isAllowedTransition(trip.getStatus(), TripStatus.CANCELLED)) {
+                    throw new ApiException(ErrorCode.INVALID_STATE_TRANSITION,
+                            "This trip cannot be cancelled in its current state");
+                }
+                trip.setStatus(TripStatus.CANCELLED);
+            }
+            case PAUSE, REROUTE -> {
+                if (trip.getStatus() == TripStatus.COMPLETED || trip.getStatus() == TripStatus.CANCELLED) {
+                    throw new ApiException(ErrorCode.INVALID_STATE_TRANSITION,
+                            "A closed trip cannot receive operational actions");
+                }
+            }
+        }
+        Trip saved = tripRepository.save(trip);
+        if (previous != saved.getStatus()) {
+            recordStatus(saved, previous, saved.getStatus(), actor, note);
+        }
+        TripOperationalAction actionEntity = new TripOperationalAction();
+        actionEntity.setTrip(saved);
+        actionEntity.setActor(userRepository.getReferenceById(actor.userId()));
+        actionEntity.setActionType(action);
+        actionEntity.setNote(note);
+        return TripOperationalActionResponse.from(tripOperationalActionRepository.save(actionEntity));
+    }
+
+    @Transactional(readOnly = true)
+    public Page<TripOperationalActionResponse> operationalActions(
+            AuthenticatedUser actor, UUID tripId, Pageable pageable) {
+        getTrip(actor, tripId);
+        return tripOperationalActionRepository.findByTrip_IdOrderByCreatedAtDesc(tripId, pageable)
+                .map(TripOperationalActionResponse::from);
     }
 
     @Transactional(readOnly = true)
@@ -283,6 +389,14 @@ public class TripService {
             throw new ApiException(ErrorCode.ACCESS_DENIED);
         }
         return trip;
+    }
+
+    private Trip getOrganizationTripForUpdate(AuthenticatedUser actor, UUID tripId) {
+        if (actor == null || actor.organizationId() == null) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        return tripRepository.findByIdAndOrganizationForUpdate(tripId, actor.organizationId())
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Trip not found"));
     }
 
     private Trip getAssignedTrip(AuthenticatedUser actor, UUID tripId) {

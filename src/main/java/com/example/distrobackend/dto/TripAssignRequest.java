@@ -5,6 +5,10 @@ import jakarta.validation.constraints.NotNull;
 import java.util.UUID;
 
 public record TripAssignRequest(
-        @NotNull UUID riderId
+        @NotNull UUID riderId,
+        UUID vehicleId
 ) {
+    public TripAssignRequest(UUID riderId) {
+        this(riderId, null);
+    }
 }

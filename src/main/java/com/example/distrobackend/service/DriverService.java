@@ -1,12 +1,12 @@
 package com.example.distrobackend.service;
 
 import com.example.distrobackend.Domain.entity.Invitation;
-import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.RiderProfile;
 import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Domain.enums.UserStatus;
 import com.example.distrobackend.Domain.enums.TripStatus;
+import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.Util.PhoneNormalizer;
@@ -56,7 +56,7 @@ public class DriverService {
 
     @Transactional
     public Page<DriverResponse> list(AuthenticatedUser actor, Pageable pageable) {
-        UUID organizationId = requireOrganization(actor);
+        UUID organizationId = requireDistributor(actor);
         return userRepository.findByOrganization_IdAndRole(organizationId, UserRole.DRIVER, pageable)
                 .map(user -> DriverResponse.from(user, ensureProfile(user)));
     }
@@ -70,7 +70,7 @@ public class DriverService {
     @Transactional
     public DriverResponse update(AuthenticatedUser actor, UUID driverId, UpdateDriverRequest request) {
         requireOrganizationAdmin(actor);
-        User driver = findDriver(actor, driverId);
+        User driver = findDriverForUpdate(actor, driverId);
         if (request.fullName() != null) {
             if (request.fullName().isBlank()) {
                 throw new ApiException(ErrorCode.BAD_REQUEST, "Driver name cannot be blank");
@@ -109,7 +109,7 @@ public class DriverService {
             throw new ApiException(ErrorCode.BAD_REQUEST,
                     "Driver status must be ACTIVE, SUSPENDED, or DEACTIVATED");
         }
-        User driver = findDriver(actor, driverId);
+        User driver = findDriverForUpdate(actor, driverId);
         if (request.status() != UserStatus.ACTIVE
                 && tripRepository.existsByRider_IdAndStatusIn(driverId,
                 java.util.List.of(TripStatus.SCHEDULED, TripStatus.ONGOING, TripStatus.DELAYED))) {
@@ -129,7 +129,7 @@ public class DriverService {
     @Transactional
     public DriverResponse updateAvailability(AuthenticatedUser actor, UUID driverId,
                                              UpdateDriverAvailabilityRequest request) {
-        User driver = findDriver(actor, driverId);
+        User driver = findDriverForUpdate(actor, driverId);
         if (actor.role() != UserRole.DRIVER && !isOrganizationAdmin(actor)) {
             throw new ApiException(ErrorCode.ACCESS_DENIED);
         }
@@ -158,8 +158,19 @@ public class DriverService {
     }
 
     private User findDriver(AuthenticatedUser actor, UUID driverId) {
-        UUID organizationId = requireOrganization(actor);
+        UUID organizationId = requireDistributor(actor);
         User driver = userRepository.findWithOrganizationById(driverId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Driver not found"));
+        if (driver.getRole() != UserRole.DRIVER || driver.getOrganization() == null
+                || !organizationId.equals(driver.getOrganization().getId())) {
+            throw new ApiException(ErrorCode.NOT_FOUND, "Driver not found");
+        }
+        return driver;
+    }
+
+    private User findDriverForUpdate(AuthenticatedUser actor, UUID driverId) {
+        UUID organizationId = requireDistributor(actor);
+        User driver = userRepository.findByIdForUpdate(driverId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Driver not found"));
         if (driver.getRole() != UserRole.DRIVER || driver.getOrganization() == null
                 || !organizationId.equals(driver.getOrganization().getId())) {
@@ -187,8 +198,17 @@ public class DriverService {
         return actor.organizationId();
     }
 
+    private static UUID requireDistributor(AuthenticatedUser actor) {
+        UUID organizationId = requireOrganization(actor);
+        if (actor.organizationType() != Organizationtype.DISTRIBUTOR) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED,
+                    "Driver operations are available only to distributor organizations");
+        }
+        return organizationId;
+    }
+
     private static void requireOrganizationAdmin(AuthenticatedUser actor) {
-        requireOrganization(actor);
+        requireDistributor(actor);
         if (!isOrganizationAdmin(actor)) {
             throw new ApiException(ErrorCode.ACCESS_DENIED);
         }

@@ -5,6 +5,7 @@ import com.example.distrobackend.Domain.entity.Vehicle;
 import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Domain.enums.VehicleStatus;
 import com.example.distrobackend.Domain.enums.TripStatus;
+import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.dto.CreateVehicleRequest;
@@ -116,6 +117,10 @@ public class VehicleService {
                 && actor.role() != UserRole.DISTRIBUTOR_ADMIN
                 && actor.role() != UserRole.DISTRIBUTOR_STAFF)) {
             throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        if (actor.organizationType() != Organizationtype.DISTRIBUTOR) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED,
+                    "Fleet vehicles are available only to distributor organizations");
         }
         return actor.organizationId();
     }

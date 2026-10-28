@@ -62,7 +62,7 @@ class DriverServiceTest {
     void driverCannotChangeAnotherDriversAvailability() {
         UUID actorId = UUID.randomUUID();
         AuthenticatedUser actor = principal(actorId, UserRole.DRIVER);
-        when(userRepository.findWithOrganizationById(driver.getId())).thenReturn(Optional.of(driver));
+        when(userRepository.findByIdForUpdate(driver.getId())).thenReturn(Optional.of(driver));
 
         assertThatThrownBy(() -> driverService.updateAvailability(actor, driver.getId(),
                 new UpdateDriverAvailabilityRequest(true)))
@@ -77,7 +77,7 @@ class DriverServiceTest {
         AuthenticatedUser actor = principal(UUID.randomUUID(), UserRole.DISTRIBUTOR_ADMIN);
         RiderProfile profile = new RiderProfile();
         profile.setUser(driver);
-        when(userRepository.findWithOrganizationById(driver.getId())).thenReturn(Optional.of(driver));
+        when(userRepository.findByIdForUpdate(driver.getId())).thenReturn(Optional.of(driver));
         when(riderProfileRepository.findById(driver.getId())).thenReturn(Optional.of(profile));
 
         assertThatThrownBy(() -> driverService.updateAvailability(actor, driver.getId(),
@@ -95,6 +95,20 @@ class DriverServiceTest {
                 new DriverLocationRequest(0.0, 36.0)))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("Only drivers");
+    }
+
+    @Test
+    void manufacturerCannotUseDistributorDriverOperations() {
+        AuthenticatedUser actor = new AuthenticatedUser(
+                UUID.randomUUID(), UserRole.MANUFACTURER_ADMIN, organizationId,
+                Organizationtype.MANUFACTURER,
+                Instant.now().plus(Duration.ofMinutes(5)));
+
+        assertThatThrownBy(() -> driverService.list(actor,
+                org.springframework.data.domain.PageRequest.of(0, 20)))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("distributor");
+        verifyNoInteractions(userRepository);
     }
 
     private AuthenticatedUser principal(UUID userId, UserRole role) {

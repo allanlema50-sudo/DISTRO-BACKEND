@@ -4,8 +4,11 @@ import com.example.distrobackend.Domain.entity.DistributorProductAuthorization;
 import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.StockItem;
 import com.example.distrobackend.Domain.enums.Organizationtype;
+import com.example.distrobackend.Domain.enums.NotificationPriority;
+import com.example.distrobackend.Domain.enums.NotificationType;
 import com.example.distrobackend.Domain.enums.ProductAuthorizationStatus;
 import com.example.distrobackend.Domain.enums.ProductPublicationStatus;
+import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.Exception.ResourceNotFoundException;
@@ -36,6 +39,7 @@ public class ProductAuthorizationService {
     private final StockItemRepository stockItemRepository;
     private final OrganizationRepository organizationRepository;
     private final UserRepository userRepository;
+    private final NotificationService notificationService;
 
     @Transactional(readOnly = true)
     public Page<ProductAuthorizationResponse> list(AuthenticatedUser actor, Pageable pageable) {
@@ -115,7 +119,20 @@ public class ProductAuthorizationService {
         authorization.setDecisionNote(request.note() == null ? null : request.note().trim());
         authorization.setDecidedBy(userRepository.getReferenceById(actor.userId()));
         authorization.setDecidedAt(OffsetDateTime.now());
-        return ProductAuthorizationResponse.from(authorizationRepository.save(authorization));
+        authorizationRepository.save(authorization);
+        String title = request.status() == ProductAuthorizationStatus.APPROVED
+                ? "Product authorization approved" : "Product authorization updated";
+        String message = request.status() == ProductAuthorizationStatus.APPROVED
+                ? "The manufacturer approved your product authorization request. You may now create a distributor offer and purchase order."
+                : "The manufacturer changed your product authorization request to " + request.status() + ".";
+        userRepository.findByOrganization_IdAndRole(
+                        authorization.getDistributorOrganization().getId(),
+                        UserRole.DISTRIBUTOR_ADMIN,
+                        org.springframework.data.domain.Pageable.unpaged())
+                .forEach(user -> notificationService.create(user, title, message,
+                        NotificationType.ORDER, NotificationPriority.HIGH,
+                        authorization.getId(), "PRODUCT_AUTHORIZATION"));
+        return ProductAuthorizationResponse.from(authorization);
     }
 
     public boolean isApproved(UUID productId, UUID distributorId) {

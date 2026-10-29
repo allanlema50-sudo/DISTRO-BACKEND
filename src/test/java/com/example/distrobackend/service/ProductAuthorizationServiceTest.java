@@ -41,6 +41,9 @@ class ProductAuthorizationServiceTest {
     @Mock
     private UserRepository userRepository;
 
+    @Mock
+    private NotificationService notificationService;
+
     @Test
     void distributorCannotRequestAuthorizationForUnpublishedProduct() {
         UUID distributorId = UUID.randomUUID();
@@ -58,7 +61,8 @@ class ProductAuthorizationServiceTest {
 
         AuthenticatedUser actor = actor(distributorId, Organizationtype.DISTRIBUTOR);
         ProductAuthorizationService service = new ProductAuthorizationService(
-                authorizationRepository, stockItemRepository, organizationRepository, userRepository);
+                authorizationRepository, stockItemRepository, organizationRepository, userRepository,
+                notificationService);
 
         assertThatThrownBy(() -> service.request(actor, new CreateProductAuthorizationRequest(productId)))
                 .isInstanceOf(ApiException.class)
@@ -75,7 +79,8 @@ class ProductAuthorizationServiceTest {
                 authorizationId, manufacturerId)).thenReturn(Optional.of(authorization));
 
         ProductAuthorizationService service = new ProductAuthorizationService(
-                authorizationRepository, stockItemRepository, organizationRepository, userRepository);
+                authorizationRepository, stockItemRepository, organizationRepository, userRepository,
+                notificationService);
 
         assertThatThrownBy(() -> service.decide(
                 actor(manufacturerId, Organizationtype.MANUFACTURER), authorizationId,
@@ -88,7 +93,8 @@ class ProductAuthorizationServiceTest {
     void decisionNoteCannotExceedStorageLimit() {
         UUID manufacturerId = UUID.randomUUID();
         ProductAuthorizationService service = new ProductAuthorizationService(
-                authorizationRepository, stockItemRepository, organizationRepository, userRepository);
+                authorizationRepository, stockItemRepository, organizationRepository, userRepository,
+                notificationService);
 
         assertThatThrownBy(() -> service.decide(
                 actor(manufacturerId, Organizationtype.MANUFACTURER), UUID.randomUUID(),

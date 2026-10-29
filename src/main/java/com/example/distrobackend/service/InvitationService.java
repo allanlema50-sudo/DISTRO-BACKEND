@@ -173,13 +173,20 @@ public class InvitationService {
                 || !organizationId.equals(driver.getOrganization().getId())) {
             throw new ApiException(ErrorCode.NOT_FOUND, "Driver not found");
         }
-        if (driver.getStatus() != com.example.distrobackend.Domain.enums.UserStatus.INVITED) {
+        boolean revokedUnacceptedDriver =
+                driver.getStatus() == com.example.distrobackend.Domain.enums.UserStatus.DEACTIVATED;
+        if (driver.getStatus() != com.example.distrobackend.Domain.enums.UserStatus.INVITED
+                && !revokedUnacceptedDriver) {
             throw new ApiException(ErrorCode.CONFLICT,
                     "Only an invited driver can receive another invitation");
         }
 
         Invitation previous = invitationRepository.findTopByInvitedUser_IdOrderByCreatedAtDesc(driverId)
                 .orElseThrow(() -> new ApiException(ErrorCode.INVITATION_NOT_FOUND));
+        if (revokedUnacceptedDriver && previous.getStatus() != InvitationStatus.REVOKED) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "Only a revoked, unaccepted driver can be re-invited");
+        }
         OffsetDateTime now = OffsetDateTime.now();
         if (previous.getStatus() == InvitationStatus.PENDING
                 && previous.getExpiresAt().isAfter(now)) {
@@ -189,6 +196,14 @@ public class InvitationService {
         if (previous.getStatus() == InvitationStatus.PENDING) {
             previous.setStatus(InvitationStatus.EXPIRED);
             invitationRepository.save(previous);
+        }
+
+        if (revokedUnacceptedDriver) {
+            driver.setStatus(com.example.distrobackend.Domain.enums.UserStatus.INVITED);
+            driver.setEmailVerified(false);
+            driver.setPhoneVerified(false);
+            driver.setPasswordHash(passwordEncoder.encode(SecretTokenService.generate()));
+            userRepository.save(driver);
         }
 
         String rawToken = SecretTokenService.generate();

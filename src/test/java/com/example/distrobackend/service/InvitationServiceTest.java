@@ -6,10 +6,12 @@ import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.OtpPurpose;
 import com.example.distrobackend.Domain.enums.UserRole;
+import com.example.distrobackend.Domain.enums.UserStatus;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Util.SecretTokenService;
 import com.example.distrobackend.dto.AcceptInvitationRequest;
 import com.example.distrobackend.dto.CreateInvitationRequest;
+import com.example.distrobackend.dto.InvitationResponse;
 import com.example.distrobackend.dto.RegisterResponse;
 import com.example.distrobackend.repository.InvitationRepository;
 import com.example.distrobackend.repository.OrganizationRepository;
@@ -161,6 +163,50 @@ class InvitationServiceTest {
 
         assertThat(response.message()).contains("verification code");
         verify(otpService).issue(invitedDriver, OtpPurpose.ACCOUNT_VERIFICATION);
+    }
+
+    @Test
+    void revokedUnacceptedDriverCanBeReinvited() {
+        Organization distributor = new Organization();
+        distributor.setId(UUID.randomUUID());
+        distributor.setName("Example Distributor");
+        distributor.setType(Organizationtype.DISTRIBUTOR);
+
+        User driver = new User();
+        driver.setId(UUID.randomUUID());
+        driver.setFullName("Revoked Driver");
+        driver.setEmail("revoked-driver@example.test");
+        driver.setPhoneNumber("+254700000003");
+        driver.setRole(UserRole.DRIVER);
+        driver.setStatus(UserStatus.DEACTIVATED);
+        driver.setOrganization(distributor);
+
+        Invitation previous = new Invitation();
+        previous.setId(UUID.randomUUID());
+        previous.setOrganization(distributor);
+        previous.setInvitedUser(driver);
+        previous.setDriverLicenseNumber("DL-987654");
+        previous.setStatus(com.example.distrobackend.Domain.enums.InvitationStatus.REVOKED);
+
+        AuthenticatedUser actor = principal(UserRole.DISTRIBUTOR_ADMIN,
+                distributor.getId(), Organizationtype.DISTRIBUTOR);
+        when(userRepository.findWithOrganizationById(driver.getId())).thenReturn(Optional.of(driver));
+        when(invitationRepository.findTopByInvitedUser_IdOrderByCreatedAtDesc(driver.getId()))
+                .thenReturn(Optional.of(previous));
+        when(passwordEncoder.encode(any())).thenReturn("replacement-password-hash");
+        when(invitationRepository.save(any(Invitation.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(userRepository.save(any(User.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        InvitationResponse response = invitationService.resendDriverInvitation(actor, driver.getId());
+
+        assertThat(response.status()).isEqualTo("PENDING");
+        assertThat(driver.getStatus()).isEqualTo(UserStatus.INVITED);
+        assertThat(driver.isEmailVerified()).isFalse();
+        assertThat(driver.isPhoneVerified()).isFalse();
+        verify(userRepository).save(driver);
+        verify(invitationRepository).save(any(Invitation.class));
     }
 
     private void stubCreateDependencies() {

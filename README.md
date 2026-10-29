@@ -1094,7 +1094,7 @@ fleet.
 | Method | Endpoint | Access | Purpose |
 |---|---|---|---|
 | `POST` | `/api/v1/drivers/invitations` | Distributor admin | Create an invited driver and send the email activation link |
-| `POST` | `/api/v1/drivers/{driverId}/invitation` | Distributor admin | Reissue an expired driver invitation |
+| `POST` | `/api/v1/drivers/{driverId}/invitation` | Distributor admin | Reissue an expired invitation or re-invite a revoked, unaccepted driver |
 | `GET` | `/api/v1/drivers` | Distributor staff/admin | List drivers in the caller's distributor organization |
 | `GET` | `/api/v1/drivers/{driverId}` | Distributor staff/admin or that driver | Read one organization driver |
 | `PATCH` | `/api/v1/drivers/{driverId}` | Distributor admin | Update driver profile and license details |

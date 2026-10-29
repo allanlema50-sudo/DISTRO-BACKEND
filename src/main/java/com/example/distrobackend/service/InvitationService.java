@@ -4,9 +4,7 @@ import com.example.distrobackend.Domain.entity.Invitation;
 import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.InvitationStatus;
-// Deferred onboarding option: restore OtpPurpose only if phone verification is
-// deliberately enabled for organization invitations.
-// import com.example.distrobackend.Domain.enums.OtpPurpose;
+import com.example.distrobackend.Domain.enums.OtpPurpose;
 import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
@@ -44,9 +42,7 @@ public class InvitationService {
     private final OrganizationRepository organizationRepository;
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
-    // Deferred onboarding option; intentionally inactive for the current
-    // email-link verification flow:
-    // private final OtpService otpService;
+    private final OtpService otpService;
     private final ApplicationEventPublisher eventPublisher;
 
     @Value("${app.frontend.base-url:http://localhost:4200}")
@@ -278,14 +274,19 @@ public class InvitationService {
         user.setEmailVerified(true);
         userRepository.save(user);
 
+        // Drivers require phone verification before login. The invitation email
+        // establishes email ownership; this code completes the remaining step.
+        if (user.getRole() == UserRole.DRIVER) {
+            otpService.issue(user, OtpPurpose.ACCOUNT_VERIFICATION);
+        }
+
         invitation.setStatus(InvitationStatus.ACCEPTED);
         invitation.setAcceptedAt(OffsetDateTime.now());
         invitationRepository.save(invitation);
-        // Deferred onboarding option; intentionally inactive for the current
-        // email-link verification flow:
-        // otpService.issue(user, OtpPurpose.ACCOUNT_VERIFICATION);
-        return new RegisterResponse(user.getId(),
-                "Invitation accepted. You can now sign in.");
+        String message = user.getRole() == UserRole.DRIVER
+                ? "Invitation accepted. Enter the account-verification code before signing in."
+                : "Invitation accepted. You can now sign in.";
+        return new RegisterResponse(user.getId(), message);
     }
 
     @Transactional

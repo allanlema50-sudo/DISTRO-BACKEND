@@ -4,11 +4,13 @@ import com.example.distrobackend.Domain.entity.Invitation;
 import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.Organizationtype;
+import com.example.distrobackend.Domain.enums.OtpPurpose;
 import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Util.SecretTokenService;
 import com.example.distrobackend.dto.AcceptInvitationRequest;
 import com.example.distrobackend.dto.CreateInvitationRequest;
+import com.example.distrobackend.dto.RegisterResponse;
 import com.example.distrobackend.repository.InvitationRepository;
 import com.example.distrobackend.repository.OrganizationRepository;
 import com.example.distrobackend.repository.UserRepository;
@@ -42,6 +44,7 @@ class InvitationServiceTest {
     @Mock private OrganizationRepository organizationRepository;
     @Mock private UserRepository userRepository;
     @Mock private PasswordEncoder passwordEncoder;
+    @Mock private OtpService otpService;
     @Mock private ApplicationEventPublisher eventPublisher;
 
     private InvitationService invitationService;
@@ -51,7 +54,7 @@ class InvitationServiceTest {
     void setUp() {
         invitationService = new InvitationService(
                 invitationRepository, organizationRepository, userRepository,
-                passwordEncoder, eventPublisher);
+                passwordEncoder, otpService, eventPublisher);
         ReflectionTestUtils.setField(invitationService, "frontendBaseUrl", "https://app.example.test");
         ReflectionTestUtils.setField(invitationService, "invitationTtl", Duration.ofDays(7));
 
@@ -125,6 +128,39 @@ class InvitationServiceTest {
         verify(userRepository).save(savedUser.capture());
         assertThat(savedUser.getValue().isEmailVerified()).isTrue();
         assertThat(savedUser.getValue().isPhoneVerified()).isFalse();
+    }
+
+    @Test
+    void acceptingDriverInvitationIssuesPhoneVerificationOtp() {
+        String rawToken = "driver-invitation-token";
+        User invitedDriver = new User();
+        invitedDriver.setId(UUID.randomUUID());
+        invitedDriver.setRole(UserRole.DRIVER);
+        invitedDriver.setStatus(com.example.distrobackend.Domain.enums.UserStatus.INVITED);
+        invitedDriver.setOrganization(manufacturer);
+
+        Invitation invitation = new Invitation();
+        invitation.setInvitedUser(invitedDriver);
+        invitation.setOrganization(manufacturer);
+        invitation.setFullName("Invited Driver");
+        invitation.setEmail("driver@example.test");
+        invitation.setPhoneNumber("+254700000002");
+        invitation.setRole(UserRole.DRIVER);
+        invitation.setStatus(com.example.distrobackend.Domain.enums.InvitationStatus.PENDING);
+        invitation.setExpiresAt(OffsetDateTime.now().plusHours(1));
+
+        when(invitationRepository.findByTokenHashForUpdate(SecretTokenService.sha256(rawToken)))
+                .thenReturn(Optional.of(invitation));
+        when(userRepository.save(any(User.class)))
+                .thenAnswer(invocationCall -> invocationCall.getArgument(0));
+        when(invitationRepository.save(any(Invitation.class)))
+                .thenAnswer(invocationCall -> invocationCall.getArgument(0));
+
+        RegisterResponse response = invitationService.accept(rawToken,
+                new AcceptInvitationRequest("+254700000002", "StrongPassword1!"));
+
+        assertThat(response.message()).contains("verification code");
+        verify(otpService).issue(invitedDriver, OtpPurpose.ACCOUNT_VERIFICATION);
     }
 
     private void stubCreateDependencies() {

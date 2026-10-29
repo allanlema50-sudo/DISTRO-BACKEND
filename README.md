@@ -1085,15 +1085,18 @@ the customer and submitted by the assigned driver.
 
 Drivers are organization users with `DRIVER` role and `INVITED` status until
 they accept their email invitation. An invited driver cannot log in or receive
-trip assignments. Drivers are currently onboarded by distributor administrators
-because distributors own the delivery fleet.
+trip assignments. After accepting, the driver must verify the account-
+verification code sent through the configured OTP provider before the first
+login. Drivers are currently
+onboarded by distributor administrators because distributors own the delivery
+fleet.
 
 | Method | Endpoint | Access | Purpose |
 |---|---|---|---|
 | `POST` | `/api/v1/drivers/invitations` | Distributor admin | Create an invited driver and send the email activation link |
 | `POST` | `/api/v1/drivers/{driverId}/invitation` | Distributor admin | Reissue an expired driver invitation |
 | `GET` | `/api/v1/drivers` | Distributor staff/admin | List drivers in the caller's distributor organization |
-| `GET` | `/api/v1/drivers/{driverId}` | Distributor staff/admin | Read one organization driver |
+| `GET` | `/api/v1/drivers/{driverId}` | Distributor staff/admin or that driver | Read one organization driver |
 | `PATCH` | `/api/v1/drivers/{driverId}` | Distributor admin | Update driver profile and license details |
 | `PATCH` | `/api/v1/drivers/{driverId}/status` | Distributor admin | Activate, suspend, or deactivate a driver |
 | `PATCH` | `/api/v1/drivers/{driverId}/availability` | Driver or distributor admin | Set whether an active driver is available |
@@ -1131,14 +1134,22 @@ Vehicle payload:
 ```
 
 Trip assignment accepts both resources and validates that neither is already
-assigned to another scheduled, ongoing, or delayed trip:
+assigned to another scheduled, ongoing, or delayed trip. Omitting `vehicleId`
+leaves an existing vehicle assignment unchanged. To explicitly remove the
+vehicle assignment, send `clearVehicle: true` and omit `vehicleId`:
 
 ```json
 {
   "riderId": "<driver-user-id>",
-  "vehicleId": "<vehicle-id>"
+  "vehicleId": "<vehicle-id>",
+  "clearVehicle": false
 }
 ```
+
+The operational-action history is available to the assigned driver,
+organization staff/admin for the trip's organization, and `SUPER_ADMIN`.
+Customers can view permitted trip details but cannot read internal dispatch
+notes or actor identifiers.
 
 Operational actions require a non-blank note. Drivers may report delays and
 reroutes for their own assigned trip; organization staff may perform the

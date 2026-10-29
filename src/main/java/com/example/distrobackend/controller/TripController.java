@@ -122,7 +122,8 @@ public class TripController {
             throw new ApiException(ErrorCode.ACCESS_DENIED, "Role not authorized to assign drivers");
         }
 
-        return tripService.assignRider(me, tripId, request.riderId());
+        return tripService.assignRider(
+                me, tripId, request.riderId(), request.vehicleId(), request.clearVehicle());
     }
 
     @PatchMapping("/{tripId}/status")
@@ -135,5 +136,21 @@ public class TripController {
                     "Only organization staff may update trip status");
         }
         return tripService.updateStatus(me, tripId, request.status(), request.note());
+    }
+
+    @PostMapping("/{tripId}/actions")
+    public TripOperationalActionResponse operationalAction(
+            @AuthenticationPrincipal AuthenticatedUser me,
+            @PathVariable UUID tripId,
+            @Valid @RequestBody TripOperationalActionRequest request) {
+        return tripService.operationalAction(me, tripId, request);
+    }
+
+    @GetMapping("/{tripId}/actions")
+    public Page<TripOperationalActionResponse> operationalActions(
+            @AuthenticationPrincipal AuthenticatedUser me,
+            @PathVariable UUID tripId,
+            Pageable pageable) {
+        return tripService.operationalActions(me, tripId, pageable);
     }
 }

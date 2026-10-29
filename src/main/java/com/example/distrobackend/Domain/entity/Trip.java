@@ -44,6 +44,10 @@ public class Trip {
     @JoinColumn(name = "rider_id")
     private User rider;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "vehicle_id")
+    private Vehicle vehicle;
+
     /** Legacy direct delivery/restock links retained for tracking authorization. */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "order_id")

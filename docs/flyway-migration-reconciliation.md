@@ -141,7 +141,7 @@ problem and make later deployments unsafe.
 
 - Never edit or rename an applied migration.
 - Allocate the next unused version after the highest version in the canonical
-  history; the next new migration after V34 is V35.
+  history; the next new migration after V35 is V36.
 - Check for duplicate versions before opening a pull request.
 - Test startup against both a fresh database and a copy of the production
   database before deployment.

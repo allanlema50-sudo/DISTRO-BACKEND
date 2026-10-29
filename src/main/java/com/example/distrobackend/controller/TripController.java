@@ -122,7 +122,8 @@ public class TripController {
             throw new ApiException(ErrorCode.ACCESS_DENIED, "Role not authorized to assign drivers");
         }
 
-        return tripService.assignRider(me, tripId, request.riderId(), request.vehicleId());
+        return tripService.assignRider(
+                me, tripId, request.riderId(), request.vehicleId(), request.clearVehicle());
     }
 
     @PatchMapping("/{tripId}/status")

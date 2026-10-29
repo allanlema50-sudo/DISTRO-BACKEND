@@ -106,11 +106,21 @@ public class TripService {
 
     @Transactional
     public TripResponse assignRider(AuthenticatedUser actor, UUID tripId, UUID riderId) {
-        return assignRider(actor, tripId, riderId, null);
+        return assignRider(actor, tripId, riderId, null, false);
     }
 
     @Transactional
     public TripResponse assignRider(AuthenticatedUser actor, UUID tripId, UUID riderId, UUID vehicleId) {
+        return assignRider(actor, tripId, riderId, vehicleId, false);
+    }
+
+    @Transactional
+    public TripResponse assignRider(AuthenticatedUser actor, UUID tripId, UUID riderId,
+                                    UUID vehicleId, boolean clearVehicle) {
+        if (clearVehicle && vehicleId != null) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    "vehicleId must be omitted when clearVehicle is true");
+        }
         Trip trip = getOrganizationTripForUpdate(actor, tripId);
         User rider = userRepository.findByIdForUpdate(riderId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Rider not found"));
@@ -139,7 +149,7 @@ public class TripService {
                 throw new ApiException(ErrorCode.CONFLICT, "The vehicle is already assigned to another active trip");
             }
             trip.setVehicle(vehicle);
-        } else {
+        } else if (clearVehicle) {
             trip.setVehicle(null);
         }
         trip.setRider(rider);
@@ -363,7 +373,14 @@ public class TripService {
     @Transactional(readOnly = true)
     public Page<TripOperationalActionResponse> operationalActions(
             AuthenticatedUser actor, UUID tripId, Pageable pageable) {
-        get(actor, tripId);
+        if (actor == null || actor.role() == null) {
+            throw new ApiException(ErrorCode.UNAUTHENTICATED);
+        }
+        if (actor.role() == UserRole.CUSTOMER
+                || (actor.role() != UserRole.SUPER_ADMIN
+                && !tripAccessService.canAccess(actor, tripId))) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
         return tripOperationalActionRepository.findByTrip_IdOrderByCreatedAtDesc(tripId, pageable)
                 .map(TripOperationalActionResponse::from);
     }

@@ -1,7 +1,6 @@
 package com.example.distrobackend.service;
 
 import com.example.distrobackend.Domain.entity.Organization;
-import com.example.distrobackend.Domain.entity.RiderProfile;
 import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.UserRole;
@@ -9,6 +8,7 @@ import com.example.distrobackend.Domain.enums.UserStatus;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.dto.DriverLocationRequest;
 import com.example.distrobackend.dto.UpdateDriverAvailabilityRequest;
+import com.example.distrobackend.dto.UpdateUserStatusRequest;
 import com.example.distrobackend.repository.InvitationRepository;
 import com.example.distrobackend.repository.RiderProfileRepository;
 import com.example.distrobackend.repository.UserRepository;
@@ -75,16 +75,37 @@ class DriverServiceTest {
     void suspendedDriverCannotBecomeAvailable() {
         driver.setStatus(UserStatus.SUSPENDED);
         AuthenticatedUser actor = principal(UUID.randomUUID(), UserRole.DISTRIBUTOR_ADMIN);
-        RiderProfile profile = new RiderProfile();
-        profile.setUser(driver);
         when(userRepository.findByIdForUpdate(driver.getId())).thenReturn(Optional.of(driver));
-        when(riderProfileRepository.findById(driver.getId())).thenReturn(Optional.of(profile));
 
         assertThatThrownBy(() -> driverService.updateAvailability(actor, driver.getId(),
                 new UpdateDriverAvailabilityRequest(true)))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("active driver");
         verify(riderProfileRepository, never()).save(any());
+    }
+
+    @Test
+    void invitedDriverCannotHaveItsStatusChangedBeforeAcceptingInvitation() {
+        driver.setStatus(UserStatus.INVITED);
+        AuthenticatedUser actor = principal(UUID.randomUUID(), UserRole.DISTRIBUTOR_ADMIN);
+        when(userRepository.findByIdForUpdate(driver.getId())).thenReturn(Optional.of(driver));
+
+        assertThatThrownBy(() -> driverService.updateStatus(actor, driver.getId(),
+                new UpdateUserStatusRequest(UserStatus.ACTIVE)))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("invited driver");
+        verify(refreshTokenService, never()).revokeAll(any());
+    }
+
+    @Test
+    void driverCannotReadAnotherDriversProfile() {
+        UUID actorId = UUID.randomUUID();
+        AuthenticatedUser actor = principal(actorId, UserRole.DRIVER);
+
+        assertThatThrownBy(() -> driverService.get(actor, driver.getId()))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("permission");
+        verifyNoInteractions(userRepository, riderProfileRepository);
     }
 
     @Test

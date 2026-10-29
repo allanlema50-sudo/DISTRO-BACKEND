@@ -29,6 +29,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.util.Objects;
 import java.util.UUID;
 
 @Service
@@ -63,6 +64,10 @@ public class DriverService {
 
     @Transactional
     public DriverResponse get(AuthenticatedUser actor, UUID driverId) {
+        if (actor != null && actor.role() == UserRole.DRIVER
+                && !Objects.equals(actor.userId(), driverId)) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
         User driver = findDriver(actor, driverId);
         return DriverResponse.from(driver, ensureProfile(driver));
     }
@@ -110,6 +115,10 @@ public class DriverService {
                     "Driver status must be ACTIVE, SUSPENDED, or DEACTIVATED");
         }
         User driver = findDriverForUpdate(actor, driverId);
+        if (driver.getStatus() == UserStatus.INVITED) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "An invited driver must accept or have the invitation revoked before status changes");
+        }
         if (request.status() != UserStatus.ACTIVE
                 && tripRepository.existsByRider_IdAndStatusIn(driverId,
                 java.util.List.of(TripStatus.SCHEDULED, TripStatus.ONGOING, TripStatus.DELAYED))) {

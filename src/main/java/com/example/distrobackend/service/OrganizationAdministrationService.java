@@ -101,7 +101,7 @@ public class OrganizationAdministrationService {
         }
         if (request.email() != null) organization.setEmail(request.email().isBlank()
                 ? null : request.email().trim().toLowerCase(Locale.ROOT));
-        return OrganizationResponse.from(organizationRepository.save(organization));
+        return OrganizationResponse.from(organizationRepository.saveAndFlush(organization));
     }
 
     @Transactional
@@ -110,7 +110,7 @@ public class OrganizationAdministrationService {
         requirePlatformAdmin(actor);
         Organization organization = findOfType(type, id);
         organization.setStatus(request.status());
-        return OrganizationResponse.from(organizationRepository.save(organization));
+        return OrganizationResponse.from(organizationRepository.saveAndFlush(organization));
     }
 
     @Transactional(readOnly = true)

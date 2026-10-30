@@ -3,6 +3,7 @@ package com.example.distrobackend.service;
 
 import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.OtpPurpose;
+import com.example.distrobackend.Domain.enums.OrganizationStatus;
 import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Domain.enums.UserStatus;
 import com.example.distrobackend.Exception.ApiException;
@@ -241,6 +242,17 @@ public class AuthService {
         }
         if (user.getStatus() == UserStatus.INVITED) {
             throw new ApiException(ErrorCode.ACCOUNT_INVITED);
+        }
+        if (user.getOrganization() != null) {
+            OrganizationStatus organizationStatus = user.getOrganization().getStatus();
+            if (organizationStatus == OrganizationStatus.SUSPENDED) {
+                throw new ApiException(ErrorCode.ACCOUNT_SUSPENDED,
+                        "Organization is suspended. Contact your administrator");
+            }
+            if (organizationStatus != OrganizationStatus.ACTIVE) {
+                throw new ApiException(ErrorCode.ACCOUNT_DEACTIVATED,
+                        "Organization is not active. Contact your administrator");
+            }
         }
     }
 

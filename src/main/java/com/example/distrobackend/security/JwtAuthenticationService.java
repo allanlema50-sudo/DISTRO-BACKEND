@@ -1,6 +1,7 @@
 package com.example.distrobackend.security;
 
 import com.example.distrobackend.Domain.enums.Organizationtype;
+import com.example.distrobackend.Domain.enums.OrganizationStatus;
 import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Domain.enums.UserStatus;
 import com.example.distrobackend.Domain.entity.Organization;
@@ -58,6 +59,9 @@ public class JwtAuthenticationService {
             throw new IllegalArgumentException("JWT account is not active");
         }
         Organization organization = user.getOrganization();
+        if (organization != null && organization.getStatus() != OrganizationStatus.ACTIVE) {
+            throw new IllegalArgumentException("Organization is not active");
+        }
         UUID actualOrganizationId = organization == null ? null : organization.getId();
         Organizationtype actualOrganizationType = organization == null ? null : organization.getType();
         if (user.getRole() != role

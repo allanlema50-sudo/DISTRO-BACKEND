@@ -634,6 +634,18 @@ endpoints support Spring pagination parameters such as `page`, `size`, and
 | `GET` | `/api/admin/dashboard` | Platform-wide operational counts |
 | `GET` | `/api/organizations` | List organizations |
 | `GET` | `/api/organizations/{organizationId}` | View one organization |
+| `GET` | `/api/manufacturers` | List manufacturers; paginated with `page`, `size`, and `sort` |
+| `GET` | `/api/manufacturers/{id}` | Read one manufacturer |
+| `POST` | `/api/manufacturers` | Create one; body uses `name`, `email`, and `type: "MANUFACTURER"` |
+| `PUT` | `/api/manufacturers/{id}` | Update `name` and/or `email`; include current `version` |
+| `PATCH` | `/api/manufacturers/{id}/status` | Set status to `ACTIVE`, `INACTIVE`, or `SUSPENDED` |
+| `GET` | `/api/manufacturers/{id}/users` | List users belonging to a manufacturer |
+| `GET` | `/api/distributors` | List distributors; paginated with `page`, `size`, and `sort` |
+| `GET` | `/api/distributors/{id}` | Read one distributor |
+| `POST` | `/api/distributors` | Create one; body uses `name`, `email`, and `type: "DISTRIBUTOR"` |
+| `PUT` | `/api/distributors/{id}` | Update `name` and/or `email`; include current `version` |
+| `PATCH` | `/api/distributors/{id}/status` | Set status to `ACTIVE`, `INACTIVE`, or `SUSPENDED` |
+| `GET` | `/api/distributors/{id}/users` | List users belonging to a distributor |
 | `POST` | `/api/organizations` | Create an organization record |
 | `GET` | `/api/admin/users` | Search platform users by organization, status, role, and page |
 | `GET` | `/api/admin/users/{userId}` | View one platform user |
@@ -683,6 +695,16 @@ Representative JSON bodies:
   "email": "operations@example.com",
   "type": "MANUFACTURER"
 }
+
+// PUT /api/manufacturers/{id}
+{
+  "name": "Example Manufacturing Ltd",
+  "email": "new-operations@example.com",
+  "version": 0
+}
+
+// PATCH /api/distributors/{id}/status
+{ "status": "SUSPENDED" }
 
 // PATCH /api/admin/users/{userId}/status
 { "status": "SUSPENDED" }

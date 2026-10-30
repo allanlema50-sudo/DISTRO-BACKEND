@@ -2,6 +2,7 @@ package com.example.distrobackend.repository;
 
 import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.UserRole;
+import com.example.distrobackend.Domain.enums.UserStatus;
 import jakarta.persistence.LockModeType;
 
 import org.springframework.data.domain.Page;
@@ -41,6 +42,21 @@ public interface UserRepository  extends JpaRepository<User, UUID> {
             UUID organizationId, UserRole role, Pageable pageable);
     @EntityGraph(attributePaths = "organization")
     Page<User> findByOrganization_Id(UUID organizationId, Pageable pageable);
+    @Query(value = "select u from User u left join RiderProfile profile on profile.user.id = u.id "
+            + "where u.role = :driverRole "
+            + "and (:organizationId is null or u.organization.id = :organizationId) "
+            + "and (:status is null or u.status = :status) "
+            + "and (:available is null or coalesce(profile.available, false) = :available)",
+            countQuery = "select count(u) from User u left join RiderProfile profile on profile.user.id = u.id "
+                    + "where u.role = :driverRole "
+                    + "and (:organizationId is null or u.organization.id = :organizationId) "
+                    + "and (:status is null or u.status = :status) "
+                    + "and (:available is null or coalesce(profile.available, false) = :available)")
+    Page<User> searchDrivers(@Param("organizationId") UUID organizationId,
+                             @Param("status") UserStatus status,
+                             @Param("available") Boolean available,
+                             @Param("driverRole") UserRole driverRole,
+                             Pageable pageable);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select u from User u where u.organization.id = :organizationId and u.role in :roles")
     List<User> findOrganizationAdministratorsForUpdate(

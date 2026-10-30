@@ -250,23 +250,67 @@ public class TripService {
 
     @Transactional(readOnly = true)
     public Page<TripResponse> list(AuthenticatedUser actor, Pageable pageable) {
+        return list(actor, null, pageable);
+    }
+
+    @Transactional(readOnly = true)
+    public Page<TripResponse> list(AuthenticatedUser actor, TripStatus status, Pageable pageable) {
         if (actor == null || actor.role() == null) {
             throw new ApiException(ErrorCode.UNAUTHENTICATED);
         }
         return switch (actor.role()) {
-            case SUPER_ADMIN -> tripRepository.findAll(pageable)
+            case SUPER_ADMIN -> (status == null ? tripRepository.findAll(pageable)
+                    : tripRepository.findByStatus(status, pageable))
                     .map(trip -> TripResponse.from(trip, aggregateItems(trip)));
-            case DRIVER -> tripRepository.findByRiderId(actor.userId(), pageable)
+            case DRIVER -> (status == null ? tripRepository.findByRiderId(actor.userId(), pageable)
+                    : tripRepository.findByRiderIdAndStatus(actor.userId(), status, pageable))
                     .map(trip -> TripResponse.from(trip, aggregateItems(trip)));
-            case CUSTOMER -> tripRepository.findByCustomerId(actor.userId(), pageable)
+            case CUSTOMER -> tripRepository.findByCustomerId(actor.userId(), status, pageable)
                     .map(trip -> customerResponse(trip, actor.userId()));
             case MANUFACTURER_ADMIN, MANUFACTURER_STAFF,
                     DISTRIBUTOR_ADMIN, DISTRIBUTOR_STAFF -> {
                 if (actor.organizationId() == null) throw new ApiException(ErrorCode.ACCESS_DENIED);
-                yield tripRepository.findByOrganization_Id(actor.organizationId(), pageable)
+                yield (status == null
+                        ? tripRepository.findByOrganization_Id(actor.organizationId(), pageable)
+                        : tripRepository.findByOrganization_IdAndStatus(actor.organizationId(), status, pageable))
                         .map(trip -> TripResponse.from(trip, aggregateItems(trip)));
             }
         };
+    }
+
+    @Transactional
+    public TripStopResponse updateStopStatus(AuthenticatedUser actor, UUID tripId, UUID stopId,
+                                             StopStatus requestedStatus) {
+        Trip trip;
+        if (actor != null && actor.role() == UserRole.DRIVER) {
+            trip = tripRepository.findByIdAndRiderForUpdate(tripId, actor.userId())
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Assigned trip not found"));
+        } else if (actor != null && (actor.role() == UserRole.MANUFACTURER_ADMIN
+                || actor.role() == UserRole.MANUFACTURER_STAFF
+                || actor.role() == UserRole.DISTRIBUTOR_ADMIN
+                || actor.role() == UserRole.DISTRIBUTOR_STAFF)) {
+            trip = getOrganizationTripForUpdate(actor, tripId);
+        } else {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        TripStop stop = trip.getStops().stream().filter(candidate -> stopId.equals(candidate.getId()))
+                .findFirst().orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Stop not found in this trip"));
+        if (trip.getStatus() != TripStatus.ONGOING
+                || requestedStatus != StopStatus.IN_PROGRESS || stop.getStatus() != StopStatus.PENDING
+                || trip.getStops().stream().anyMatch(candidate -> candidate.getStatus() == StopStatus.IN_PROGRESS)
+                || trip.getStops().stream().anyMatch(candidate -> candidate.getSequence() < stop.getSequence()
+                && candidate.getStatus() != StopStatus.COMPLETED)) {
+            throw new ApiException(ErrorCode.INVALID_STATE_TRANSITION,
+                    "Only the next pending stop on an ongoing trip can be started; delivery completion requires OTP confirmation");
+        }
+        stop.setStatus(StopStatus.IN_PROGRESS);
+        tripRepository.save(trip);
+        return new TripStopResponse(stop.getId().toString(), stop.getSequence(),
+                new TripLocation(stop.getLocationName(), stop.getLocationAddress(),
+                        stop.getLocationLat(), stop.getLocationLng()), stop.getStatus(),
+                stop.getEtaLabel(), stop.getDistanceFromPreviousKm(),
+                stop.getOrder() == null ? null : stop.getOrder().getOrderNumber(),
+                stop.getContactName(), stop.getContactPhone());
     }
 
     @Transactional(readOnly = true)

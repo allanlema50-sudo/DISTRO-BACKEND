@@ -63,7 +63,29 @@ public class DriverService {
     }
 
     @Transactional
+    public Page<DriverResponse> list(AuthenticatedUser actor, UUID requestedOrganizationId,
+                                     UserStatus status, Boolean available, Pageable pageable) {
+        UUID organizationId;
+        if (actor != null && actor.role() == UserRole.SUPER_ADMIN) {
+            organizationId = requestedOrganizationId;
+        } else {
+            organizationId = requireDistributor(actor);
+            if (requestedOrganizationId != null && !requestedOrganizationId.equals(organizationId)) {
+                throw new ApiException(ErrorCode.ACCESS_DENIED);
+            }
+        }
+        return userRepository.searchDrivers(organizationId, status, available, UserRole.DRIVER, pageable)
+                .map(user -> DriverResponse.from(user, ensureProfile(user)));
+    }
+
+    @Transactional
     public DriverResponse get(AuthenticatedUser actor, UUID driverId) {
+        if (actor != null && actor.role() == UserRole.SUPER_ADMIN) {
+            User driver = userRepository.findWithOrganizationById(driverId)
+                    .filter(user -> user.getRole() == UserRole.DRIVER)
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Driver not found"));
+            return DriverResponse.from(driver, ensureProfile(driver));
+        }
         if (actor != null && actor.role() == UserRole.DRIVER
                 && !Objects.equals(actor.userId(), driverId)) {
             throw new ApiException(ErrorCode.ACCESS_DENIED);

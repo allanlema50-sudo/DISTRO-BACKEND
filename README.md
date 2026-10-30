@@ -665,11 +665,13 @@ endpoints support Spring pagination parameters such as `page`, `size`, and
 | `GET` | `/api/v1/payments/{paymentId}` | View one payment |
 | `PATCH` | `/api/v1/admin/payments/{paymentId}/status` | Mark an unsettled payment failed; successful confirmation only comes from verified callbacks |
 | `GET` | `/api/v1/admin/payments` | Backward-compatible paginated platform payment listing |
-| `GET` | `/api/v1/trips` | List trips visible to the authenticated role |
+| `GET` | `/api/v1/trips` | List trips visible to the authenticated role; optional `status` filter |
 | `GET` | `/api/v1/trips/{tripId}` | View one trip |
 | `PATCH` | `/api/v1/trips/{tripId}/driver` | Assign a driver; `/assign` remains a compatibility alias |
 | `PATCH` | `/api/v1/trips/{tripId}/status` | Update a valid trip status |
 | `GET` | `/api/v1/trips/{tripId}/tracking` | Read persisted tracking points |
+| `GET` | `/api/v1/trips/{tripId}/stops` | List stops visible to the authenticated trip participant |
+| `PATCH` | `/api/v1/trips/{tripId}/stops/{stopId}/status` | Move a pending stop to in-progress; delivery completion still requires OTP confirmation |
 | `GET` | `/api/v1/reports/overview` | Platform overview report |
 | `GET` | `/api/v1/reports/revenue` | Revenue and payment-status report |
 | `GET` | `/api/v1/reports/orders` | Order totals and status counts |
@@ -1117,20 +1119,23 @@ fleet.
 |---|---|---|---|
 | `POST` | `/api/v1/drivers/invitations` | Distributor admin | Create an invited driver and send the email activation link |
 | `POST` | `/api/v1/drivers/{driverId}/invitation` | Distributor admin | Reissue an expired invitation or re-invite a revoked, unaccepted driver |
-| `GET` | `/api/v1/drivers` | Distributor staff/admin | List drivers in the caller's distributor organization |
-| `GET` | `/api/v1/drivers/{driverId}` | Distributor staff/admin or that driver | Read one organization driver |
+| `GET` | `/api/v1/drivers` | Super Admin or distributor staff/admin | List drivers; supports `status=APPROVED` (active), `availability=AVAILABLE|UNAVAILABLE`, and Super Admin `organizationId` filters |
+| `GET` | `/api/v1/drivers/{driverId}` | Super Admin, distributor staff/admin, or that driver | Read one organization driver |
 | `PATCH` | `/api/v1/drivers/{driverId}` | Distributor admin | Update driver profile and license details |
 | `PATCH` | `/api/v1/drivers/{driverId}/status` | Distributor admin | Activate, suspend, or deactivate a driver |
 | `PATCH` | `/api/v1/drivers/{driverId}/availability` | Driver or distributor admin | Set whether an active driver is available |
 | `POST` | `/api/v1/drivers/me/location` | Driver | Update the driver's latest profile location |
-| `GET` | `/api/v1/vehicles` | Distributor staff/admin | List organization vehicles; optional `status` filter |
-| `GET` | `/api/v1/vehicles/{vehicleId}` | Distributor staff/admin | Read one organization vehicle |
-| `POST` | `/api/v1/vehicles` | Distributor admin | Register a vehicle |
-| `PATCH` | `/api/v1/vehicles/{vehicleId}` | Distributor admin | Update vehicle details |
-| `PATCH` | `/api/v1/vehicles/{vehicleId}/status` | Distributor admin | Set `ACTIVE`, `INACTIVE`, or `MAINTENANCE` |
+| `GET` | `/api/v1/vehicles` | Super Admin or distributor staff/admin | List vehicles; filters include `status`, `organizationId` (Super Admin), and derived `status=AVAILABLE` |
+| `GET` | `/api/v1/vehicles/{vehicleId}` | Super Admin or distributor staff/admin | Read one vehicle |
+| `POST` | `/api/v1/vehicles` | Super Admin or distributor admin | Register a vehicle; Super Admin must provide distributor `organizationId` |
+| `PUT` / `PATCH` | `/api/v1/vehicles/{vehicleId}` | Super Admin or distributor admin | Update vehicle details |
+| `PATCH` | `/api/v1/vehicles/{vehicleId}/status` | Super Admin or distributor admin | Set `ACTIVE`, `INACTIVE`, or `MAINTENANCE` |
 | `PATCH` | `/api/v1/trips/{tripId}/assign` | Organization admin/staff | Assign an active driver and optional active vehicle |
 | `POST` | `/api/v1/trips/{tripId}/actions` | Assigned driver or organization staff | Record delay, reroute, pause, resume, or cancellation action |
 | `GET` | `/api/v1/trips/{tripId}/actions` | Authorized trip viewer | Read the trip operational-action history |
+| `GET` | `/api/v1/trips` | Authorized trip viewer | Filter trips with `status`, for example `status=SCHEDULED` |
+| `GET` | `/api/v1/trips/{tripId}/stops` | Authorized trip viewer | List the trip's visible pickup and delivery stops |
+| `PATCH` | `/api/v1/trips/{tripId}/stops/{stopId}/status` | Assigned driver or trip organization staff | Move a pending stop to `IN_PROGRESS`; completion uses the OTP workflow |
 
 Driver invitation payload:
 

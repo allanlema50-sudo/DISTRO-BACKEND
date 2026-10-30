@@ -1,6 +1,7 @@
 package com.example.distrobackend.controller;
 
 import com.example.distrobackend.Domain.enums.UserRole;
+import com.example.distrobackend.Domain.enums.UserStatus;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.dto.CreateDriverInvitationRequest;
@@ -26,6 +27,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.RequestParam;
 
 import java.util.UUID;
 
@@ -55,16 +57,20 @@ public class DriverController {
 
     @GetMapping
     public Page<DriverResponse> list(
-            @AuthenticationPrincipal AuthenticatedUser actor, Pageable pageable) {
-        requireOrganizationRole(actor, false);
-        return driverService.list(actor, pageable);
+            @AuthenticationPrincipal AuthenticatedUser actor,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String availability,
+            @RequestParam(required = false) UUID organizationId,
+            Pageable pageable) {
+        if (actor == null || actor.role() != UserRole.SUPER_ADMIN) requireOrganizationRole(actor, false);
+        return driverService.list(actor, organizationId, parseStatus(status), parseAvailability(availability), pageable);
     }
 
     @GetMapping("/{driverId}")
     public DriverResponse get(
             @AuthenticationPrincipal AuthenticatedUser actor,
             @PathVariable UUID driverId) {
-        requireOrganizationRole(actor, true);
+        if (actor == null || actor.role() != UserRole.SUPER_ADMIN) requireOrganizationRole(actor, true);
         return driverService.get(actor, driverId);
     }
 
@@ -118,5 +124,25 @@ public class DriverController {
                 && actor.role() != UserRole.DISTRIBUTOR_ADMIN)) {
             throw new ApiException(ErrorCode.ACCESS_DENIED);
         }
+    }
+
+    private static UserStatus parseStatus(String status) {
+        if (status == null || status.isBlank()) return null;
+        if ("APPROVED".equalsIgnoreCase(status)) return UserStatus.ACTIVE;
+        try {
+            return UserStatus.valueOf(status.trim().toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException ex) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Invalid driver status");
+        }
+    }
+
+    private static Boolean parseAvailability(String availability) {
+        if (availability == null || availability.isBlank()) return null;
+        return switch (availability.trim().toUpperCase(java.util.Locale.ROOT)) {
+            case "AVAILABLE" -> true;
+            case "UNAVAILABLE" -> false;
+            default -> throw new ApiException(ErrorCode.BAD_REQUEST,
+                    "availability must be AVAILABLE or UNAVAILABLE");
+        };
     }
 }

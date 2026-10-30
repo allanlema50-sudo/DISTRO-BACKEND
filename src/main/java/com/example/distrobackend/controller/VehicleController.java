@@ -33,9 +33,12 @@ public class VehicleController {
     @GetMapping
     public Page<VehicleResponse> list(
             @AuthenticationPrincipal AuthenticatedUser actor,
-            @RequestParam(required = false) VehicleStatus status,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) UUID organizationId,
             Pageable pageable) {
-        return vehicleService.list(actor, status, pageable);
+        VehicleStatus requestedStatus = parseStatus(status);
+        boolean available = "AVAILABLE".equalsIgnoreCase(status);
+        return vehicleService.list(actor, organizationId, requestedStatus, available, pageable);
     }
 
     @GetMapping("/{vehicleId}")
@@ -46,13 +49,17 @@ public class VehicleController {
     }
 
     @PostMapping
+    @org.springframework.web.bind.annotation.ResponseStatus(org.springframework.http.HttpStatus.CREATED)
     public VehicleResponse create(
             @AuthenticationPrincipal AuthenticatedUser actor,
             @Valid @RequestBody CreateVehicleRequest request) {
         return vehicleService.create(actor, request);
     }
 
-    @PatchMapping("/{vehicleId}")
+    @org.springframework.web.bind.annotation.RequestMapping(
+            value = "/{vehicleId}",
+            method = {org.springframework.web.bind.annotation.RequestMethod.PATCH,
+                    org.springframework.web.bind.annotation.RequestMethod.PUT})
     public VehicleResponse update(
             @AuthenticationPrincipal AuthenticatedUser actor,
             @PathVariable UUID vehicleId,
@@ -66,5 +73,15 @@ public class VehicleController {
             @PathVariable UUID vehicleId,
             @Valid @RequestBody VehicleStatusUpdateRequest request) {
         return vehicleService.updateStatus(actor, vehicleId, request);
+    }
+
+    private static VehicleStatus parseStatus(String status) {
+        if (status == null || status.isBlank() || "AVAILABLE".equalsIgnoreCase(status)) return null;
+        try {
+            return VehicleStatus.valueOf(status.trim().toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException ex) {
+            throw new com.example.distrobackend.Exception.ApiException(
+                    com.example.distrobackend.Exception.ErrorCode.BAD_REQUEST, "Invalid vehicle status");
+        }
     }
 }

@@ -128,8 +128,10 @@ public class TripService {
                 || !trip.getOrganization().getId().equals(rider.getOrganization().getId())) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Rider is not valid for this organization");
         }
-        if (rider.getStatus() != UserStatus.ACTIVE) {
-            throw new ApiException(ErrorCode.CONFLICT, "Only an active driver can be assigned");
+        if (rider.getStatus() != UserStatus.ACTIVE
+                || rider.getDriverApprovalStatus() != DriverApprovalStatus.APPROVED) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "Only an approved active driver can be assigned");
         }
         if (trip.getStatus() == TripStatus.COMPLETED || trip.getStatus() == TripStatus.CANCELLED) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Completed or cancelled trips cannot be assigned");

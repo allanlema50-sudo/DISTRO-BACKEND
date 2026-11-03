@@ -3,6 +3,7 @@ package com.example.distrobackend.repository;
 import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Domain.enums.UserStatus;
+import com.example.distrobackend.Domain.enums.DriverApprovalStatus;
 import jakarta.persistence.LockModeType;
 
 import org.springframework.data.domain.Page;
@@ -45,15 +46,18 @@ public interface UserRepository  extends JpaRepository<User, UUID> {
     @Query(value = "select u from User u left join RiderProfile profile on profile.user.id = u.id "
             + "where u.role = :driverRole "
             + "and (:organizationId is null or u.organization.id = :organizationId) "
-            + "and (:status is null or u.status = :status) "
+            + "and (:userStatus is null or u.status = :userStatus) "
+            + "and (:approvalStatus is null or u.driverApprovalStatus = :approvalStatus) "
             + "and (:available is null or coalesce(profile.available, false) = :available)",
             countQuery = "select count(u) from User u left join RiderProfile profile on profile.user.id = u.id "
                     + "where u.role = :driverRole "
                     + "and (:organizationId is null or u.organization.id = :organizationId) "
-                    + "and (:status is null or u.status = :status) "
+                    + "and (:userStatus is null or u.status = :userStatus) "
+                    + "and (:approvalStatus is null or u.driverApprovalStatus = :approvalStatus) "
                     + "and (:available is null or coalesce(profile.available, false) = :available)")
     Page<User> searchDrivers(@Param("organizationId") UUID organizationId,
-                             @Param("status") UserStatus status,
+                             @Param("userStatus") UserStatus userStatus,
+                             @Param("approvalStatus") DriverApprovalStatus approvalStatus,
                              @Param("available") Boolean available,
                              @Param("driverRole") UserRole driverRole,
                              Pageable pageable);

@@ -6,6 +6,7 @@ import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.InvitationStatus;
 import com.example.distrobackend.Domain.enums.OtpPurpose;
 import com.example.distrobackend.Domain.enums.UserRole;
+import com.example.distrobackend.Domain.enums.DriverApprovalStatus;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.Exception.OnboardingExpiredException;
@@ -134,6 +135,7 @@ public class InvitationService {
         invitedUser.setPhoneNumber(phone);
         invitedUser.setPasswordHash(passwordEncoder.encode(SecretTokenService.generate()));
         invitedUser.setRole(UserRole.DRIVER);
+        invitedUser.setDriverApprovalStatus(DriverApprovalStatus.PENDING_REVIEW);
         invitedUser.setOrganization(organization);
         invitedUser.setStatus(com.example.distrobackend.Domain.enums.UserStatus.INVITED);
         invitedUser.setEmailVerified(false);
@@ -200,6 +202,7 @@ public class InvitationService {
 
         if (revokedUnacceptedDriver) {
             driver.setStatus(com.example.distrobackend.Domain.enums.UserStatus.INVITED);
+            driver.setDriverApprovalStatus(DriverApprovalStatus.PENDING_REVIEW);
             driver.setEmailVerified(false);
             driver.setPhoneVerified(false);
             driver.setPasswordHash(passwordEncoder.encode(SecretTokenService.generate()));
@@ -275,6 +278,9 @@ public class InvitationService {
             user.setEmail(invitation.getEmail());
             user.setPhoneNumber(phone);
             user.setRole(invitation.getRole());
+            if (invitation.getRole() == UserRole.DRIVER) {
+                user.setDriverApprovalStatus(DriverApprovalStatus.PENDING_REVIEW);
+            }
             user.setOrganization(invitation.getOrganization());
         } else if (user.getStatus() != com.example.distrobackend.Domain.enums.UserStatus.INVITED) {
             throw new ApiException(ErrorCode.INVITATION_STATE_CONFLICT,

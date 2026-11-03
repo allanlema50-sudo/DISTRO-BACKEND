@@ -3,6 +3,7 @@ package com.example.distrobackend.Domain.entity;
 
 import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Domain.enums.UserStatus;
+import com.example.distrobackend.Domain.enums.DriverApprovalStatus;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -46,6 +47,10 @@ public class User {
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false)
     private UserStatus status = UserStatus.ACTIVE;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "driver_approval_status", length = 30)
+    private DriverApprovalStatus driverApprovalStatus;
 
     // Tenant the user belongs to. Null for customers; set for org staff/admins and drivers.
     @ManyToOne(fetch = FetchType.LAZY)

@@ -2,6 +2,7 @@ package com.example.distrobackend.controller;
 
 import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Domain.enums.UserStatus;
+import com.example.distrobackend.Domain.enums.DriverApprovalStatus;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.dto.CreateDriverInvitationRequest;
@@ -63,7 +64,9 @@ public class DriverController {
             @RequestParam(required = false) UUID organizationId,
             Pageable pageable) {
         if (actor == null || actor.role() != UserRole.SUPER_ADMIN) requireOrganizationRole(actor, false);
-        return driverService.list(actor, organizationId, parseStatus(status), parseAvailability(availability), pageable);
+        DriverStatusFilter statusFilter = parseStatus(status);
+        return driverService.list(actor, organizationId, statusFilter.userStatus(),
+                statusFilter.approvalStatus(), parseAvailability(availability), pageable);
     }
 
     @GetMapping("/{driverId}")
@@ -126,11 +129,17 @@ public class DriverController {
         }
     }
 
-    private static UserStatus parseStatus(String status) {
-        if (status == null || status.isBlank()) return null;
-        if ("APPROVED".equalsIgnoreCase(status)) return UserStatus.ACTIVE;
+    private static DriverStatusFilter parseStatus(String status) {
+        if (status == null || status.isBlank()) return new DriverStatusFilter(null, null);
+        if ("APPROVED".equalsIgnoreCase(status)) {
+            return new DriverStatusFilter(null, DriverApprovalStatus.APPROVED);
+        }
+        if ("PENDING_REVIEW".equalsIgnoreCase(status) || "REJECTED".equalsIgnoreCase(status)) {
+            return new DriverStatusFilter(null, DriverApprovalStatus.valueOf(status.trim().toUpperCase(java.util.Locale.ROOT)));
+        }
         try {
-            return UserStatus.valueOf(status.trim().toUpperCase(java.util.Locale.ROOT));
+            return new DriverStatusFilter(
+                    UserStatus.valueOf(status.trim().toUpperCase(java.util.Locale.ROOT)), null);
         } catch (IllegalArgumentException ex) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Invalid driver status");
         }
@@ -145,4 +154,6 @@ public class DriverController {
                     "availability must be AVAILABLE or UNAVAILABLE");
         };
     }
+
+    private record DriverStatusFilter(UserStatus userStatus, DriverApprovalStatus approvalStatus) {}
 }

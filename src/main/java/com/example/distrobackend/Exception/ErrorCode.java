@@ -21,6 +21,7 @@ public enum ErrorCode {
     ACCOUNT_SUSPENDED(HttpStatus.FORBIDDEN, "Account is suspended. Contact your administrator"),
     ACCOUNT_DEACTIVATED(HttpStatus.FORBIDDEN, "Account is deactivated"),
     ACCOUNT_INVITED(HttpStatus.FORBIDDEN, "Accept the invitation before signing in"),
+    DRIVER_APPROVAL_REJECTED(HttpStatus.FORBIDDEN, "Driver approval was rejected"),
 
     NOT_FOUND(HttpStatus.NOT_FOUND, "Resource not found"),
     STOCK_ITEM_NOT_FOUND(HttpStatus.NOT_FOUND, "Stock item not found"),

@@ -31,6 +31,8 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 
 import java.time.OffsetDateTime;
 import java.util.Objects;
@@ -39,6 +41,9 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 public class DriverService {
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     private final UserRepository userRepository;
     private final RiderProfileRepository riderProfileRepository;
@@ -87,7 +92,7 @@ public class DriverService {
         profile.setLicenseExpiryDate(request.licenseExpiryDate());
         profile.setInternalNotes(request.notes() == null || request.notes().isBlank()
                 ? null : request.notes().trim());
-        return DriverResponse.from(saved, riderProfileRepository.save(profile));
+        return DriverResponse.from(saved, persistNewProfile(profile));
     }
 
     @Transactional
@@ -306,8 +311,16 @@ public class DriverService {
             invitationRepository.findTopByInvitedUser_IdOrderByCreatedAtDesc(driver.getId())
                     .map(Invitation::getDriverLicenseNumber)
                     .ifPresent(profile::setLicenseNumber);
-            return riderProfileRepository.save(profile);
+            return persistNewProfile(profile);
         });
+    }
+
+    private RiderProfile persistNewProfile(RiderProfile profile) {
+        // RiderProfile derives its ID from User through @MapsId. Spring Data's
+        // save() can classify that derived ID as an existing entity and call
+        // merge(), which fails for a new profile. Persist explicitly instead.
+        entityManager.persist(profile);
+        return profile;
     }
 
     private static UUID requireOrganization(AuthenticatedUser actor) {

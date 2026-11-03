@@ -3,6 +3,7 @@ package com.example.distrobackend.security;
 import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.OrganizationStatus;
 import com.example.distrobackend.Domain.enums.UserRole;
+import com.example.distrobackend.Domain.enums.DriverApprovalStatus;
 import com.example.distrobackend.Domain.enums.UserStatus;
 import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.User;
@@ -57,6 +58,10 @@ public class JwtAuthenticationService {
                 .orElseThrow(() -> new IllegalArgumentException("JWT user no longer exists"));
         if (user.getStatus() != UserStatus.ACTIVE) {
             throw new IllegalArgumentException("JWT account is not active");
+        }
+        if (user.getRole() == UserRole.DRIVER
+                && user.getDriverApprovalStatus() == DriverApprovalStatus.REJECTED) {
+            throw new IllegalArgumentException("Driver approval was rejected");
         }
         Organization organization = user.getOrganization();
         if (organization != null && organization.getStatus() != OrganizationStatus.ACTIVE) {

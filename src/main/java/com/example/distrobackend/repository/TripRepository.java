@@ -32,8 +32,10 @@ public interface TripRepository extends JpaRepository<Trip, UUID> {
     boolean existsByIdAndOrganization_Id(UUID tripId, UUID organizationId);
 
     Page<Trip> findByRiderId(UUID riderId, Pageable pageable);
+    Page<Trip> findByRiderIdAndStatus(UUID riderId, TripStatus status, Pageable pageable);
 
     Page<Trip> findByOrganization_Id(UUID organizationId, Pageable pageable);
+    Page<Trip> findByOrganization_IdAndStatus(UUID organizationId, TripStatus status, Pageable pageable);
 
     long countByOrganization_Id(UUID organizationId);
 
@@ -43,13 +45,18 @@ public interface TripRepository extends JpaRepository<Trip, UUID> {
 
     long countByStatus(TripStatus status);
 
+    Page<Trip> findByStatus(TripStatus status, Pageable pageable);
+
     @Query(value = "select distinct t from Trip t left join t.stops s left join s.order stopOrder "
             + "left join t.order tripOrder "
-            + "where stopOrder.customer.id = :customerId or tripOrder.customer.id = :customerId",
+            + "where (stopOrder.customer.id = :customerId or tripOrder.customer.id = :customerId) "
+            + "and (:status is null or t.status = :status)",
             countQuery = "select count(distinct t) from Trip t left join t.stops s left join s.order stopOrder "
                     + "left join t.order tripOrder "
-                    + "where stopOrder.customer.id = :customerId or tripOrder.customer.id = :customerId")
-    Page<Trip> findByCustomerId(@Param("customerId") UUID customerId, Pageable pageable);
+                    + "where (stopOrder.customer.id = :customerId or tripOrder.customer.id = :customerId) "
+                    + "and (:status is null or t.status = :status)")
+    Page<Trip> findByCustomerId(@Param("customerId") UUID customerId,
+                                @Param("status") TripStatus status, Pageable pageable);
 
     List<Trip> findByRiderIdAndStatusIn(UUID riderId, List<TripStatus> statuses);
 
@@ -69,6 +76,12 @@ public interface TripRepository extends JpaRepository<Trip, UUID> {
     Optional<Trip> findByIdAndOrganizationForUpdate(
             @Param("tripId") UUID tripId,
             @Param("organizationId") UUID organizationId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select t from Trip t join fetch t.organization join fetch t.rider "
+            + "where t.id = :tripId and t.rider.id = :riderId")
+    Optional<Trip> findByIdAndRiderForUpdate(@Param("tripId") UUID tripId,
+                                             @Param("riderId") UUID riderId);
 
     @Query("SELECT DISTINCT t FROM Trip t JOIN t.stops s WHERE s.order.organization.id = :organizationId")
     Page<Trip> findByOrganizationId(@Param("organizationId") UUID organizationId, Pageable pageable);

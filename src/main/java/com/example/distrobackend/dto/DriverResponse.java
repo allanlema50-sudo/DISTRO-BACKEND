@@ -3,6 +3,7 @@ package com.example.distrobackend.dto;
 import com.example.distrobackend.Domain.entity.RiderProfile;
 import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.UserStatus;
+import com.example.distrobackend.Domain.enums.DriverApprovalStatus;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -13,6 +14,7 @@ public record DriverResponse(
         String email,
         String phoneNumber,
         UserStatus status,
+        DriverApprovalStatus approvalStatus,
         boolean emailVerified,
         boolean phoneVerified,
         String licenseNumber,
@@ -24,7 +26,7 @@ public record DriverResponse(
     public static DriverResponse from(User user, RiderProfile profile) {
         return new DriverResponse(
                 user.getId(), user.getFullName(), user.getEmail(), user.getPhoneNumber(),
-                user.getStatus(), user.isEmailVerified(), user.isPhoneVerified(),
+                user.getStatus(), user.getDriverApprovalStatus(), user.isEmailVerified(), user.isPhoneVerified(),
                 profile == null ? null : profile.getLicenseNumber(),
                 profile != null && profile.isAvailable(),
                 profile == null ? null : profile.getCurrentLat(),

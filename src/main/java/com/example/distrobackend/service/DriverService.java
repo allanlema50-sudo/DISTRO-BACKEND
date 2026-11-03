@@ -5,6 +5,7 @@ import com.example.distrobackend.Domain.entity.RiderProfile;
 import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Domain.enums.UserStatus;
+import com.example.distrobackend.Domain.enums.DriverApprovalStatus;
 import com.example.distrobackend.Domain.enums.TripStatus;
 import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Exception.ApiException;
@@ -63,7 +64,57 @@ public class DriverService {
     }
 
     @Transactional
+    public Page<DriverResponse> list(AuthenticatedUser actor, UUID requestedOrganizationId,
+                                     UserStatus userStatus, DriverApprovalStatus approvalStatus,
+                                     Boolean available, Pageable pageable) {
+        UUID organizationId;
+        if (actor != null && actor.role() == UserRole.SUPER_ADMIN) {
+            organizationId = requestedOrganizationId;
+        } else {
+            organizationId = requireDistributor(actor);
+            if (requestedOrganizationId != null && !requestedOrganizationId.equals(organizationId)) {
+                throw new ApiException(ErrorCode.ACCESS_DENIED);
+            }
+        }
+        return userRepository.searchDrivers(organizationId, userStatus, approvalStatus,
+                        available, UserRole.DRIVER, pageable)
+                .map(user -> DriverResponse.from(user, ensureProfile(user)));
+    }
+
+    @Transactional
+    public DriverResponse approve(AuthenticatedUser actor, UUID driverId, DriverApprovalStatus status) {
+        if (actor == null || actor.role() != UserRole.SUPER_ADMIN) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        if (status == null || status == DriverApprovalStatus.PENDING_REVIEW) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Approval status must be APPROVED or REJECTED");
+        }
+        User driver = userRepository.findByIdForUpdate(driverId)
+                .filter(user -> user.getRole() == UserRole.DRIVER)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Driver not found"));
+        if (driver.getStatus() == UserStatus.INVITED) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "A driver must accept the invitation before platform approval");
+        }
+        driver.setDriverApprovalStatus(status);
+        if (status == DriverApprovalStatus.REJECTED) {
+            refreshTokenService.revokeAll(driverId);
+            RiderProfile profile = ensureProfile(driver);
+            profile.setAvailable(false);
+            riderProfileRepository.save(profile);
+        }
+        userRepository.save(driver);
+        return DriverResponse.from(driver, ensureProfile(driver));
+    }
+
+    @Transactional
     public DriverResponse get(AuthenticatedUser actor, UUID driverId) {
+        if (actor != null && actor.role() == UserRole.SUPER_ADMIN) {
+            User driver = userRepository.findWithOrganizationById(driverId)
+                    .filter(user -> user.getRole() == UserRole.DRIVER)
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Driver not found"));
+            return DriverResponse.from(driver, ensureProfile(driver));
+        }
         if (actor != null && actor.role() == UserRole.DRIVER
                 && !Objects.equals(actor.userId(), driverId)) {
             throw new ApiException(ErrorCode.ACCESS_DENIED);
@@ -145,8 +196,10 @@ public class DriverService {
         if (actor.role() == UserRole.DRIVER && !actor.userId().equals(driverId)) {
             throw new ApiException(ErrorCode.ACCESS_DENIED);
         }
-        if (driver.getStatus() != UserStatus.ACTIVE) {
-            throw new ApiException(ErrorCode.CONFLICT, "Only an active driver can change availability");
+        if (driver.getStatus() != UserStatus.ACTIVE
+                || driver.getDriverApprovalStatus() != DriverApprovalStatus.APPROVED) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "Only an approved active driver can change availability");
         }
         RiderProfile profile = ensureProfile(driver);
         profile.setAvailable(request.available());

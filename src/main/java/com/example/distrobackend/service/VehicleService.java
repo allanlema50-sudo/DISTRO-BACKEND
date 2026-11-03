@@ -23,6 +23,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Locale;
+import java.util.List;
 import java.util.UUID;
 
 @Service
@@ -35,15 +36,33 @@ public class VehicleService {
 
     @Transactional(readOnly = true)
     public Page<VehicleResponse> list(AuthenticatedUser actor, VehicleStatus status, Pageable pageable) {
-        UUID organizationId = requireOrganization(actor);
-        Page<Vehicle> vehicles = status == null
-                ? vehicleRepository.findByOrganization_Id(organizationId, pageable)
-                : vehicleRepository.findByOrganization_IdAndStatus(organizationId, status, pageable);
+        return list(actor, null, status, false, pageable);
+    }
+
+    @Transactional(readOnly = true)
+    public Page<VehicleResponse> list(AuthenticatedUser actor, UUID requestedOrganizationId,
+                                      VehicleStatus status, boolean available, Pageable pageable) {
+        UUID organizationId;
+        if (actor != null && actor.role() == UserRole.SUPER_ADMIN) {
+            organizationId = requestedOrganizationId;
+        } else {
+            organizationId = requireOrganization(actor);
+            if (requestedOrganizationId != null && !requestedOrganizationId.equals(organizationId)) {
+                throw new ApiException(ErrorCode.ACCESS_DENIED);
+            }
+        }
+        Page<Vehicle> vehicles = vehicleRepository.searchFleet(organizationId, status,
+                available ? Boolean.TRUE : null, VehicleStatus.ACTIVE,
+                List.of(TripStatus.SCHEDULED, TripStatus.ONGOING, TripStatus.DELAYED), pageable);
         return vehicles.map(VehicleResponse::from);
     }
 
     @Transactional(readOnly = true)
     public VehicleResponse get(AuthenticatedUser actor, UUID vehicleId) {
+        if (actor != null && actor.role() == UserRole.SUPER_ADMIN) {
+            return vehicleRepository.findById(vehicleId).map(VehicleResponse::from)
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Vehicle not found"));
+        }
         UUID organizationId = requireOrganization(actor);
         return vehicleRepository.findByIdAndOrganization(vehicleId, organizationId)
                 .map(VehicleResponse::from)
@@ -52,9 +71,16 @@ public class VehicleService {
 
     @Transactional
     public VehicleResponse create(AuthenticatedUser actor, CreateVehicleRequest request) {
-        UUID organizationId = requireOrganizationAdmin(actor);
+        UUID organizationId = actor != null && actor.role() == UserRole.SUPER_ADMIN
+                ? request.organizationId() : requireOrganizationAdmin(actor);
+        if (organizationId == null) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "organizationId is required for platform vehicle registration");
+        }
         Organization organization = organizationRepository.findById(organizationId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Organization not found"));
+        if (organization.getType() != Organizationtype.DISTRIBUTOR) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Vehicles must belong to a distributor organization");
+        }
         String registration = normalizeRegistration(request.registrationNumber());
         if (vehicleRepository.existsByOrganization_IdAndRegistrationNumberIgnoreCase(organizationId, registration)) {
             throw new ApiException(ErrorCode.CONFLICT, "A vehicle with this registration already exists");
@@ -72,14 +98,20 @@ public class VehicleService {
 
     @Transactional
     public VehicleResponse update(AuthenticatedUser actor, UUID vehicleId, UpdateVehicleRequest request) {
-        UUID organizationId = requireOrganizationAdmin(actor);
-        Vehicle vehicle = vehicleRepository.findByIdAndOrganizationForUpdate(vehicleId, organizationId)
-                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Vehicle not found"));
+        Vehicle vehicle;
+        if (actor != null && actor.role() == UserRole.SUPER_ADMIN) {
+            vehicle = vehicleRepository.findByIdForUpdate(vehicleId)
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Vehicle not found"));
+        } else {
+            UUID organizationId = requireOrganizationAdmin(actor);
+            vehicle = vehicleRepository.findByIdAndOrganizationForUpdate(vehicleId, organizationId)
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Vehicle not found"));
+        }
         if (request.registrationNumber() != null) {
             String registration = normalizeRegistration(request.registrationNumber());
             if (!registration.equalsIgnoreCase(vehicle.getRegistrationNumber())
                     && vehicleRepository.existsByOrganization_IdAndRegistrationNumberIgnoreCase(
-                    organizationId, registration)) {
+                    vehicle.getOrganization().getId(), registration)) {
                 throw new ApiException(ErrorCode.CONFLICT,
                         "A vehicle with this registration already exists");
             }
@@ -97,9 +129,15 @@ public class VehicleService {
     @Transactional
     public VehicleResponse updateStatus(AuthenticatedUser actor, UUID vehicleId,
                                         VehicleStatusUpdateRequest request) {
-        UUID organizationId = requireOrganizationAdmin(actor);
-        Vehicle vehicle = vehicleRepository.findByIdAndOrganizationForUpdate(vehicleId, organizationId)
-                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Vehicle not found"));
+        Vehicle vehicle;
+        if (actor != null && actor.role() == UserRole.SUPER_ADMIN) {
+            vehicle = vehicleRepository.findByIdForUpdate(vehicleId)
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Vehicle not found"));
+        } else {
+            UUID organizationId = requireOrganizationAdmin(actor);
+            vehicle = vehicleRepository.findByIdAndOrganizationForUpdate(vehicleId, organizationId)
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Vehicle not found"));
+        }
         if (request.status() != VehicleStatus.ACTIVE
                 && tripRepository.existsByVehicle_IdAndStatusIn(vehicleId,
                 java.util.List.of(TripStatus.SCHEDULED, TripStatus.ONGOING, TripStatus.DELAYED))) {

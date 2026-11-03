@@ -5,6 +5,7 @@ import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Domain.enums.UserStatus;
+import com.example.distrobackend.Domain.enums.DriverApprovalStatus;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.dto.DriverLocationRequest;
 import com.example.distrobackend.dto.UpdateDriverAvailabilityRequest;
@@ -13,12 +14,14 @@ import com.example.distrobackend.repository.InvitationRepository;
 import com.example.distrobackend.repository.RiderProfileRepository;
 import com.example.distrobackend.repository.UserRepository;
 import com.example.distrobackend.repository.TripRepository;
+import com.example.distrobackend.repository.OrganizationRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -37,6 +40,8 @@ class DriverServiceTest {
     @Mock private InvitationService invitationService;
     @Mock private RefreshTokenService refreshTokenService;
     @Mock private TripRepository tripRepository;
+    @Mock private OrganizationRepository organizationRepository;
+    @Mock private PasswordEncoder passwordEncoder;
 
     private DriverService driverService;
     private UUID organizationId;
@@ -45,7 +50,8 @@ class DriverServiceTest {
     @BeforeEach
     void setUp() {
         driverService = new DriverService(userRepository, riderProfileRepository,
-                invitationRepository, invitationService, refreshTokenService, tripRepository);
+                invitationRepository, invitationService, refreshTokenService, tripRepository,
+                organizationRepository, passwordEncoder);
         organizationId = UUID.randomUUID();
         Organization organization = new Organization();
         organization.setId(organizationId);
@@ -54,6 +60,7 @@ class DriverServiceTest {
         driver.setId(UUID.randomUUID());
         driver.setRole(UserRole.DRIVER);
         driver.setStatus(UserStatus.ACTIVE);
+        driver.setDriverApprovalStatus(DriverApprovalStatus.APPROVED);
         driver.setOrganization(organization);
         driver.setPhoneNumber("+254700000000");
     }

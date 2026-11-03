@@ -1,6 +1,7 @@
 package com.example.distrobackend.service;
 
 import com.example.distrobackend.Domain.entity.Invitation;
+import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.RiderProfile;
 import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.UserRole;
@@ -8,10 +9,12 @@ import com.example.distrobackend.Domain.enums.UserStatus;
 import com.example.distrobackend.Domain.enums.DriverApprovalStatus;
 import com.example.distrobackend.Domain.enums.TripStatus;
 import com.example.distrobackend.Domain.enums.Organizationtype;
+import com.example.distrobackend.Domain.enums.OrganizationStatus;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.Util.PhoneNormalizer;
 import com.example.distrobackend.dto.CreateDriverInvitationRequest;
+import com.example.distrobackend.dto.DriverRegistrationRequest;
 import com.example.distrobackend.dto.DriverLocationRequest;
 import com.example.distrobackend.dto.DriverResponse;
 import com.example.distrobackend.dto.UpdateDriverAvailabilityRequest;
@@ -22,12 +25,16 @@ import com.example.distrobackend.repository.InvitationRepository;
 import com.example.distrobackend.repository.RiderProfileRepository;
 import com.example.distrobackend.repository.UserRepository;
 import com.example.distrobackend.repository.TripRepository;
+import com.example.distrobackend.repository.OrganizationRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
+import com.example.distrobackend.Util.SecretTokenService;
+import com.example.distrobackend.Util.PhoneNormalizer;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.time.OffsetDateTime;
 import java.util.Objects;
@@ -43,6 +50,55 @@ public class DriverService {
     private final InvitationService invitationService;
     private final RefreshTokenService refreshTokenService;
     private final TripRepository tripRepository;
+    private final OrganizationRepository organizationRepository;
+    private final PasswordEncoder passwordEncoder;
+
+    @Transactional
+    public DriverResponse registerForReview(AuthenticatedUser actor, DriverRegistrationRequest request) {
+        if (actor == null || actor.role() != UserRole.SUPER_ADMIN) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        Organization organization = organizationRepository.findById(request.organizationId())
+                .filter(org -> org.getType() == Organizationtype.DISTRIBUTOR
+                        && org.getStatus() == OrganizationStatus.ACTIVE)
+                .orElseThrow(() -> new ApiException(ErrorCode.BAD_REQUEST,
+                        "Select an active distributor organization for this driver"));
+        String phone = PhoneNormalizer.normalize(request.phoneNumber());
+        String email = request.email() == null || request.email().isBlank()
+                ? null : request.email().trim().toLowerCase(java.util.Locale.ROOT);
+        if (email != null && userRepository.existsByEmail(email)) {
+            throw new ApiException(ErrorCode.DUPLICATE_EMAIL);
+        }
+        if (userRepository.existsByPhoneNumber(phone)) {
+            throw new ApiException(ErrorCode.DUPLICATE_PHONE);
+        }
+        if (riderProfileRepository.existsByNationalIdIgnoreCase(request.nationalId().trim())) {
+            throw new ApiException(ErrorCode.CONFLICT, "A driver with this national ID is already registered");
+        }
+
+        User driver = new User();
+        driver.setFullName(request.fullName().trim());
+        driver.setEmail(email);
+        driver.setPhoneNumber(phone);
+        driver.setPasswordHash(passwordEncoder.encode(SecretTokenService.generate()));
+        driver.setRole(UserRole.DRIVER);
+        driver.setStatus(UserStatus.ACTIVE);
+        driver.setDriverApprovalStatus(DriverApprovalStatus.PENDING_REVIEW);
+        driver.setOrganization(organization);
+        driver.setPhoneVerified(false);
+        driver.setEmailVerified(false);
+        User saved = userRepository.save(driver);
+
+        RiderProfile profile = new RiderProfile();
+        profile.setUserId(saved.getId());
+        profile.setUser(saved);
+        profile.setLicenseNumber(request.licenseNumber().trim());
+        profile.setNationalId(request.nationalId().trim());
+        profile.setLicenseExpiryDate(request.licenseExpiryDate());
+        profile.setInternalNotes(request.notes() == null || request.notes().isBlank()
+                ? null : request.notes().trim());
+        return DriverResponse.from(saved, riderProfileRepository.save(profile));
+    }
 
     @Transactional
     public InvitationResponse invite(AuthenticatedUser actor, CreateDriverInvitationRequest request) {
@@ -120,7 +176,7 @@ public class DriverService {
             throw new ApiException(ErrorCode.ACCESS_DENIED);
         }
         User driver = findDriver(actor, driverId);
-        return DriverResponse.from(driver, ensureProfile(driver));
+        return DriverResponse.from(driver, ensureProfile(driver), actor.role() != UserRole.DRIVER);
     }
 
     @Transactional

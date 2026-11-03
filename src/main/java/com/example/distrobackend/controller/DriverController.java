@@ -6,6 +6,7 @@ import com.example.distrobackend.Domain.enums.DriverApprovalStatus;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.dto.CreateDriverInvitationRequest;
+import com.example.distrobackend.dto.DriverRegistrationRequest;
 import com.example.distrobackend.dto.DriverLocationRequest;
 import com.example.distrobackend.dto.DriverResponse;
 import com.example.distrobackend.dto.InvitationResponse;
@@ -38,6 +39,14 @@ import java.util.UUID;
 public class DriverController {
 
     private final DriverService driverService;
+
+    @PostMapping
+    @ResponseStatus(HttpStatus.CREATED)
+    public DriverResponse registerForReview(
+            @AuthenticationPrincipal AuthenticatedUser actor,
+            @Valid @RequestBody DriverRegistrationRequest request) {
+        return driverService.registerForReview(actor, request);
+    }
 
     @PostMapping("/invitations")
     @ResponseStatus(HttpStatus.ACCEPTED)

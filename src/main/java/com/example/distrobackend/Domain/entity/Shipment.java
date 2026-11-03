@@ -11,6 +11,8 @@ import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
+import java.time.LocalDateTime;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -27,8 +29,8 @@ public class Shipment {
     @Column(name = "shipment_number", nullable = false, unique = true, length = 40)
     private String shipmentNumber;
 
-    @OneToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "order_id", nullable = false, unique = true)
+    @OneToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "order_id", unique = true)
     private Order order;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
@@ -52,6 +54,37 @@ public class Shipment {
 
     @Column(name = "notes", columnDefinition = "TEXT")
     private String notes;
+
+    @Column(name = "cargo_description", nullable = false, length = 500)
+    private String cargoDescription;
+
+    @Column(name = "cargo_category", nullable = false, length = 80)
+    private String cargoCategory;
+
+    @Column(name = "weight_kg", nullable = false, precision = 12, scale = 2)
+    private BigDecimal weightKg;
+
+    @Column(name = "volume_m3", nullable = false, precision = 12, scale = 3)
+    private BigDecimal volumeM3;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "handling_requirements", nullable = false, columnDefinition = "jsonb")
+    private List<String> handlingRequirements = new ArrayList<>();
+
+    @Column(name = "delivery_location", nullable = false, length = 300)
+    private String deliveryLocation;
+
+    @Column(name = "delivery_window_start", nullable = false)
+    private LocalDateTime deliveryWindowStart;
+
+    @Column(name = "delivery_window_end", nullable = false)
+    private LocalDateTime deliveryWindowEnd;
+
+    @Column(name = "allow_shared_loads", nullable = false)
+    private boolean allowSharedLoads;
+
+    @Column(name = "special_instructions", columnDefinition = "TEXT")
+    private String specialInstructions;
 
     @OneToMany(mappedBy = "shipment", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("createdAt ASC")

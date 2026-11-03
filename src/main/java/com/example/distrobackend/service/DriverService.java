@@ -81,7 +81,6 @@ public class DriverService {
         User saved = userRepository.save(driver);
 
         RiderProfile profile = new RiderProfile();
-        profile.setUserId(saved.getId());
         profile.setUser(saved);
         profile.setLicenseNumber(request.licenseNumber().trim());
         profile.setNationalId(request.nationalId().trim());
@@ -303,7 +302,6 @@ public class DriverService {
     private RiderProfile ensureProfile(User driver) {
         return riderProfileRepository.findById(driver.getId()).orElseGet(() -> {
             RiderProfile profile = new RiderProfile();
-            profile.setUserId(driver.getId());
             profile.setUser(driver);
             invitationRepository.findTopByInvitedUser_IdOrderByCreatedAtDesc(driver.getId())
                     .map(Invitation::getDriverLicenseNumber)

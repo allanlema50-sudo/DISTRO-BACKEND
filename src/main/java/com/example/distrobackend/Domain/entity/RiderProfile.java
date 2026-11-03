@@ -9,6 +9,7 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
+import java.time.LocalDate;
 import java.util.UUID;
 
 @Entity
@@ -35,6 +36,15 @@ private UUID userId;
 
     @Column(name = "license_number", length = 50)
     private String licenseNumber;
+
+    @Column(name = "national_id", length = 50)
+    private String nationalId;
+
+    @Column(name = "license_expiry_date")
+    private LocalDate licenseExpiryDate;
+
+    @Column(name = "internal_notes", columnDefinition = "TEXT")
+    private String internalNotes;
 
     @Column(name = "is_available", nullable = false)
     private boolean available = false;

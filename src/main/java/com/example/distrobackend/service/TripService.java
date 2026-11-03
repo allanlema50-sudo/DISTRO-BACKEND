@@ -121,12 +121,21 @@ public class TripService {
             throw new ApiException(ErrorCode.BAD_REQUEST,
                     "vehicleId must be omitted when clearVehicle is true");
         }
-        Trip trip = getOrganizationTripForUpdate(actor, tripId);
+        Trip trip = actor != null && actor.role() == UserRole.SUPER_ADMIN
+                ? tripRepository.findByIdForUpdate(tripId)
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Trip not found"))
+                : getOrganizationTripForUpdate(actor, tripId);
         User rider = userRepository.findByIdForUpdate(riderId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Rider not found"));
-        if (rider.getRole() != UserRole.DRIVER || rider.getOrganization() == null
-                || !trip.getOrganization().getId().equals(rider.getOrganization().getId())) {
+        boolean platformDriver = rider.getOrganization() == null;
+        boolean sameOrganization = !platformDriver
+                && trip.getOrganization().getId().equals(rider.getOrganization().getId());
+        if (rider.getRole() != UserRole.DRIVER || (!platformDriver && !sameOrganization)) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Rider is not valid for this organization");
+        }
+        if (platformDriver && (actor == null || actor.role() != UserRole.SUPER_ADMIN)) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED,
+                    "Only a Super Admin can dispatch a Mydistro pool driver to an organization trip");
         }
         if (rider.getStatus() != UserStatus.ACTIVE
                 || rider.getDriverApprovalStatus() != DriverApprovalStatus.APPROVED) {
@@ -467,11 +476,9 @@ public class TripService {
         if (actor == null || actor.role() != UserRole.DRIVER) {
             throw new ApiException(ErrorCode.ACCESS_DENIED, "Only the assigned driver may perform this action");
         }
-        Trip trip = getOrganizationTrip(actor, tripId);
-        if (trip.getRider() == null || !actor.userId().equals(trip.getRider().getId())) {
-            throw new ApiException(ErrorCode.ACCESS_DENIED, "Driver is not assigned to this trip");
-        }
-        return trip;
+        return tripRepository.findByIdAndRiderForUpdate(tripId, actor.userId())
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND,
+                        "Trip is not assigned to this driver"));
     }
 
     private UUID requireOrganization(AuthenticatedUser actor) {

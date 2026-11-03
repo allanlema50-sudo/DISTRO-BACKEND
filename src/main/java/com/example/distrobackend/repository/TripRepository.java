@@ -71,6 +71,10 @@ public interface TripRepository extends JpaRepository<Trip, UUID> {
     boolean existsByVehicle_IdAndStatusIn(UUID vehicleId, List<TripStatus> statuses);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select t from Trip t join fetch t.organization where t.id = :tripId")
+    Optional<Trip> findByIdForUpdate(@Param("tripId") UUID tripId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select t from Trip t join fetch t.organization "
             + "where t.id = :tripId and t.organization.id = :organizationId")
     Optional<Trip> findByIdAndOrganizationForUpdate(

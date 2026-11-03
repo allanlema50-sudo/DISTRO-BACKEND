@@ -102,8 +102,9 @@ public class JwtAuthenticationService {
         if (role == UserRole.SUPER_ADMIN && (organizationId != null || organizationType != null)) {
             throw new IllegalArgumentException("Platform administrators cannot carry organization claims");
         }
-        if (role == UserRole.DRIVER && organizationId == null) {
-            throw new IllegalArgumentException("Drivers must belong to an organization");
+        if (role == UserRole.DRIVER && organizationId != null
+                && organizationType != Organizationtype.DISTRIBUTOR) {
+            throw new IllegalArgumentException("Organization-linked drivers must belong to a distributor");
         }
     }
 

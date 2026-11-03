@@ -20,10 +20,10 @@ public interface ShipmentRepository extends JpaRepository<Shipment, UUID> {
 
     @EntityGraph(attributePaths = {"order", "organization", "trip", "createdBy"})
     @Query(value = "select s from Shipment s where (:organizationId is null or s.organization.id = :organizationId) "
-            + "and (:customerId is null or s.order.customer.id = :customerId) "
+            + "and (:customerId is null or (s.order is not null and s.order.customer.id = :customerId)) "
             + "and (:status is null or s.status = :status)",
             countQuery = "select count(s) from Shipment s where (:organizationId is null or s.organization.id = :organizationId) "
-                    + "and (:customerId is null or s.order.customer.id = :customerId) "
+                    + "and (:customerId is null or (s.order is not null and s.order.customer.id = :customerId)) "
                     + "and (:status is null or s.status = :status)")
     Page<Shipment> search(@Param("organizationId") UUID organizationId,
                           @Param("customerId") UUID customerId,

@@ -14,7 +14,6 @@ import com.example.distrobackend.repository.InvitationRepository;
 import com.example.distrobackend.repository.RiderProfileRepository;
 import com.example.distrobackend.repository.UserRepository;
 import com.example.distrobackend.repository.TripRepository;
-import com.example.distrobackend.repository.OrganizationRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -40,7 +39,6 @@ class DriverServiceTest {
     @Mock private InvitationService invitationService;
     @Mock private RefreshTokenService refreshTokenService;
     @Mock private TripRepository tripRepository;
-    @Mock private OrganizationRepository organizationRepository;
     @Mock private PasswordEncoder passwordEncoder;
 
     private DriverService driverService;
@@ -51,7 +49,7 @@ class DriverServiceTest {
     void setUp() {
         driverService = new DriverService(userRepository, riderProfileRepository,
                 invitationRepository, invitationService, refreshTokenService, tripRepository,
-                organizationRepository, passwordEncoder);
+                passwordEncoder);
         organizationId = UUID.randomUUID();
         Organization organization = new Organization();
         organization.setId(organizationId);

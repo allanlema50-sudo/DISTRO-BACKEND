@@ -1,7 +1,6 @@
 package com.example.distrobackend.service;
 
 import com.example.distrobackend.Domain.entity.Invitation;
-import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.RiderProfile;
 import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.UserRole;
@@ -9,7 +8,6 @@ import com.example.distrobackend.Domain.enums.UserStatus;
 import com.example.distrobackend.Domain.enums.DriverApprovalStatus;
 import com.example.distrobackend.Domain.enums.TripStatus;
 import com.example.distrobackend.Domain.enums.Organizationtype;
-import com.example.distrobackend.Domain.enums.OrganizationStatus;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.Util.PhoneNormalizer;
@@ -25,10 +23,8 @@ import com.example.distrobackend.repository.InvitationRepository;
 import com.example.distrobackend.repository.RiderProfileRepository;
 import com.example.distrobackend.repository.UserRepository;
 import com.example.distrobackend.repository.TripRepository;
-import com.example.distrobackend.repository.OrganizationRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.Util.SecretTokenService;
-import com.example.distrobackend.Util.PhoneNormalizer;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -50,7 +46,6 @@ public class DriverService {
     private final InvitationService invitationService;
     private final RefreshTokenService refreshTokenService;
     private final TripRepository tripRepository;
-    private final OrganizationRepository organizationRepository;
     private final PasswordEncoder passwordEncoder;
 
     @Transactional
@@ -58,11 +53,6 @@ public class DriverService {
         if (actor == null || actor.role() != UserRole.SUPER_ADMIN) {
             throw new ApiException(ErrorCode.ACCESS_DENIED);
         }
-        Organization organization = organizationRepository.findById(request.organizationId())
-                .filter(org -> org.getType() == Organizationtype.DISTRIBUTOR
-                        && org.getStatus() == OrganizationStatus.ACTIVE)
-                .orElseThrow(() -> new ApiException(ErrorCode.BAD_REQUEST,
-                        "Select an active distributor organization for this driver"));
         String phone = PhoneNormalizer.normalize(request.phoneNumber());
         String email = request.email() == null || request.email().isBlank()
                 ? null : request.email().trim().toLowerCase(java.util.Locale.ROOT);
@@ -84,7 +74,8 @@ public class DriverService {
         driver.setRole(UserRole.DRIVER);
         driver.setStatus(UserStatus.ACTIVE);
         driver.setDriverApprovalStatus(DriverApprovalStatus.PENDING_REVIEW);
-        driver.setOrganization(organization);
+        // Platform pool drivers are owned by Mydistro and are attached to a
+        // distributor only for the duration of a Super Admin dispatch.
         driver.setPhoneVerified(false);
         driver.setEmailVerified(false);
         User saved = userRepository.save(driver);
@@ -276,6 +267,12 @@ public class DriverService {
     }
 
     private User findDriver(AuthenticatedUser actor, UUID driverId) {
+        if (actor != null && actor.role() == UserRole.DRIVER) {
+            if (!actor.userId().equals(driverId)) throw new ApiException(ErrorCode.ACCESS_DENIED);
+            return userRepository.findWithOrganizationById(driverId)
+                    .filter(user -> user.getRole() == UserRole.DRIVER)
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Driver not found"));
+        }
         UUID organizationId = requireDistributor(actor);
         User driver = userRepository.findWithOrganizationById(driverId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Driver not found"));
@@ -287,6 +284,12 @@ public class DriverService {
     }
 
     private User findDriverForUpdate(AuthenticatedUser actor, UUID driverId) {
+        if (actor != null && actor.role() == UserRole.DRIVER) {
+            if (!actor.userId().equals(driverId)) throw new ApiException(ErrorCode.ACCESS_DENIED);
+            return userRepository.findByIdForUpdate(driverId)
+                    .filter(user -> user.getRole() == UserRole.DRIVER)
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Driver not found"));
+        }
         UUID organizationId = requireDistributor(actor);
         User driver = userRepository.findByIdForUpdate(driverId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Driver not found"));

@@ -120,10 +120,13 @@ public class DriverController {
     }
 
     private static void requireOrganizationRole(AuthenticatedUser actor, boolean allowDriver) {
-        if (actor == null || actor.organizationId() == null
-                || (!allowDriver && actor.role() == UserRole.DRIVER)
-                || (actor.role() != UserRole.DRIVER
-                && actor.role() != UserRole.MANUFACTURER_ADMIN
+        if (actor == null) throw new ApiException(ErrorCode.ACCESS_DENIED);
+        if (actor.role() == UserRole.DRIVER) {
+            if (allowDriver) return;
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        if (actor.organizationId() == null
+                || (actor.role() != UserRole.MANUFACTURER_ADMIN
                 && actor.role() != UserRole.MANUFACTURER_STAFF
                 && actor.role() != UserRole.DISTRIBUTOR_ADMIN
                 && actor.role() != UserRole.DISTRIBUTOR_STAFF)) {

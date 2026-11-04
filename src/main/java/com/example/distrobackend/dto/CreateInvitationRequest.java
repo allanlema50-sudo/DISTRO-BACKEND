@@ -19,7 +19,6 @@ public record CreateInvitationRequest(
         @Size(max = 150)
         String email,
 
-        @NotBlank
         @Size(max = 20)
         String phoneNumber,
 
@@ -32,7 +31,15 @@ public record CreateInvitationRequest(
          * Organization admins do not need to provide this because
          * their organization is taken from their authenticated account.
          */
-        UUID organizationId
+        UUID organizationId,
+
+        @Size(max = 100) String jobTitle,
+
+        UUID warehouseId
 
 ) {
+        public CreateInvitationRequest(String fullName, String email, String phoneNumber,
+                                       UserRole role, UUID organizationId) {
+                this(fullName, email, phoneNumber, role, organizationId, null, null);
+        }
 }

@@ -2,8 +2,13 @@ package com.example.distrobackend.service;
 
 import com.example.distrobackend.Domain.entity.Order;
 import com.example.distrobackend.Domain.entity.Payment;
+import com.example.distrobackend.Domain.entity.PurchaseOrder;
+import com.example.distrobackend.Domain.entity.PurchaseOrderSettlement;
 import com.example.distrobackend.Domain.enums.OrderStatus;
 import com.example.distrobackend.Domain.enums.PaymentStatus;
+import com.example.distrobackend.Domain.enums.Organizationtype;
+import com.example.distrobackend.Domain.enums.PurchaseOrderStatus;
+import com.example.distrobackend.Domain.enums.SettlementStatus;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.Util.PhoneNormalizer;
@@ -15,10 +20,12 @@ import com.example.distrobackend.dto.mpesa.MpesaStkPushRequest;
 import com.example.distrobackend.dto.mpesa.MpesaStkPushResponse;
 import com.example.distrobackend.repository.OrderRepository;
 import com.example.distrobackend.repository.PaymentRepository;
+import com.example.distrobackend.repository.PurchaseOrderRepository;
+import com.example.distrobackend.repository.PurchaseOrderSettlementRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
 import jakarta.annotation.PostConstruct;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.*;
@@ -43,16 +50,40 @@ import java.util.stream.Collectors;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class PaymentService {
 
     private static final DateTimeFormatter DARAJA_TIMESTAMP =
             DateTimeFormatter.ofPattern("yyyyMMddHHmmss").withZone(ZoneId.of("Africa/Nairobi"));
 
     private final PaymentRepository paymentRepository;
+    private final PurchaseOrderRepository purchaseOrderRepository;
+    private final PurchaseOrderSettlementRepository settlementRepository;
     private final OrderRepository orderRepository;
     private final OrderService orderService;
     private final RestTemplate darajaRestTemplate;
+
+    @Autowired
+    public PaymentService(PaymentRepository paymentRepository,
+                          PurchaseOrderRepository purchaseOrderRepository,
+                          PurchaseOrderSettlementRepository settlementRepository,
+                          OrderRepository orderRepository,
+                          OrderService orderService,
+                          RestTemplate darajaRestTemplate) {
+        this.paymentRepository = paymentRepository;
+        this.purchaseOrderRepository = purchaseOrderRepository;
+        this.settlementRepository = settlementRepository;
+        this.orderRepository = orderRepository;
+        this.orderService = orderService;
+        this.darajaRestTemplate = darajaRestTemplate;
+    }
+
+    /** Compatibility constructor for existing customer-order unit fixtures. */
+    public PaymentService(PaymentRepository paymentRepository,
+                          OrderRepository orderRepository,
+                          OrderService orderService,
+                          RestTemplate darajaRestTemplate) {
+        this(paymentRepository, null, null, orderRepository, orderService, darajaRestTemplate);
+    }
 
     @Value("${mpesa.base-url}")
     private String baseUrl;
@@ -95,6 +126,15 @@ public class PaymentService {
 
     @Transactional(noRollbackFor = ApiException.class)
     public PaymentInitiateResponse initiatePayment(AuthenticatedUser actor, PaymentInitiateRequest request) {
+        if ("PURCHASE_ORDER".equalsIgnoreCase(request.orderType())) {
+            if (request.provider() != null && !"MPESA".equalsIgnoreCase(request.provider())) {
+                throw new ApiException(ErrorCode.BAD_REQUEST, "Unsupported payment provider");
+            }
+            return initiatePurchaseOrderPayment(actor, request);
+        }
+        if (request.orderType() != null && !"CUSTOMER_ORDER".equalsIgnoreCase(request.orderType())) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Unsupported payment orderType");
+        }
         Order order = orderRepository.findByIdWithOwnershipForUpdate(request.orderId())
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
         requireOrderAccess(actor, order);
@@ -194,6 +234,13 @@ public class PaymentService {
         if (callback.getCheckoutRequestId() == null || callback.getCheckoutRequestId().isBlank()
                 || callback.getResultCode() == null) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Incomplete M-Pesa callback payload");
+        }
+
+        PurchaseOrderSettlement purchaseSettlement = settlementRepository
+                .findByMpesaCheckoutRequestId(callback.getCheckoutRequestId()).orElse(null);
+        if (purchaseSettlement != null) {
+            processPurchaseOrderCallback(callback, purchaseSettlement);
+            return;
         }
 
         Object[] paymentAndOrderIds = paymentRepository
@@ -328,6 +375,10 @@ public class PaymentService {
     }
 
     private MpesaStkPushResponse sendStkPush(Order order, String phone, int amount) {
+        return sendStkPush(order.getOrderNumber(), "Payment for Order " + order.getOrderNumber(), phone, amount);
+    }
+
+    private MpesaStkPushResponse sendStkPush(String accountReference, String description, String phone, int amount) {
         String timestamp = DARAJA_TIMESTAMP.format(java.time.Instant.now());
         String passwordText = shortcode + passkey + timestamp;
         String password = Base64.getEncoder().encodeToString(passwordText.getBytes(StandardCharsets.UTF_8));
@@ -341,8 +392,8 @@ public class PaymentService {
                 .partyB(shortcode)
                 .phoneNumber(phone.replace("+", ""))
                 .callBackURL(callbackUrl)
-                .accountReference(order.getOrderNumber())
-                .transactionDesc("Payment for Order " + order.getOrderNumber())
+                .accountReference(accountReference)
+                .transactionDesc(description)
                 .build();
 
         String accessToken = getDarajaAccessToken();
@@ -353,6 +404,124 @@ public class PaymentService {
                 baseUrl + "/mpesa/stkpush/v1/processrequest",
                 new HttpEntity<>(request, headers), MpesaStkPushResponse.class);
         return response.getBody();
+    }
+
+    private PaymentInitiateResponse initiatePurchaseOrderPayment(AuthenticatedUser actor,
+                                                                  PaymentInitiateRequest request) {
+        if (actor == null || actor.organizationId() == null || actor.role() == null
+                || actor.role().organizationtype() != Organizationtype.DISTRIBUTOR) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED, "A distributor identity is required to pay a purchase order");
+        }
+        PurchaseOrder order = purchaseOrderRepository.findByIdForPayment(request.orderId())
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Purchase order not found"));
+        if (!actor.organizationId().equals(order.getBuyerOrganization().getId())) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        if (order.getStatus() != PurchaseOrderStatus.APPROVED) {
+            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                    "Only approved purchase orders can be paid");
+        }
+        ensureConfigured();
+        String key = request.idempotencyKey() == null ? null : request.idempotencyKey().trim();
+        if (!isBlank(key)) {
+            PurchaseOrderSettlement existing = settlementRepository.findByIdempotencyKey(key).orElse(null);
+            if (existing != null) {
+                if (!existing.getPurchaseOrder().getId().equals(order.getId())) {
+                    throw new ApiException(ErrorCode.CONFLICT, "Idempotency key has already been used");
+                }
+                if (existing.getStatus() == SettlementStatus.PENDING
+                        && !isBlank(existing.getMpesaCheckoutRequestId())) {
+                    return new PaymentInitiateResponse(existing.getId(), existing.getMpesaCheckoutRequestId(),
+                            PaymentStatus.PENDING, "Payment request is already pending",
+                            existing.getMpesaCheckoutRequestId(), "MPESA");
+                }
+                if (existing.getStatus() == SettlementStatus.SETTLED) {
+                    throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT, "Purchase order is already paid");
+                }
+            }
+        }
+        BigDecimal amount = order.getTotalAmount();
+        int integerAmount;
+        try {
+            integerAmount = amount.setScale(0, RoundingMode.UNNECESSARY).intValueExact();
+        } catch (ArithmeticException ex) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "M-Pesa amount must be a whole positive KES amount");
+        }
+        if (amount.signum() <= 0 || integerAmount <= 0 || !"KES".equalsIgnoreCase(order.getCurrency())) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Purchase order must have a positive KES total");
+        }
+        String phone = PhoneNormalizer.normalize(request.phoneNumber());
+        PurchaseOrderSettlement settlement = new PurchaseOrderSettlement();
+        settlement.setPurchaseOrder(order);
+        settlement.setAmount(amount);
+        settlement.setCurrency("KES");
+        settlement.setStatus(SettlementStatus.PENDING);
+        settlement.setIdempotencyKey(isBlank(key) ? null : key);
+        settlement.setPhoneNumber(phone);
+        settlementRepository.saveAndFlush(settlement);
+        try {
+            MpesaStkPushResponse response = sendStkPush(order.getPurchaseOrderNumber(),
+                    "Payment for " + order.getPurchaseOrderNumber(), phone, integerAmount);
+            if (response == null || !"0".equals(response.getResponseCode())
+                    || isBlank(response.getCheckoutRequestId()) || isBlank(response.getMerchantRequestId())) {
+                throw new ApiException(ErrorCode.INTERNAL_ERROR, "Daraja returned an incomplete payment response");
+            }
+            settlement.setMpesaCheckoutRequestId(response.getCheckoutRequestId());
+            settlement.setMpesaMerchantRequestId(response.getMerchantRequestId());
+            settlement.setProviderReference(response.getCheckoutRequestId());
+            settlementRepository.save(settlement);
+            return new PaymentInitiateResponse(settlement.getId(), response.getCheckoutRequestId(),
+                    PaymentStatus.PENDING, response.getCustomerMessage(), response.getCheckoutRequestId(), "MPESA");
+        } catch (ApiException ex) {
+            settlement.setStatus(SettlementStatus.FAILED);
+            settlement.setFailureReason(ex.getMessage());
+            settlementRepository.save(settlement);
+            throw ex;
+        } catch (RuntimeException ex) {
+            log.error("Daraja STK push failed for purchase order {}", order.getId(), ex);
+            settlement.setStatus(SettlementStatus.FAILED);
+            settlement.setFailureReason("Payment provider unavailable");
+            settlementRepository.save(settlement);
+            throw new ApiException(ErrorCode.INTERNAL_ERROR, "Payment provider unavailable");
+        }
+    }
+
+    private void processPurchaseOrderCallback(MpesaCallbackRequest.StkCallback callback,
+                                               PurchaseOrderSettlement candidate) {
+        PurchaseOrderSettlement settlement = settlementRepository.findByIdForUpdate(candidate.getId())
+                .orElseThrow(() -> new ApiException(ErrorCode.PAYMENT_NOT_FOUND, "Payment not found"));
+        if (!callback.getCheckoutRequestId().equals(settlement.getMpesaCheckoutRequestId())
+                || isBlank(settlement.getMpesaMerchantRequestId())
+                || !settlement.getMpesaMerchantRequestId().equals(callback.getMerchantRequestId())) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "M-Pesa callback correlation failed");
+        }
+        if (settlement.getStatus() == SettlementStatus.SETTLED || settlement.getStatus() == SettlementStatus.REVERSED) {
+            return;
+        }
+        ensureCallbackVerificationEnabled();
+        verifyCallbackResult(callback.getCheckoutRequestId(), callback.getResultCode());
+        settlement.setCallbackRawPayload(rawPayload(callback));
+        if (callback.getResultCode() == 0) {
+            String receipt = callbackValue(callback, "MpesaReceiptNumber");
+            String amount = callbackValue(callback, "Amount");
+            if (isBlank(receipt) || !receipt.matches("[A-Za-z0-9]{1,50}") || isBlank(amount)) {
+                throw new ApiException(ErrorCode.BAD_REQUEST, "Successful callback is missing valid receipt details");
+            }
+            try {
+                if (new BigDecimal(amount).compareTo(settlement.getAmount()) != 0) {
+                    throw new ApiException(ErrorCode.BAD_REQUEST, "M-Pesa amount does not match the purchase order");
+                }
+            } catch (NumberFormatException ex) {
+                throw new ApiException(ErrorCode.BAD_REQUEST, "Invalid M-Pesa amount");
+            }
+            settlement.setStatus(SettlementStatus.SETTLED);
+            settlement.setProviderReference(receipt);
+            settlement.setSettledAt(OffsetDateTime.now());
+        } else {
+            settlement.setStatus(SettlementStatus.FAILED);
+            settlement.setFailureReason(callback.getResultDesc());
+        }
+        settlementRepository.save(settlement);
     }
 
     private String getDarajaAccessToken() {

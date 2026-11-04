@@ -49,8 +49,11 @@ public class ProductAuthorizationController {
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("hasAnyRole('DISTRIBUTOR_ADMIN','DISTRIBUTOR_STAFF') and @tenantAccess.hasOrganization(authentication)")
     public ProductAuthorizationResponse request(@AuthenticationPrincipal AuthenticatedUser actor,
-                                                @PathVariable UUID productId) {
-        return service.request(actor, new CreateProductAuthorizationRequest(productId));
+                                                @PathVariable UUID productId,
+                                                @Valid @RequestBody(required = false)
+                                                CreateAuthorizationRequestBody body) {
+        return service.request(actor, new CreateProductAuthorizationRequest(
+                productId, body == null ? null : body.requestNote()));
     }
 
     @PatchMapping("/authorizations/{authorizationId}")
@@ -83,4 +86,7 @@ public class ProductAuthorizationController {
                 ProductAuthorizationStatus.REVOKED, request.note());
         return service.decide(actor, authorizationId, revocation);
     }
+
+    public record CreateAuthorizationRequestBody(
+            @jakarta.validation.constraints.Size(max = 1000) String requestNote) {}
 }

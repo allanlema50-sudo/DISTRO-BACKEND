@@ -66,6 +66,9 @@ public class DistributorProductAuthorization {
     @Column(name = "decision_note", columnDefinition = "TEXT")
     private String decisionNote;
 
+    @Column(name = "request_note", length = 1000)
+    private String requestNote;
+
     @Column(name = "decided_at")
     private OffsetDateTime decidedAt;
 

@@ -108,6 +108,18 @@ public class DriverService {
     }
 
     @Transactional
+    public void revokeInvitation(AuthenticatedUser actor, UUID driverId) {
+        requireOrganizationAdmin(actor);
+        Invitation invitation = invitationRepository.findTopByInvitedUser_IdOrderByCreatedAtDesc(driverId)
+                .orElseThrow(() -> new ApiException(ErrorCode.INVITATION_NOT_FOUND));
+        if (invitation.getInvitedUser() == null
+                || invitation.getInvitedUser().getRole() != UserRole.DRIVER) {
+            throw new ApiException(ErrorCode.INVITATION_NOT_FOUND);
+        }
+        invitationService.revoke(actor, invitation.getId());
+    }
+
+    @Transactional
     public Page<DriverResponse> list(AuthenticatedUser actor, Pageable pageable) {
         UUID organizationId = requireDistributor(actor);
         return userRepository.findByOrganization_IdAndRole(organizationId, UserRole.DRIVER, pageable)
@@ -316,9 +328,13 @@ public class DriverService {
     }
 
     private RiderProfile persistNewProfile(RiderProfile profile) {
-        // RiderProfile derives its ID from User through @MapsId. Spring Data's
-        // save() can classify that derived ID as an existing entity and call
-        // merge(), which fails for a new profile. Persist explicitly instead.
+        // Hibernate's registration failure reported a RiderProfile with a null
+        // identifier while processing its @MapsId one-to-one association. Set
+        // the derived key from the already-persisted User before writing it.
+        if (profile.getUser() == null || profile.getUser().getId() == null) {
+            throw new IllegalStateException("A rider profile requires a persisted user");
+        }
+        profile.setUserId(profile.getUser().getId());
         entityManager.persist(profile);
         return profile;
     }

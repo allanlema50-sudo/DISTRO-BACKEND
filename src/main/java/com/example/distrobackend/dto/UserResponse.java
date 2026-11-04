@@ -20,7 +20,9 @@ public record UserResponse(
         String organizationName,
         Organizationtype organizationtype,
         boolean phoneVerified,
-        UserStatus status
+        UserStatus status,
+        String jobTitle,
+        UUID warehouseId
 ) {
     /** Must be called inside a transaction (organization is lazy). */
     public static UserResponse from(User user) {
@@ -35,7 +37,9 @@ public record UserResponse(
                 org == null ? null : org.getName(),
                 org == null ? null : org.getType(),
                 user.isPhoneVerified(),
-                user.getStatus()
+                user.getStatus(),
+                user.getJobTitle(),
+                user.getBaseWarehouse() == null ? null : user.getBaseWarehouse().getId()
         );
     }
 }

@@ -12,6 +12,7 @@ public record ProductAuthorizationResponse(
         UUID manufacturerOrganizationId,
         UUID distributorOrganizationId,
         ProductAuthorizationStatus status,
+        String requestNote,
         String decisionNote,
         OffsetDateTime createdAt,
         OffsetDateTime decidedAt
@@ -23,6 +24,7 @@ public record ProductAuthorizationResponse(
                 authorization.getManufacturerOrganization().getId(),
                 authorization.getDistributorOrganization().getId(),
                 authorization.getStatus(),
+                authorization.getRequestNote(),
                 authorization.getDecisionNote(),
                 authorization.getCreatedAt(),
                 authorization.getDecidedAt());

@@ -45,6 +45,25 @@ public class PurchaseOrderSettlement {
     @Column(name = "provider_reference", unique = true, length = 100)
     private String providerReference;
 
+    @Column(name = "idempotency_key", unique = true, length = 100)
+    private String idempotencyKey;
+
+    @Column(name = "mpesa_checkout_request_id", unique = true, length = 100)
+    private String mpesaCheckoutRequestId;
+
+    @Column(name = "mpesa_merchant_request_id", length = 100)
+    private String mpesaMerchantRequestId;
+
+    @Column(name = "phone_number", length = 20)
+    private String phoneNumber;
+
+    @Column(name = "failure_reason", columnDefinition = "TEXT")
+    private String failureReason;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "callback_raw_payload", columnDefinition = "jsonb")
+    private java.util.Map<String, Object> callbackRawPayload;
+
     @Column(name = "note", columnDefinition = "TEXT")
     private String note;
 

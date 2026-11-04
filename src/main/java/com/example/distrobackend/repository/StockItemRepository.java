@@ -172,6 +172,11 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from StockItem s join fetch s.organization where s.id = :id")
     Optional<StockItem> findByIdForUpdate(@Param("id") UUID id);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from StockItem s join fetch s.organization where s.sourceStockItem.id = :sourceStockItemId and s.active = true")
+    List<StockItem> findOffersBySourceStockItemIdForUpdate(@Param("sourceStockItemId") UUID sourceStockItemId);
+
     @Query("""
             select s from StockItem s
             where s.organization.id = :organizationId

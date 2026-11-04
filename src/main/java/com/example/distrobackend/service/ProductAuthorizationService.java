@@ -79,6 +79,7 @@ public class ProductAuthorizationService {
         authorization.setManufacturerOrganization(manufacturer);
         authorization.setDistributorOrganization(distributor);
         authorization.setStatus(ProductAuthorizationStatus.PENDING);
+        authorization.setRequestNote(request.requestNote() == null ? null : request.requestNote().trim());
         authorization.setDecisionNote(null);
         authorization.setDecidedBy(null);
         authorization.setDecidedAt(null);

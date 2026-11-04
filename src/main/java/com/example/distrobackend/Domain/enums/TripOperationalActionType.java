@@ -5,5 +5,6 @@ public enum TripOperationalActionType {
     REROUTE,
     PAUSE,
     RESUME,
-    CANCEL
+    CANCEL,
+    REQUEST_DRIVER_UPDATE
 }

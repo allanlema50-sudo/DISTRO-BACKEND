@@ -6,12 +6,15 @@ import com.example.distrobackend.dto.RestockRequestResponse;
 import com.example.distrobackend.dto.StockAdjustmentRequest;
 import com.example.distrobackend.dto.StockItemResponse;
 import com.example.distrobackend.dto.StockMovementResponse;
+import com.example.distrobackend.dto.StockAuditRequestCreate;
+import com.example.distrobackend.dto.StockAuditRequestResponse;
 import com.example.distrobackend.dto.UpdateStockItemRequest;
 import com.example.distrobackend.dto.CreateDistributorOfferRequest;
 import com.example.distrobackend.dto.UpdateDistributorOfferRequest;
 import com.example.distrobackend.dto.UpdateRestockRequestStatus;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.service.StockService;
+import com.example.distrobackend.service.StockAuditRequestService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -33,6 +36,15 @@ import java.util.UUID;
 public class StockController {
 
     private final StockService stockService;
+    private final StockAuditRequestService stockAuditRequestService;
+
+    @PostMapping("/audits")
+    @PreAuthorize("hasAnyRole('MANUFACTURER_ADMIN','MANUFACTURER_STAFF') and @tenantAccess.hasOrganization(authentication)")
+    public StockAuditRequestResponse requestAudit(
+            @AuthenticationPrincipal AuthenticatedUser user,
+            @Valid @RequestBody StockAuditRequestCreate request) {
+        return stockAuditRequestService.request(user, request);
+    }
 
     @PostMapping("/restock-request")
     @PreAuthorize("hasAnyRole('DISTRIBUTOR_ADMIN','DISTRIBUTOR_STAFF') and @tenantAccess.hasOrganization(authentication)")

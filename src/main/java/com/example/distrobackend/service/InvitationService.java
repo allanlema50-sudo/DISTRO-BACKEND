@@ -29,6 +29,8 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -39,6 +41,9 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 public class InvitationService {
+    @PersistenceContext
+    private EntityManager entityManager;
+
     private final InvitationRepository invitationRepository;
     private final OrganizationRepository organizationRepository;
     private final UserRepository userRepository;
@@ -68,11 +73,12 @@ public class InvitationService {
         }
 
         String email = normalizeEmail(request.email());
-        String phone = PhoneNormalizer.normalize(request.phoneNumber());
+        String phone = request.phoneNumber() == null || request.phoneNumber().isBlank()
+                ? null : PhoneNormalizer.normalize(request.phoneNumber());
         if (userRepository.existsByEmail(email)) {
             throw new ApiException(ErrorCode.DUPLICATE_EMAIL);
         }
-        if (userRepository.existsByPhoneNumber(phone)) {
+        if (phone != null && userRepository.existsByPhoneNumber(phone)) {
             throw new ApiException(ErrorCode.DUPLICATE_PHONE);
         }
         if (invitationRepository.existsByEmailIgnoreCaseAndOrganizationIdAndStatus(
@@ -88,6 +94,20 @@ public class InvitationService {
         invitation.setEmail(email);
         invitation.setPhoneNumber(phone);
         invitation.setRole(role);
+        invitation.setJobTitle(trimToNull(request.jobTitle()));
+        if (request.warehouseId() != null) {
+            long ownedWarehouseCount = entityManager.createQuery(
+                            "select count(w) from Warehouse w where w.id = :warehouseId and w.organization.id = :organizationId",
+                            Long.class)
+                    .setParameter("warehouseId", request.warehouseId())
+                    .setParameter("organizationId", organization.getId())
+                    .getSingleResult();
+            if (ownedWarehouseCount == 0) {
+                throw new ApiException(ErrorCode.NOT_FOUND, "Warehouse not found in this organization");
+            }
+            invitation.setBaseWarehouse(entityManager.getReference(
+                    com.example.distrobackend.Domain.entity.Warehouse.class, request.warehouseId()));
+        }
         invitation.setTokenHash(SecretTokenService.sha256(rawToken));
         invitation.setStatus(InvitationStatus.PENDING);
         invitation.setExpiresAt(OffsetDateTime.now().plus(invitationTtl));
@@ -282,11 +302,15 @@ public class InvitationService {
                 user.setDriverApprovalStatus(DriverApprovalStatus.PENDING_REVIEW);
             }
             user.setOrganization(invitation.getOrganization());
+            user.setJobTitle(invitation.getJobTitle());
+            user.setBaseWarehouse(invitation.getBaseWarehouse());
         } else if (user.getStatus() != com.example.distrobackend.Domain.enums.UserStatus.INVITED) {
             throw new ApiException(ErrorCode.INVITATION_STATE_CONFLICT,
                     "The invited account is no longer available");
         } else {
             user.setPhoneNumber(phone);
+            user.setJobTitle(invitation.getJobTitle());
+            user.setBaseWarehouse(invitation.getBaseWarehouse());
         }
         user.setPasswordHash(passwordEncoder.encode(request.password()));
         user.setStatus(com.example.distrobackend.Domain.enums.UserStatus.ACTIVE);
@@ -308,6 +332,11 @@ public class InvitationService {
                 ? "Invitation accepted. Enter the account-verification code before signing in."
                 : "Invitation accepted. You can now sign in.";
         return new RegisterResponse(user.getId(), message);
+    }
+
+    private static String trimToNull(String value) {
+        if (value == null || value.isBlank()) return null;
+        return value.trim();
     }
 
     @Transactional

@@ -7,6 +7,7 @@ import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.dto.CreateDriverInvitationRequest;
 import com.example.distrobackend.dto.DriverRegistrationRequest;
+import com.example.distrobackend.dto.DriverOperationalStatusRequest;
 import com.example.distrobackend.dto.DriverLocationRequest;
 import com.example.distrobackend.dto.DriverResponse;
 import com.example.distrobackend.dto.InvitationResponse;
@@ -22,6 +23,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -56,13 +58,22 @@ public class DriverController {
         return driverService.invite(actor, request);
     }
 
-    @PostMapping("/{driverId}/invitation")
+    @PostMapping({"/{driverId}/invitation", "/{driverId}/invitation/resend"})
     @ResponseStatus(HttpStatus.ACCEPTED)
     public InvitationResponse resendInvitation(
             @AuthenticationPrincipal AuthenticatedUser actor,
             @PathVariable UUID driverId) {
         requireOrganizationAdmin(actor);
         return driverService.resendInvitation(actor, driverId);
+    }
+
+    @DeleteMapping("/{driverId}/invitation")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void revokeInvitation(
+            @AuthenticationPrincipal AuthenticatedUser actor,
+            @PathVariable UUID driverId) {
+        requireOrganizationAdmin(actor);
+        driverService.revokeInvitation(actor, driverId);
     }
 
     @GetMapping
@@ -110,6 +121,22 @@ public class DriverController {
             @PathVariable UUID driverId,
             @Valid @RequestBody UpdateDriverAvailabilityRequest request) {
         return driverService.updateAvailability(actor, driverId, request);
+    }
+
+    @PatchMapping("/{driverId}/operational-status")
+    public DriverResponse updateOperationalStatus(
+            @AuthenticationPrincipal AuthenticatedUser actor,
+            @PathVariable UUID driverId,
+            @Valid @RequestBody DriverOperationalStatusRequest request) {
+        String status = request.status().trim().toUpperCase(java.util.Locale.ROOT);
+        boolean available = switch (status) {
+            case "AVAILABLE" -> true;
+            case "OFF_DUTY", "UNAVAILABLE" -> false;
+            default -> throw new ApiException(ErrorCode.BAD_REQUEST,
+                    "status must be AVAILABLE or OFF_DUTY");
+        };
+        return driverService.updateAvailability(actor, driverId,
+                new UpdateDriverAvailabilityRequest(available));
     }
 
     @PostMapping("/me/location")

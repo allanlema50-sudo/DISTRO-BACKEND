@@ -52,7 +52,7 @@ public class SecurityConfig {
                                 "/api/access-requests/activate",
                                 "/api/invitations/*/accept").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/invitations/*").permitAll()
-                        .requestMatchers("/api/v1/payments/mpesa/callback").permitAll()
+                        .requestMatchers("/api/v1/payments/mpesa/callback", "/api/payments/mpesa/callback").permitAll()
                         .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                         // The HTTP upgrade is unauthenticated; STOMP CONNECT is
                         // authenticated and authorized by StompChannelInterceptor.
@@ -68,6 +68,7 @@ public class SecurityConfig {
                         // organization administration. Organization admins must
                         // never reach platform-wide workflows through this path.
                         .requestMatchers("/api/admin/**", "/api/v1/admin/**", "/api/organizations/**",
+                                "/api/manufacturers/**", "/api/distributors/**",
                                 "/api/v1/reports/**", "/api/v1/analytics/**", "/api/v1/audit-logs/**",
                                 "/api/v1/settings/**")
                         .hasRole("SUPER_ADMIN")

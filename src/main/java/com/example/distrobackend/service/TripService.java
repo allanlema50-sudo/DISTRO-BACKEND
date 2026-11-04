@@ -357,6 +357,31 @@ public class TripService {
         return TripResponse.from(saved, aggregateItems(saved));
     }
 
+    @Transactional
+    public TripResponse dispatch(AuthenticatedUser actor, UUID tripId) {
+        Trip trip = getOrganizationTripForUpdate(actor, tripId);
+        if (trip.getStatus() != TripStatus.SCHEDULED) {
+            throw new ApiException(ErrorCode.INVALID_STATE_TRANSITION,
+                    "Only a scheduled trip can be dispatched");
+        }
+        if (trip.getRider() == null || trip.getVehicle() == null) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "Assign an approved driver and active vehicle before dispatch");
+        }
+        if (trip.getStops() == null || trip.getStops().isEmpty()) {
+            throw new ApiException(ErrorCode.CONFLICT, "A trip needs at least one stop before dispatch");
+        }
+        TripStatus previous = trip.getStatus();
+        trip.setStatus(TripStatus.ONGOING);
+        trip.getStops().stream()
+                .filter(stop -> stop.getStatus() == StopStatus.PENDING)
+                .min(java.util.Comparator.comparingInt(TripStop::getSequence))
+                .ifPresent(stop -> stop.setStatus(StopStatus.IN_PROGRESS));
+        Trip saved = tripRepository.save(trip);
+        recordStatus(saved, previous, TripStatus.ONGOING, actor, "Trip dispatched");
+        return TripResponse.from(saved, aggregateItems(saved));
+    }
+
     @Transactional(readOnly = true)
     public List<LocationPingResponse> tracking(AuthenticatedUser actor, UUID tripId) {
         return locationHistory(actor, tripId);
@@ -406,7 +431,7 @@ public class TripService {
                 }
                 trip.setStatus(TripStatus.CANCELLED);
             }
-            case PAUSE, REROUTE -> {
+            case PAUSE, REROUTE, REQUEST_DRIVER_UPDATE -> {
                 if (trip.getStatus() == TripStatus.COMPLETED || trip.getStatus() == TripStatus.CANCELLED) {
                     throw new ApiException(ErrorCode.INVALID_STATE_TRANSITION,
                             "A closed trip cannot receive operational actions");

@@ -23,6 +23,10 @@ public record InvitationResponse(
 
         String organizationName,
 
+        String jobTitle,
+
+        UUID warehouseId,
+
         String invitationLink,
 
         OffsetDateTime expiresAt
@@ -43,6 +47,8 @@ public record InvitationResponse(
                 invitation.getStatus().name(),
                 invitation.getOrganization().getId(),
                 invitation.getOrganization().getName(),
+                invitation.getJobTitle(),
+                invitation.getBaseWarehouse() == null ? null : invitation.getBaseWarehouse().getId(),
                 invitationLink,
                 invitation.getExpiresAt()
         );

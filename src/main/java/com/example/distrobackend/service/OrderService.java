@@ -73,11 +73,51 @@ public class OrderService {
                     "You have reached the maximum number of unpaid orders. Complete or cancel an existing order first");
         }
 
-        Organization org = organizationRepository.findById(request.organizationId())
-                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Organization not found"));
-        if (org.getType() != Organizationtype.DISTRIBUTOR) {
-            throw new ApiException(ErrorCode.BAD_REQUEST,
-                    "Customers can only order from a distributor offer catalog");
+        Set<UUID> requestedItemIds = new HashSet<>();
+        List<OrderItemRequest> sortedItems = request.items().stream()
+                .sorted(java.util.Comparator.comparing(OrderItemRequest::stockItemId))
+                .toList();
+
+        Map<UUID, StockItem> resolvedStockItems = new HashMap<>();
+        for (OrderItemRequest itemReq : sortedItems) {
+            if (!requestedItemIds.add(itemReq.stockItemId())) {
+                throw new ApiException(ErrorCode.BAD_REQUEST,
+                        "Each stock item may appear only once in an order");
+            }
+
+            StockItem stockItem = stockItemRepository.findByIdForUpdate(itemReq.stockItemId()).orElse(null);
+            if (stockItem == null) {
+                // If not found by direct ID, check if the ID is a manufacturer source product with an offer
+                List<StockItem> offers = stockItemRepository.findOffersBySourceStockItemIdForUpdate(itemReq.stockItemId());
+                if (!offers.isEmpty()) {
+                    stockItem = offers.stream()
+                            .filter(o -> request.organizationId() == null || (o.getOrganization() != null && request.organizationId().equals(o.getOrganization().getId())))
+                            .findFirst()
+                            .orElse(offers.get(0));
+                }
+            }
+            if (stockItem == null) {
+                throw new ApiException(ErrorCode.NOT_FOUND, "Stock item not found: " + itemReq.stockItemId());
+            }
+            resolvedStockItems.put(itemReq.stockItemId(), stockItem);
+        }
+
+        Organization org = null;
+        if (request.organizationId() != null) {
+            org = organizationRepository.findById(request.organizationId()).orElse(null);
+        }
+
+        // If organization was not provided, not found, or is not a distributor, resolve from the items
+        if (org == null || org.getType() != Organizationtype.DISTRIBUTOR) {
+            StockItem firstItem = resolvedStockItems.get(sortedItems.get(0).stockItemId());
+            if (firstItem.getOrganization() != null && firstItem.getOrganization().getType() == Organizationtype.DISTRIBUTOR) {
+                org = firstItem.getOrganization();
+            } else if (org == null) {
+                throw new ApiException(ErrorCode.NOT_FOUND, "Organization not found");
+            } else {
+                throw new ApiException(ErrorCode.BAD_REQUEST,
+                        "Customers can only order from a distributor offer catalog");
+            }
         }
 
         Order order = new Order();
@@ -92,19 +132,8 @@ public class OrderService {
 
         BigDecimal subtotal = BigDecimal.ZERO;
 
-        Set<UUID> requestedItemIds = new HashSet<>();
-        List<OrderItemRequest> sortedItems = request.items().stream()
-                .sorted(java.util.Comparator.comparing(OrderItemRequest::stockItemId))
-                .toList();
-
         for (OrderItemRequest itemReq : sortedItems) {
-            if (!requestedItemIds.add(itemReq.stockItemId())) {
-                throw new ApiException(ErrorCode.BAD_REQUEST,
-                        "Each stock item may appear only once in an order");
-            }
-
-            StockItem stockItem = stockItemRepository.findByIdForUpdate(itemReq.stockItemId())
-                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Stock item not found: " + itemReq.stockItemId()));
+            StockItem stockItem = resolvedStockItems.get(itemReq.stockItemId());
 
             if (stockItem.getOrganization() == null
                     || !org.getId().equals(stockItem.getOrganization().getId())) {
@@ -241,7 +270,7 @@ public class OrderService {
         if (order.getStatus() != OrderStatus.PENDING) {
             throw new ApiException(ErrorCode.CONFLICT, "Only pending orders can be edited");
         }
-        if (order.getOrganization() == null || !order.getOrganization().getId().equals(request.organizationId())) {
+        if (request.organizationId() != null && order.getOrganization() != null && !order.getOrganization().getId().equals(request.organizationId())) {
             throw new ApiException(ErrorCode.CONFLICT, "The order organization cannot be changed");
         }
         Map<UUID, Integer> existing = order.getOrderItems().stream()
@@ -463,6 +492,6 @@ public class OrderService {
                 order.getDeliveredAt(),
                 order.getCancelledAt(),
                 items
-        );
+            );
     }
 }

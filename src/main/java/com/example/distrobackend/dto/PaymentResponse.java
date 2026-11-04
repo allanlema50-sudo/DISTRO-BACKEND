@@ -16,7 +16,11 @@ public record PaymentResponse(
         PaymentStatus status,
         String mpesaReceiptNumber,
         OffsetDateTime initiatedAt,
-        OffsetDateTime confirmedAt
+        OffsetDateTime confirmedAt,
+        String orderType,
+        String provider,
+        String currency,
+        String failureReason
 ) {
     public static PaymentResponse from(Payment payment) {
         return new PaymentResponse(
@@ -27,7 +31,11 @@ public record PaymentResponse(
                 payment.getStatus(),
                 payment.getMpesaReceiptNumber(),
                 payment.getInitiatedAt(),
-                payment.getConfirmedAt()
+                payment.getConfirmedAt(),
+                "CUSTOMER_ORDER",
+                payment.getMethod() == null ? null : payment.getMethod().name(),
+                payment.getCurrency(),
+                payment.getFailureReason()
         );
     }
 }

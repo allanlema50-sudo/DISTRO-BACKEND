@@ -20,7 +20,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/v1/admin/payments")
+@RequestMapping({"/api/v1/admin/payments", "/api/admin/payments"})
 @PreAuthorize("hasRole('SUPER_ADMIN')")
 @RequiredArgsConstructor
 public class AdminPaymentController {

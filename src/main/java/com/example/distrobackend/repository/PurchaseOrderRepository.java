@@ -29,6 +29,11 @@ public interface PurchaseOrderRepository extends JpaRepository<PurchaseOrder, UU
     Optional<PurchaseOrder> findByIdWithItems(@Param("id") UUID id);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select p from PurchaseOrder p join fetch p.buyerOrganization buyer "
+            + "join fetch p.supplierOrganization supplier where p.id = :id")
+    Optional<PurchaseOrder> findByIdForPayment(@Param("id") UUID id);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select p from PurchaseOrder p where p.id = :id")
     Optional<PurchaseOrder> findByIdForUpdate(@Param("id") UUID id);
 

@@ -12,5 +12,11 @@ public record PaymentInitiateRequest(
         @Pattern(regexp = "(?:0|254|\\+254)[17]\\d{8}",
                 message = "phoneNumber must be a valid Kenyan mobile number")
         String phoneNumber,
-        @Size(max = 100) String idempotencyKey
-) {}
+        @Size(max = 100) String idempotencyKey,
+        @Size(max = 30) String orderType,
+        @Size(max = 20) String provider
+) {
+    public PaymentInitiateRequest(UUID orderId, String phoneNumber, String idempotencyKey) {
+        this(orderId, phoneNumber, idempotencyKey, null, "MPESA");
+    }
+}

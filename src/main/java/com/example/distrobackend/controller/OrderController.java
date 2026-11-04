@@ -23,7 +23,7 @@ import java.util.List;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/v1/orders")
+@RequestMapping({"/api/v1/orders", "/api/orders"})
 @RequiredArgsConstructor
 public class OrderController {
 
@@ -37,7 +37,7 @@ public class OrderController {
     }
 
     // -----------------------------------------------------------------------
-    // GET /api/v1/orders
+    // GET /api/v1/orders (and /api/orders)
     // - CUSTOMER           → their own orders only
     // - DISTRIBUTOR_ADMIN,
     //   DISTRIBUTOR_STAFF  → orders belonging to their organisation
@@ -61,7 +61,7 @@ public class OrderController {
     }
 
     // -----------------------------------------------------------------------
-    // POST /api/v1/orders
+    // POST /api/v1/orders (and /api/orders)
     // - Only CUSTOMER may place an order; customer identity comes from the
     //   JWT principal, never from the request body.
     // -----------------------------------------------------------------------
@@ -79,7 +79,7 @@ public class OrderController {
     }
 
     // -----------------------------------------------------------------------
-    // GET /api/v1/orders/{orderId}
+    // GET /api/v1/orders/{orderId} (and /api/orders/{orderId})
     // - CUSTOMER           → only if order.customerId == me.userId()
     // - DISTRIBUTOR_ADMIN,
     //   DISTRIBUTOR_STAFF  → only if order.organizationId == me.organizationId()

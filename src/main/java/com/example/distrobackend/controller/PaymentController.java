@@ -8,6 +8,7 @@ import com.example.distrobackend.dto.mpesa.MpesaCallbackRequest;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.service.PaymentService;
 import com.example.distrobackend.service.PaymentAdministrationService;
+import com.example.distrobackend.service.PurchaseOrderService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -21,16 +22,35 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
 @RestController
-@RequestMapping("/api/v1/payments")
+@RequestMapping({"/api/v1/payments", "/api/payments"})
 @RequiredArgsConstructor
 public class PaymentController {
 
     private final PaymentService paymentService;
     private final PaymentAdministrationService paymentAdministrationService;
+    private final com.example.distrobackend.service.PurchaseOrderService purchaseOrderService;
 
     @GetMapping
-    public Page<PaymentResponse> listPayments(
-            @AuthenticationPrincipal AuthenticatedUser actor, Pageable pageable) {
+    public Object listPayments(
+            @AuthenticationPrincipal AuthenticatedUser actor,
+            @RequestParam(required = false) String orderType,
+            @RequestParam(required = false) UUID orderId,
+            Pageable pageable) {
+        if (orderType != null && "PURCHASE_ORDER".equalsIgnoreCase(orderType.trim())) {
+            if (orderId == null) {
+                throw new com.example.distrobackend.Exception.ApiException(
+                        com.example.distrobackend.Exception.ErrorCode.BAD_REQUEST,
+                        "orderId is required when orderType is PURCHASE_ORDER");
+            }
+            return purchaseOrderService.settlements(actor, orderId);
+        }
+        if (orderType != null && !"CUSTOMER_ORDER".equalsIgnoreCase(orderType.trim())) {
+            throw new com.example.distrobackend.Exception.ApiException(
+                    com.example.distrobackend.Exception.ErrorCode.BAD_REQUEST, "Unsupported payment orderType");
+        }
+        if (orderId != null) {
+            return java.util.List.of(paymentAdministrationService.getForOrder(actor, orderId));
+        }
         return paymentAdministrationService.list(actor, pageable);
     }
 
@@ -44,7 +64,12 @@ public class PaymentController {
     @PreAuthorize("hasAnyRole('CUSTOMER', 'DISTRIBUTOR_ADMIN', 'DISTRIBUTOR_STAFF')")
     public ResponseEntity<PaymentInitiateResponse> initiatePayment(
             @AuthenticationPrincipal AuthenticatedUser actor,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @Valid @RequestBody PaymentInitiateRequest request) {
+        if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+            request = new PaymentInitiateRequest(request.orderId(), request.phoneNumber(),
+                    idempotencyKey, request.orderType(), request.provider());
+        }
         return ResponseEntity.ok(paymentService.initiatePayment(actor, request));
     }
 

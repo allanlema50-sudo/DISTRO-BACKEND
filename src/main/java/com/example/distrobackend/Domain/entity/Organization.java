@@ -5,6 +5,7 @@ package com.example.distrobackend.Domain.entity;
 
 
 import com.example.distrobackend.Domain.enums.Organizationtype;
+import com.example.distrobackend.Domain.enums.OrganizationStatus;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -38,6 +39,10 @@ public class Organization {
     @Enumerated(EnumType.STRING)
     @Column(name = "type", nullable = false)
     private Organizationtype type;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false, length = 20)
+    private OrganizationStatus status = OrganizationStatus.ACTIVE;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

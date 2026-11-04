@@ -1,9 +1,10 @@
 package com.example.distrobackend.Domain.enums;
 
 public enum ShipmentStatus {
-    READY_FOR_DISPATCH,
+    READY,
+    ASSIGNED,
     IN_TRANSIT,
     DELIVERED,
-    RECEIVED,
+    FAILED,
     CANCELLED
 }

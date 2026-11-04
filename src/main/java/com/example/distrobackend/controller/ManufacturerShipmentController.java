@@ -1,10 +1,10 @@
 package com.example.distrobackend.controller;
 
 import com.example.distrobackend.dto.CreateShipmentRequest;
-import com.example.distrobackend.dto.ShipmentResponse;
+import com.example.distrobackend.dto.PurchaseOrderShipmentResponse;
 import com.example.distrobackend.dto.ShipmentStatusRequest;
 import com.example.distrobackend.security.AuthenticatedUser;
-import com.example.distrobackend.service.ShipmentService;
+import com.example.distrobackend.service.PurchaseOrderShipmentService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -30,30 +30,30 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class ManufacturerShipmentController {
 
-    private final ShipmentService shipmentService;
+    private final PurchaseOrderShipmentService shipmentService;
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("hasAnyRole('MANUFACTURER_ADMIN','MANUFACTURER_STAFF')")
-    public ShipmentResponse create(@AuthenticationPrincipal AuthenticatedUser actor,
+    public PurchaseOrderShipmentResponse create(@AuthenticationPrincipal AuthenticatedUser actor,
                                    @Valid @RequestBody CreateShipmentRequest request) {
         return shipmentService.create(actor, request);
     }
 
     @GetMapping
-    public Page<ShipmentResponse> list(@AuthenticationPrincipal AuthenticatedUser actor,
+    public Page<PurchaseOrderShipmentResponse> list(@AuthenticationPrincipal AuthenticatedUser actor,
                                       @PageableDefault(size = 20) Pageable pageable) {
         return shipmentService.listForManufacturer(actor, pageable);
     }
 
     @GetMapping("/{shipmentId}")
-    public ShipmentResponse get(@AuthenticationPrincipal AuthenticatedUser actor,
+    public PurchaseOrderShipmentResponse get(@AuthenticationPrincipal AuthenticatedUser actor,
                                 @PathVariable UUID shipmentId) {
         return shipmentService.get(actor, shipmentId);
     }
 
     @PatchMapping("/{shipmentId}/status")
-    public ShipmentResponse updateStatus(@AuthenticationPrincipal AuthenticatedUser actor,
+    public PurchaseOrderShipmentResponse updateStatus(@AuthenticationPrincipal AuthenticatedUser actor,
                                          @PathVariable UUID shipmentId,
                                          @Valid @RequestBody ShipmentStatusRequest request) {
         return shipmentService.updateStatus(actor, shipmentId, request);

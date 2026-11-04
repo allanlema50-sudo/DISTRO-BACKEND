@@ -1,6 +1,6 @@
 package com.example.distrobackend.Domain.entity;
 
-import com.example.distrobackend.Domain.enums.ShipmentStatus;
+import com.example.distrobackend.Domain.enums.PurchaseOrderShipmentStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -46,7 +46,7 @@ public class PurchaseOrderShipment {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 30)
-    private ShipmentStatus status = ShipmentStatus.READY_FOR_DISPATCH;
+    private PurchaseOrderShipmentStatus status = PurchaseOrderShipmentStatus.READY_FOR_DISPATCH;
 
     @Column(name = "tracking_number", length = 100)
     private String trackingNumber;
@@ -59,6 +59,9 @@ public class PurchaseOrderShipment {
 
     @Column(name = "receipt_note", columnDefinition = "TEXT")
     private String receiptNote;
+
+    @Column(name = "manufacturer_note", columnDefinition = "TEXT")
+    private String manufacturerNote;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "created_by", nullable = false)

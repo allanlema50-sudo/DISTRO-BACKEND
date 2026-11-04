@@ -3,7 +3,9 @@ package com.example.distrobackend.service;
 
 import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.OtpPurpose;
+import com.example.distrobackend.Domain.enums.OrganizationStatus;
 import com.example.distrobackend.Domain.enums.UserRole;
+import com.example.distrobackend.Domain.enums.DriverApprovalStatus;
 import com.example.distrobackend.Domain.enums.UserStatus;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
@@ -136,6 +138,10 @@ public class AuthService {
         if (user.getStatus() == UserStatus.INVITED) {
             throw new ApiException(ErrorCode.ACCOUNT_INVITED);
         }
+        if (user.getRole() == UserRole.DRIVER
+                && user.getDriverApprovalStatus() == DriverApprovalStatus.REJECTED) {
+            throw new ApiException(ErrorCode.DRIVER_APPROVAL_REJECTED);
+        }
         if (requiresPhoneVerification(user) && !user.isPhoneVerified()) {
             throw new ApiException(ErrorCode.ACCOUNT_NOT_VERIFIED);
         }
@@ -241,6 +247,17 @@ public class AuthService {
         }
         if (user.getStatus() == UserStatus.INVITED) {
             throw new ApiException(ErrorCode.ACCOUNT_INVITED);
+        }
+        if (user.getOrganization() != null) {
+            OrganizationStatus organizationStatus = user.getOrganization().getStatus();
+            if (organizationStatus == OrganizationStatus.SUSPENDED) {
+                throw new ApiException(ErrorCode.ACCOUNT_SUSPENDED,
+                        "Organization is suspended. Contact your administrator");
+            }
+            if (organizationStatus != OrganizationStatus.ACTIVE) {
+                throw new ApiException(ErrorCode.ACCOUNT_DEACTIVATED,
+                        "Organization is not active. Contact your administrator");
+            }
         }
     }
 

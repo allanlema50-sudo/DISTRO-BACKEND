@@ -1,9 +1,12 @@
 package com.example.distrobackend.controller;
 
 import com.example.distrobackend.Domain.enums.UserRole;
+import com.example.distrobackend.Domain.enums.UserStatus;
+import com.example.distrobackend.Domain.enums.DriverApprovalStatus;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.dto.CreateDriverInvitationRequest;
+import com.example.distrobackend.dto.DriverRegistrationRequest;
 import com.example.distrobackend.dto.DriverLocationRequest;
 import com.example.distrobackend.dto.DriverResponse;
 import com.example.distrobackend.dto.InvitationResponse;
@@ -26,6 +29,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.RequestParam;
 
 import java.util.UUID;
 
@@ -35,6 +39,14 @@ import java.util.UUID;
 public class DriverController {
 
     private final DriverService driverService;
+
+    @PostMapping
+    @ResponseStatus(HttpStatus.CREATED)
+    public DriverResponse registerForReview(
+            @AuthenticationPrincipal AuthenticatedUser actor,
+            @Valid @RequestBody DriverRegistrationRequest request) {
+        return driverService.registerForReview(actor, request);
+    }
 
     @PostMapping("/invitations")
     @ResponseStatus(HttpStatus.ACCEPTED)
@@ -55,16 +67,22 @@ public class DriverController {
 
     @GetMapping
     public Page<DriverResponse> list(
-            @AuthenticationPrincipal AuthenticatedUser actor, Pageable pageable) {
-        requireOrganizationRole(actor, false);
-        return driverService.list(actor, pageable);
+            @AuthenticationPrincipal AuthenticatedUser actor,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String availability,
+            @RequestParam(required = false) UUID organizationId,
+            Pageable pageable) {
+        if (actor == null || actor.role() != UserRole.SUPER_ADMIN) requireOrganizationRole(actor, false);
+        DriverStatusFilter statusFilter = parseStatus(status);
+        return driverService.list(actor, organizationId, statusFilter.userStatus(),
+                statusFilter.approvalStatus(), parseAvailability(availability), pageable);
     }
 
     @GetMapping("/{driverId}")
     public DriverResponse get(
             @AuthenticationPrincipal AuthenticatedUser actor,
             @PathVariable UUID driverId) {
-        requireOrganizationRole(actor, true);
+        if (actor == null || actor.role() != UserRole.SUPER_ADMIN) requireOrganizationRole(actor, true);
         return driverService.get(actor, driverId);
     }
 
@@ -102,10 +120,13 @@ public class DriverController {
     }
 
     private static void requireOrganizationRole(AuthenticatedUser actor, boolean allowDriver) {
-        if (actor == null || actor.organizationId() == null
-                || (!allowDriver && actor.role() == UserRole.DRIVER)
-                || (actor.role() != UserRole.DRIVER
-                && actor.role() != UserRole.MANUFACTURER_ADMIN
+        if (actor == null) throw new ApiException(ErrorCode.ACCESS_DENIED);
+        if (actor.role() == UserRole.DRIVER) {
+            if (allowDriver) return;
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        if (actor.organizationId() == null
+                || (actor.role() != UserRole.MANUFACTURER_ADMIN
                 && actor.role() != UserRole.MANUFACTURER_STAFF
                 && actor.role() != UserRole.DISTRIBUTOR_ADMIN
                 && actor.role() != UserRole.DISTRIBUTOR_STAFF)) {
@@ -119,4 +140,32 @@ public class DriverController {
             throw new ApiException(ErrorCode.ACCESS_DENIED);
         }
     }
+
+    private static DriverStatusFilter parseStatus(String status) {
+        if (status == null || status.isBlank()) return new DriverStatusFilter(null, null);
+        if ("APPROVED".equalsIgnoreCase(status)) {
+            return new DriverStatusFilter(null, DriverApprovalStatus.APPROVED);
+        }
+        if ("PENDING_REVIEW".equalsIgnoreCase(status) || "REJECTED".equalsIgnoreCase(status)) {
+            return new DriverStatusFilter(null, DriverApprovalStatus.valueOf(status.trim().toUpperCase(java.util.Locale.ROOT)));
+        }
+        try {
+            return new DriverStatusFilter(
+                    UserStatus.valueOf(status.trim().toUpperCase(java.util.Locale.ROOT)), null);
+        } catch (IllegalArgumentException ex) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Invalid driver status");
+        }
+    }
+
+    private static Boolean parseAvailability(String availability) {
+        if (availability == null || availability.isBlank()) return null;
+        return switch (availability.trim().toUpperCase(java.util.Locale.ROOT)) {
+            case "AVAILABLE" -> true;
+            case "UNAVAILABLE" -> false;
+            default -> throw new ApiException(ErrorCode.BAD_REQUEST,
+                    "availability must be AVAILABLE or UNAVAILABLE");
+        };
+    }
+
+    private record DriverStatusFilter(UserStatus userStatus, DriverApprovalStatus approvalStatus) {}
 }

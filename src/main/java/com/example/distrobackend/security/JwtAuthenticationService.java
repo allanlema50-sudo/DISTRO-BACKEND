@@ -1,7 +1,9 @@
 package com.example.distrobackend.security;
 
 import com.example.distrobackend.Domain.enums.Organizationtype;
+import com.example.distrobackend.Domain.enums.OrganizationStatus;
 import com.example.distrobackend.Domain.enums.UserRole;
+import com.example.distrobackend.Domain.enums.DriverApprovalStatus;
 import com.example.distrobackend.Domain.enums.UserStatus;
 import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.User;
@@ -57,7 +59,14 @@ public class JwtAuthenticationService {
         if (user.getStatus() != UserStatus.ACTIVE) {
             throw new IllegalArgumentException("JWT account is not active");
         }
+        if (user.getRole() == UserRole.DRIVER
+                && user.getDriverApprovalStatus() == DriverApprovalStatus.REJECTED) {
+            throw new IllegalArgumentException("Driver approval was rejected");
+        }
         Organization organization = user.getOrganization();
+        if (organization != null && organization.getStatus() != OrganizationStatus.ACTIVE) {
+            throw new IllegalArgumentException("Organization is not active");
+        }
         UUID actualOrganizationId = organization == null ? null : organization.getId();
         Organizationtype actualOrganizationType = organization == null ? null : organization.getType();
         if (user.getRole() != role
@@ -93,8 +102,9 @@ public class JwtAuthenticationService {
         if (role == UserRole.SUPER_ADMIN && (organizationId != null || organizationType != null)) {
             throw new IllegalArgumentException("Platform administrators cannot carry organization claims");
         }
-        if (role == UserRole.DRIVER && organizationId == null) {
-            throw new IllegalArgumentException("Drivers must belong to an organization");
+        if (role == UserRole.DRIVER && organizationId != null
+                && organizationType != Organizationtype.DISTRIBUTOR) {
+            throw new IllegalArgumentException("Organization-linked drivers must belong to a distributor");
         }
     }
 

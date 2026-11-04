@@ -1,10 +1,12 @@
 package com.example.distrobackend.integration.notification;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
@@ -13,6 +15,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.URI;
 
+@Slf4j
 @Component
 public class MailgunEmailClient {
 
@@ -43,19 +46,25 @@ public class MailgunEmailClient {
             throw new IllegalArgumentException("Email recipient is required");
         }
 
+        String normalizedDomain = normalize(domain);
+        URI endpoint = messageEndpoint(normalizedDomain);
+
         HttpHeaders headers = new HttpHeaders();
         headers.setBasicAuth("api", normalize(apiKey));
         headers.setContentType(MediaType.MULTIPART_FORM_DATA);
 
         MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
-        String normalizedDomain = normalize(domain);
         body.add("from", "Distro <postmaster@" + normalizedDomain + ">");
         body.add("to", recipient);
         body.add("subject", subject);
         body.add("text", text);
 
-        restTemplate.postForEntity(messageEndpoint(normalizedDomain),
-                new HttpEntity<>(body, headers), String.class);
+        log.debug("Mailgun POST {} to={} from=postmaster@{}", endpoint, recipient, normalizedDomain);
+
+        ResponseEntity<String> response = restTemplate.postForEntity(
+                endpoint, new HttpEntity<>(body, headers), String.class);
+
+        log.debug("Mailgun response: status={} body={}", response.getStatusCode(), response.getBody());
     }
 
     private URI messageEndpoint(String normalizedDomain) {

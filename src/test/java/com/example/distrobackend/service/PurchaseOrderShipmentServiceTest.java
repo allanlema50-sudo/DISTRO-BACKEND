@@ -33,7 +33,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
-class ShipmentServiceTest {
+class PurchaseOrderShipmentServiceTest {
 
     @Mock private PurchaseOrderShipmentRepository shipmentRepository;
     @Mock private PurchaseOrderRepository purchaseOrderRepository;
@@ -44,7 +44,7 @@ class ShipmentServiceTest {
     @Mock private UserRepository userRepository;
     @Mock private NotificationService notificationService;
 
-    @InjectMocks private ShipmentService shipmentService;
+    @InjectMocks private PurchaseOrderShipmentService shipmentService;
 
     @Test
     void shipmentCannotBeCreatedBeforeSettlement() {

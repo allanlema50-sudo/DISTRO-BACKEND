@@ -1,6 +1,7 @@
 package com.example.distrobackend.controller;
 
 import com.example.distrobackend.Domain.enums.UserRole;
+import com.example.distrobackend.Domain.enums.TripStatus;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.dto.*;
@@ -26,14 +27,29 @@ public class TripController {
 
     @GetMapping
     public Page<TripResponse> list(@AuthenticationPrincipal AuthenticatedUser me,
+                                   @RequestParam(required = false) TripStatus status,
                                    Pageable pageable) {
-        return tripService.list(me, pageable);
+        return tripService.list(me, status, pageable);
     }
 
     @GetMapping("/{tripId}")
     public TripResponse get(@AuthenticationPrincipal AuthenticatedUser me,
                             @PathVariable UUID tripId) {
         return tripService.get(me, tripId);
+    }
+
+    @GetMapping("/{tripId}/stops")
+    public List<TripStopResponse> stops(@AuthenticationPrincipal AuthenticatedUser me,
+                                        @PathVariable UUID tripId) {
+        return tripService.get(me, tripId).stops();
+    }
+
+    @PatchMapping("/{tripId}/stops/{stopId}/status")
+    public TripStopResponse updateStopStatus(@AuthenticationPrincipal AuthenticatedUser me,
+                                             @PathVariable UUID tripId,
+                                             @PathVariable UUID stopId,
+                                             @Valid @RequestBody TripStopStatusUpdate request) {
+        return tripService.updateStopStatus(me, tripId, stopId, request.status());
     }
 
     @PostMapping

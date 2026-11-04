@@ -60,14 +60,15 @@ class ProductLifecycleServiceTest {
         manufacturer.setId(organizationId);
         manufacturer.setType(Organizationtype.MANUFACTURER);
 
-        StockItem product = new StockItem();
-        product.setId(productId);
-        product.setOrganization(manufacturer);
-
         when(organizationRepository.findById(organizationId)).thenReturn(Optional.of(manufacturer));
         when(stockItemRepository.existsByOrganization_IdAndSkuIgnoreCase(organizationId, "SIMBA-332"))
                 .thenReturn(false);
-        when(stockItemRepository.saveAndFlush(any(StockItem.class))).thenReturn(product);
+        when(stockItemRepository.saveAndFlush(any(StockItem.class))).thenAnswer(invocation -> {
+            StockItem saved = invocation.getArgument(0);
+            saved.setId(productId);
+            saved.setOrganization(manufacturer);
+            return saved;
+        });
         when(imageRepository.findById(productId)).thenReturn(Optional.empty());
         when(imageRepository.saveAndFlush(any(ProductImage.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
@@ -85,9 +86,12 @@ class ProductLifecycleServiceTest {
 
         productLifecycleService.create(actor, request);
 
+        ArgumentCaptor<StockItem> productCaptor = ArgumentCaptor.forClass(StockItem.class);
+        verify(stockItemRepository).saveAndFlush(productCaptor.capture());
         ArgumentCaptor<ProductImage> imageCaptor = ArgumentCaptor.forClass(ProductImage.class);
         verify(imageRepository).saveAndFlush(imageCaptor.capture());
-        assertThat(imageCaptor.getValue().getProduct()).isSameAs(product);
+        assertThat(imageCaptor.getValue().getProduct()).isSameAs(productCaptor.getValue());
+        assertThat(productCaptor.getValue().getId()).isEqualTo(productId);
         assertThat(imageCaptor.getValue().getProductId()).isNull();
     }
 }

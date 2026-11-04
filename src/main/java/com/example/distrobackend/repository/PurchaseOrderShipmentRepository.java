@@ -1,7 +1,8 @@
 package com.example.distrobackend.repository;
 
 import com.example.distrobackend.Domain.entity.PurchaseOrderShipment;
-import com.example.distrobackend.Domain.enums.ShipmentStatus;
+import com.example.distrobackend.Domain.enums.PurchaseOrderShipmentStatus;
+import org.springframework.data.jpa.repository.EntityGraph;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -39,13 +40,17 @@ public interface PurchaseOrderShipmentRepository extends JpaRepository<PurchaseO
             + "where p.id = :purchaseOrderId")
     Optional<PurchaseOrderShipment> findByPurchaseOrderId(@Param("purchaseOrderId") UUID purchaseOrderId);
 
+    @EntityGraph(attributePaths = {"purchaseOrder", "purchaseOrder.buyerOrganization",
+            "purchaseOrder.supplierOrganization", "destinationWarehouse"})
     Page<PurchaseOrderShipment> findByPurchaseOrder_BuyerOrganization_IdOrderByCreatedAtDesc(
             UUID organizationId, Pageable pageable);
 
+    @EntityGraph(attributePaths = {"purchaseOrder", "purchaseOrder.buyerOrganization",
+            "purchaseOrder.supplierOrganization", "destinationWarehouse"})
     Page<PurchaseOrderShipment> findByPurchaseOrder_SupplierOrganization_IdOrderByCreatedAtDesc(
             UUID organizationId, Pageable pageable);
 
     boolean existsByPurchaseOrder_Id(UUID purchaseOrderId);
 
-    long countByStatus(ShipmentStatus status);
+    long countByStatus(PurchaseOrderShipmentStatus status);
 }

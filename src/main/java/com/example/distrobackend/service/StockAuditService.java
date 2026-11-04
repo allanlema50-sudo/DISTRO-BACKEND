@@ -112,6 +112,7 @@ public class StockAuditService {
         StockItem stockItem = stockItemRepository.findByIdAndOrganizationIdForUpdateWithWarehouse(
                         current.getStockItem().getId(), organizationId)
                 .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.STOCK_ITEM_NOT_FOUND));
+        entityManager.refresh(stockItem, LockModeType.PESSIMISTIC_WRITE);
         validateWarehouseStock(warehouse, stockItem);
 
         StockAudit audit = auditRepository.findByIdAndOrganizationIdForUpdate(auditId, organizationId)

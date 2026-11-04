@@ -124,17 +124,18 @@ class DriverServiceTest {
     }
 
     @Test
-    void manufacturerCannotUseDistributorDriverOperations() {
+    void manufacturerCanUseDriverListingWithinItsOrganization() {
+        when(userRepository.searchDrivers(eq(organizationId), isNull(), isNull(), isNull(),
+                eq(UserRole.DRIVER), any())).thenReturn(org.springframework.data.domain.Page.empty());
         AuthenticatedUser actor = new AuthenticatedUser(
                 UUID.randomUUID(), UserRole.MANUFACTURER_ADMIN, organizationId,
                 Organizationtype.MANUFACTURER,
                 Instant.now().plus(Duration.ofMinutes(5)));
 
-        assertThatThrownBy(() -> driverService.list(actor,
-                org.springframework.data.domain.PageRequest.of(0, 20)))
-                .isInstanceOf(ApiException.class)
-                .hasMessageContaining("distributor");
-        verifyNoInteractions(userRepository);
+        driverService.list(actor, org.springframework.data.domain.PageRequest.of(0, 20));
+
+        verify(userRepository).searchDrivers(eq(organizationId), isNull(), isNull(), isNull(),
+                eq(UserRole.DRIVER), any());
     }
 
     private AuthenticatedUser principal(UUID userId, UserRole role) {

@@ -33,6 +33,8 @@ class PurchaseOrderServiceTest {
     @Mock private OrganizationRepository organizationRepository;
     @Mock private StockItemRepository stockItemRepository;
     @Mock private UserRepository userRepository;
+    @Mock private NotificationService notificationService;
+    @Mock private ProductAuthorizationService productAuthorizationService;
 
     @InjectMocks private PurchaseOrderService purchaseOrderService;
 

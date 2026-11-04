@@ -163,13 +163,16 @@ public class ProductLifecycleService {
         try {
             byte[] bytes = file.getBytes();
             ProductImage image = imageRepository.findById(product.getId()).orElseGet(ProductImage::new);
-            image.setProductId(product.getId());
             image.setProduct(product);
             image.setContentType(detectType(bytes));
             image.setFileName(file.getOriginalFilename() == null ? null : file.getOriginalFilename().trim());
             image.setContent(bytes);
             image.setSizeBytes(bytes.length);
-            imageRepository.save(image);
+            // ProductImage uses @MapsId: the shared primary key is derived from
+            // the managed StockItem when a new image is persisted. Leaving the
+            // id null makes Spring Data use persist() instead of merge(), which
+            // avoids Hibernate's null-identifier assertion for new images.
+            imageRepository.saveAndFlush(image);
             product.setImageAvailable(true);
         } catch (IOException ex) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Product image could not be read");

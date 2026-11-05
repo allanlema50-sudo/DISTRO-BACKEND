@@ -67,8 +67,6 @@ class DriverServiceTest {
     void driverCannotChangeAnotherDriversAvailability() {
         UUID actorId = UUID.randomUUID();
         AuthenticatedUser actor = principal(actorId, UserRole.DRIVER);
-        when(userRepository.findByIdForUpdate(driver.getId())).thenReturn(Optional.of(driver));
-
         assertThatThrownBy(() -> driverService.updateAvailability(actor, driver.getId(),
                 new UpdateDriverAvailabilityRequest(true)))
                 .isInstanceOf(ApiException.class)

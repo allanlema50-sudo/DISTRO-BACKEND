@@ -236,8 +236,8 @@ public class PaymentService {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Incomplete M-Pesa callback payload");
         }
 
-        PurchaseOrderSettlement purchaseSettlement = settlementRepository
-                .findByMpesaCheckoutRequestId(callback.getCheckoutRequestId()).orElse(null);
+        PurchaseOrderSettlement purchaseSettlement = settlementRepository == null ? null
+                : settlementRepository.findByMpesaCheckoutRequestId(callback.getCheckoutRequestId()).orElse(null);
         if (purchaseSettlement != null) {
             processPurchaseOrderCallback(callback, purchaseSettlement);
             return;

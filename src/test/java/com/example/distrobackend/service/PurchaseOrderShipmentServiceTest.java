@@ -50,7 +50,7 @@ class PurchaseOrderShipmentServiceTest {
     void shipmentCannotBeCreatedBeforeSettlement() {
         UUID purchaseOrderId = UUID.randomUUID();
         UUID manufacturerId = UUID.randomUUID();
-        PurchaseOrder purchaseOrder = purchaseOrder(manufacturerId);
+        PurchaseOrder purchaseOrder = purchaseOrder(purchaseOrderId, manufacturerId);
         PurchaseOrderSettlement settlement = new PurchaseOrderSettlement();
         settlement.setStatus(SettlementStatus.PENDING);
         when(purchaseOrderRepository.findByIdForUpdate(purchaseOrderId))
@@ -67,14 +67,14 @@ class PurchaseOrderShipmentServiceTest {
                 .hasMessageContaining("settled");
     }
 
-    private PurchaseOrder purchaseOrder(UUID manufacturerId) {
+    private PurchaseOrder purchaseOrder(UUID purchaseOrderId, UUID manufacturerId) {
         PurchaseOrder purchaseOrder = new PurchaseOrder();
         Organization buyer = organization(UUID.randomUUID(), Organizationtype.DISTRIBUTOR);
         Organization supplier = organization(manufacturerId, Organizationtype.MANUFACTURER);
         purchaseOrder.setBuyerOrganization(buyer);
         purchaseOrder.setSupplierOrganization(supplier);
         purchaseOrder.setStatus(PurchaseOrderStatus.APPROVED);
-        purchaseOrder.setId(UUID.randomUUID());
+        purchaseOrder.setId(purchaseOrderId);
         return purchaseOrder;
     }
 

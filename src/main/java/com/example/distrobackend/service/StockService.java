@@ -307,7 +307,8 @@ public class StockService {
         }
         if (request.active() != null) {
             if (request.active()) {
-                if (!item.isActive()) {
+                if (!item.isActive()
+                        || item.getPublicationStatus() != ProductPublicationStatus.PUBLISHED) {
                     throw new ApiException(ErrorCode.BAD_REQUEST,
                             "Use the product publication endpoint to publish a product");
                 }

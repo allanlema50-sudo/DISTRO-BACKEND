@@ -1,19 +1,27 @@
 package com.example.distrobackend.service;
 
 import com.example.distrobackend.Domain.entity.User;
+import com.example.distrobackend.Domain.entity.CustomerAddress;
+import com.example.distrobackend.Domain.entity.PushDeviceToken;
 import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Domain.enums.UserStatus;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.dto.UpdateUserStatusRequest;
 import com.example.distrobackend.dto.UserResponse;
+import com.example.distrobackend.dto.CustomerAddressRequest;
+import com.example.distrobackend.dto.CustomerAddressResponse;
+import com.example.distrobackend.dto.PushDeviceTokenRequest;
+import com.example.distrobackend.dto.PushDeviceTokenResponse;
+import com.example.distrobackend.repository.CustomerAddressRepository;
+import com.example.distrobackend.repository.PushDeviceTokenRepository;
 import com.example.distrobackend.repository.OtpVerificationRepository;
 import com.example.distrobackend.repository.UserRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,15 +30,33 @@ import java.util.UUID;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class UserService {
 
     private static final List<UserRole> ORGANIZATION_ADMIN_ROLES = List.of(
             UserRole.MANUFACTURER_ADMIN, UserRole.DISTRIBUTOR_ADMIN);
 
     private final UserRepository userRepository;
+    private final CustomerAddressRepository customerAddressRepository;
+    private final PushDeviceTokenRepository pushDeviceTokenRepository;
     private final OtpVerificationRepository otpRepository;
     private final RefreshTokenService refreshTokenService;
+
+    @Autowired
+    public UserService(UserRepository userRepository, CustomerAddressRepository customerAddressRepository,
+                       PushDeviceTokenRepository pushDeviceTokenRepository,
+                       OtpVerificationRepository otpRepository, RefreshTokenService refreshTokenService) {
+        this.userRepository = userRepository;
+        this.customerAddressRepository = customerAddressRepository;
+        this.pushDeviceTokenRepository = pushDeviceTokenRepository;
+        this.otpRepository = otpRepository;
+        this.refreshTokenService = refreshTokenService;
+    }
+
+    /** Compatibility constructor for existing unit fixtures that do not exercise mobile profile APIs. */
+    public UserService(UserRepository userRepository, OtpVerificationRepository otpRepository,
+                       RefreshTokenService refreshTokenService) {
+        this(userRepository, null, null, otpRepository, refreshTokenService);
+    }
 
     @Transactional(readOnly = true)
     public Page<UserResponse> listForPlatform(AuthenticatedUser actor,
@@ -160,6 +186,104 @@ public class UserService {
         }
     }
 
+    @Transactional(readOnly = true)
+    public List<CustomerAddressResponse> listMyAddresses(UUID userId) {
+        requireCustomer(userId);
+        return customerAddressRepository.findAllByUser_IdOrderByDefaultAddressDescCreatedAtDesc(userId)
+                .stream().map(CustomerAddressResponse::from).toList();
+    }
+
+    @Transactional
+    public CustomerAddressResponse createMyAddress(UUID userId, CustomerAddressRequest request) {
+        User user = requireCustomerForUpdate(userId);
+        validateCoordinates(request.latitude(), request.longitude());
+        CustomerAddress address = new CustomerAddress();
+        address.setUser(user);
+        if (request.defaultAddress()) clearDefaultAddress(userId);
+        applyAddress(address, request);
+        return CustomerAddressResponse.from(customerAddressRepository.save(address));
+    }
+
+    @Transactional
+    public CustomerAddressResponse updateMyAddress(UUID userId, UUID addressId, CustomerAddressRequest request) {
+        User user = requireCustomerForUpdate(userId);
+        CustomerAddress address = customerAddressRepository.findByIdAndUser_Id(addressId, userId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Address not found"));
+        validateCoordinates(request.latitude(), request.longitude());
+        if (request.defaultAddress()) clearDefaultAddress(userId);
+        applyAddress(address, request);
+        return CustomerAddressResponse.from(customerAddressRepository.save(address));
+    }
+
+    @Transactional
+    public void deleteMyAddress(UUID userId, UUID addressId) {
+        CustomerAddress address = customerAddressRepository.findByIdAndUser_Id(addressId, userId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Address not found"));
+        customerAddressRepository.delete(address);
+    }
+
+    @Transactional
+    public PushDeviceTokenResponse registerPushToken(UUID userId, PushDeviceTokenRequest request) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "User not found"));
+        String tokenValue = request.token().trim();
+        PushDeviceToken token = pushDeviceTokenRepository.findByDeviceToken(tokenValue).orElse(null);
+        if (token != null && !token.getUser().getId().equals(userId)) {
+            throw new ApiException(ErrorCode.CONFLICT, "This device token is registered to another account");
+        }
+        if (token == null) {
+            token = new PushDeviceToken();
+            token.setUser(user);
+            token.setDeviceToken(tokenValue);
+        }
+        token.setPlatform(request.platform() == null ? null : request.platform().trim().toLowerCase(java.util.Locale.ROOT));
+        return PushDeviceTokenResponse.from(pushDeviceTokenRepository.save(token));
+    }
+
+    @Transactional
+    public void unregisterPushToken(UUID userId, String tokenValue) {
+        pushDeviceTokenRepository.findByDeviceTokenAndUser_Id(tokenValue.trim(), userId)
+                .ifPresent(pushDeviceTokenRepository::delete);
+    }
+
+    private User requireCustomer(UUID userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "User not found"));
+        if (user.getRole() != UserRole.CUSTOMER) throw new ApiException(ErrorCode.ACCESS_DENIED);
+        return user;
+    }
+
+    private User requireCustomerForUpdate(UUID userId) {
+        User user = userRepository.findByIdForUpdate(userId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "User not found"));
+        if (user.getRole() != UserRole.CUSTOMER) throw new ApiException(ErrorCode.ACCESS_DENIED);
+        return user;
+    }
+
+    private void clearDefaultAddress(UUID userId) {
+        customerAddressRepository.findAllByUser_IdOrderByDefaultAddressDescCreatedAtDesc(userId)
+                .forEach(address -> address.setDefaultAddress(false));
+    }
+
+    private static void applyAddress(CustomerAddress address, CustomerAddressRequest request) {
+        address.setLabel(request.label().trim());
+        address.setRecipientName(request.recipientName().trim());
+        address.setPhoneNumber(com.example.distrobackend.Util.PhoneNormalizer.normalize(request.phoneNumber()));
+        address.setAddressLine(request.addressLine().trim());
+        address.setCity(request.city() == null ? null : request.city().trim());
+        address.setCounty(request.county() == null ? null : request.county().trim());
+        address.setLatitude(request.latitude());
+        address.setLongitude(request.longitude());
+        address.setDefaultAddress(request.defaultAddress());
+    }
+
+    private static void validateCoordinates(Double latitude, Double longitude) {
+        if ((latitude == null) != (longitude == null)
+                || (latitude != null && (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180))) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Provide valid latitude and longitude together");
+        }
+    }
+
     private UUID requireOrganizationAdmin(AuthenticatedUser actor) {
         if (actor == null || actor.organizationId() == null
                 || (actor.role() != UserRole.MANUFACTURER_ADMIN
@@ -198,6 +322,8 @@ public class UserService {
         }
 
         otpRepository.deleteByUser_Id(userId);
+        customerAddressRepository.deleteAllByUser_Id(userId);
+        pushDeviceTokenRepository.deleteAllByUser_Id(userId);
         user.setStatus(UserStatus.DEACTIVATED);
         user.setEmail("deleted_" + UUID.randomUUID() + "@anonymized.com");
         user.setPhoneNumber("deleted_" + UUID.randomUUID().toString().substring(0, 8));
@@ -220,6 +346,8 @@ public class UserService {
         ensurePlatformMayManage(target, actor, UserStatus.DEACTIVATED);
 
         otpRepository.deleteByUser_Id(userId);
+        customerAddressRepository.deleteAllByUser_Id(userId);
+        pushDeviceTokenRepository.deleteAllByUser_Id(userId);
         target.setStatus(UserStatus.DEACTIVATED);
         target.setEmail("deleted_" + UUID.randomUUID() + "@anonymized.com");
         target.setPhoneNumber("deleted_" + UUID.randomUUID().toString().substring(0, 8));

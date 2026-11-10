@@ -100,7 +100,8 @@ public class AuthService {
         // This method deliberately uses noRollbackFor for OTP-attempt accounting;
         // therefore the guard must run before the verification flag is persisted.
         ensureAccountActive(user);
-        user.setPhoneVerified(true);
+        if (requiresEmailVerification(user)) user.setEmailVerified(true);
+        else user.setPhoneVerified(true);
         userRepository.save(user);
         return issueTokens(user); // verified users are signed in straight away
     }
@@ -108,8 +109,7 @@ public class AuthService {
     @Transactional
     public MessageResponse resendVerification(IdentifierRequest req) {
         findByIdentifier(req.identifier())
-                .filter(AuthService::requiresPhoneVerification)
-                .filter(u -> !u.isPhoneVerified())
+                .filter(AuthService::needsAccountVerification)
                 .ifPresent(u -> otpService.issue(u, OtpPurpose.ACCOUNT_VERIFICATION));
         return new MessageResponse("If the account exists and requires phone verification, a new code has been sent");
     }
@@ -209,6 +209,58 @@ public class AuthService {
         return new MessageResponse("Password updated. Please log in with your new password");
     }
 
+    @Transactional(noRollbackFor = ApiException.class)
+    public UserResponse updateMyProfile(UUID userId, UpdateMyProfileRequest request) {
+        User user = userRepository.findByIdForUpdate(userId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "User not found"));
+        if (request.fullName() == null && request.email() == null && request.phoneNumber() == null) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Provide at least one profile field to update");
+        }
+        boolean verificationRequired = false;
+        if (request.fullName() != null) {
+            if (request.fullName().isBlank()) throw new ApiException(ErrorCode.BAD_REQUEST, "Name cannot be blank");
+            user.setFullName(request.fullName().trim());
+        }
+        if (request.email() != null) {
+            String email = request.email().trim().toLowerCase(java.util.Locale.ROOT);
+            if (email.isBlank()) throw new ApiException(ErrorCode.BAD_REQUEST, "Email cannot be blank");
+            if (!email.equals(user.getEmail())) {
+                if (userRepository.existsByEmail(email)) throw new ApiException(ErrorCode.DUPLICATE_EMAIL);
+                user.setEmail(email);
+                user.setEmailVerified(false);
+                verificationRequired |= requiresEmailVerification(user);
+            }
+        }
+        if (request.phoneNumber() != null) {
+            String phone = PhoneNormalizer.normalize(request.phoneNumber());
+            if (!phone.equals(user.getPhoneNumber())) {
+                if (userRepository.existsByPhoneNumber(phone)) throw new ApiException(ErrorCode.DUPLICATE_PHONE);
+                user.setPhoneNumber(phone);
+                user.setPhoneVerified(false);
+                verificationRequired |= requiresPhoneVerification(user);
+            }
+        }
+        userRepository.save(user);
+        if (verificationRequired) otpService.issue(user, OtpPurpose.ACCOUNT_VERIFICATION);
+        return UserResponse.from(user);
+    }
+
+    @Transactional(noRollbackFor = ApiException.class)
+    public MessageResponse changePassword(UUID userId, ChangePasswordRequest request) {
+        User user = userRepository.findByIdForUpdate(userId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "User not found"));
+        if (!passwordEncoder.matches(request.currentPassword(), user.getPasswordHash())) {
+            throw new ApiException(ErrorCode.INVALID_CREDENTIALS, "Current password is incorrect");
+        }
+        if (passwordEncoder.matches(request.newPassword(), user.getPasswordHash())) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "New password must differ from the current password");
+        }
+        user.setPasswordHash(passwordEncoder.encode(request.newPassword()));
+        userRepository.save(user);
+        refreshTokenService.revokeAll(userId);
+        return new MessageResponse("Password changed. Please sign in again on your devices");
+    }
+
     // ------------------------------------------------------------------ profile
 
     @Transactional(readOnly = true)
@@ -287,6 +339,11 @@ public class AuthService {
                 || user.getRole() == UserRole.MANUFACTURER_STAFF
                 || user.getRole() == UserRole.DISTRIBUTOR_ADMIN
                 || user.getRole() == UserRole.DISTRIBUTOR_STAFF;
+    }
+
+    private static boolean needsAccountVerification(User user) {
+        return (requiresPhoneVerification(user) && !user.isPhoneVerified())
+                || (requiresEmailVerification(user) && !user.isEmailVerified());
     }
 
     private static String mask(String phone) {

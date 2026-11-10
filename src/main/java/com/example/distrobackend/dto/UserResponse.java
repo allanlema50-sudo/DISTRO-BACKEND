@@ -20,6 +20,7 @@ public record UserResponse(
         String organizationName,
         Organizationtype organizationtype,
         boolean phoneVerified,
+        boolean emailVerified,
         UserStatus status,
         String jobTitle,
         UUID warehouseId

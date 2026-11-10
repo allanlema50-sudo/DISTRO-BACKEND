@@ -10,6 +10,7 @@ import com.example.distrobackend.dto.DriverRegistrationRequest;
 import com.example.distrobackend.dto.DriverOperationalStatusRequest;
 import com.example.distrobackend.dto.DriverLocationRequest;
 import com.example.distrobackend.dto.DriverResponse;
+import com.example.distrobackend.dto.DriverSelfProfileResponse;
 import com.example.distrobackend.dto.InvitationResponse;
 import com.example.distrobackend.dto.UpdateDriverAvailabilityRequest;
 import com.example.distrobackend.dto.UpdateDriverRequest;
@@ -95,6 +96,11 @@ public class DriverController {
             @PathVariable UUID driverId) {
         if (actor == null || actor.role() != UserRole.SUPER_ADMIN) requireOrganizationRole(actor, true);
         return driverService.get(actor, driverId);
+    }
+
+    @GetMapping("/me")
+    public DriverSelfProfileResponse getMyProfile(@AuthenticationPrincipal AuthenticatedUser actor) {
+        return driverService.getMyProfile(actor);
     }
 
     @PatchMapping("/{driverId}")

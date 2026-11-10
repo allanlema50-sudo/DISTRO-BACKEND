@@ -34,10 +34,11 @@ public class ProductController {
     @PreAuthorize("isAuthenticated()")
     public Page<ProductResponse> list(
             @AuthenticationPrincipal AuthenticatedUser user,
-            @RequestParam(required = false) String category, Pageable pageable) {
-        return stockService.catalog(user, category, pageable);
+            @RequestParam(required = false) String category,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) UUID manufacturerId, Pageable pageable) {
+        return stockService.catalog(user, category, search, manufacturerId, pageable);
     }
-
     @GetMapping("/categories")
     @PreAuthorize("isAuthenticated()")
     public List<String> categories(@AuthenticationPrincipal AuthenticatedUser user) {

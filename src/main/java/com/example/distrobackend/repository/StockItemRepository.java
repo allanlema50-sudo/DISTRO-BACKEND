@@ -14,6 +14,48 @@ import java.util.List;
 import java.util.UUID;
 
 public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
+    @Query(value = """
+            select s from StockItem s
+            where s.organization.type = com.example.distrobackend.Domain.enums.Organizationtype.MANUFACTURER
+              and s.sourceStockItem is null
+              and s.active = true
+              and s.publicationStatus = com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED
+              and (:manufacturerId is null or s.organization.id = :manufacturerId)
+              and (:category = '' or lower(s.category) = lower(:category))
+              and (:search = '' or lower(s.name) like concat('%', lower(:search), '%')
+                   or lower(s.sku) like concat('%', lower(:search), '%')
+                   or lower(s.organization.name) like concat('%', lower(:search), '%'))
+            """,
+            countQuery = """
+            select count(s) from StockItem s
+            where s.organization.type = com.example.distrobackend.Domain.enums.Organizationtype.MANUFACTURER
+              and s.sourceStockItem is null
+              and s.active = true
+              and s.publicationStatus = com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED
+              and (:manufacturerId is null or s.organization.id = :manufacturerId)
+              and (:category = '' or lower(s.category) = lower(:category))
+              and (:search = '' or lower(s.name) like concat('%', lower(:search), '%')
+                   or lower(s.sku) like concat('%', lower(:search), '%')
+                   or lower(s.organization.name) like concat('%', lower(:search), '%'))
+            """)
+    Page<StockItem> findDistributorMasterCatalog(
+            @Param("search") String search, @Param("category") String category,
+            @Param("manufacturerId") UUID manufacturerId, Pageable pageable);
+
+    @Query(value = """
+            select s from StockItem s
+            where s.organization.id = :organizationId
+              and (:search = '' or lower(s.name) like concat('%', lower(:search), '%')
+                   or lower(s.sku) like concat('%', lower(:search), '%'))
+            """,
+            countQuery = """
+            select count(s) from StockItem s
+            where s.organization.id = :organizationId
+              and (:search = '' or lower(s.name) like concat('%', lower(:search), '%')
+                   or lower(s.sku) like concat('%', lower(:search), '%'))
+            """)
+    Page<StockItem> findManufacturerManagementCatalog(
+            @Param("organizationId") UUID organizationId, @Param("search") String search, Pageable pageable);
     Page<StockItem> findByOrganization_Id(UUID organizationId, Pageable pageable);
 
     @Query(value = "select s from StockItem s where (:organizationId is null or s.organization.id = :organizationId) "

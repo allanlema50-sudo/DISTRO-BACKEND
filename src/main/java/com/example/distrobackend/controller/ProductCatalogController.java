@@ -50,10 +50,11 @@ public class ProductCatalogController {
     @GetMapping
     public Page<ProductResponse> list(@AuthenticationPrincipal AuthenticatedUser actor,
                                       @RequestParam(required = false) String category,
+                                      @RequestParam(required = false) String search,
+                                      @RequestParam(required = false) UUID manufacturerId,
                                       Pageable pageable) {
-        return stockService.catalog(actor, category, pageable);
+        return stockService.catalog(actor, category, search, manufacturerId, pageable);
     }
-
     @GetMapping("/categories")
     public List<String> categories(@AuthenticationPrincipal AuthenticatedUser actor) {
         return stockService.categories(actor);

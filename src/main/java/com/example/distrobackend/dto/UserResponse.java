@@ -26,20 +26,6 @@ public record UserResponse(
 ) {
     /** Must be called inside a transaction (organization is lazy). */
     public static UserResponse from(User user) {
-        Organization org = user.getOrganization();
-        return new UserResponse(
-                user.getId(),
-                user.getFullName(),
-                user.getEmail(),
-                user.getPhoneNumber(),
-                user.getRole(),
-                org == null ? null : org.getId(),
-                org == null ? null : org.getName(),
-                org == null ? null : org.getType(),
-                user.isPhoneVerified(),
-                user.getStatus(),
-                user.getJobTitle(),
-                user.getBaseWarehouse() == null ? null : user.getBaseWarehouse().getId()
-        );
+        return com.example.distrobackend.mapper.UserMapper.toResponse(user);
     }
 }

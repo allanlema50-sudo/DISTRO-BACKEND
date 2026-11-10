@@ -27,6 +27,7 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
             select s from StockItem s
             where s.active = true
               and s.publicationStatus = com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED
+              and s.quantityOnHand > s.reservedQuantity
               and s.sourceStockItem is not null
               and s.sourceStockItem.active = true
               and s.sourceStockItem.publicationStatus = com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED
@@ -140,6 +141,10 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
     boolean existsByOrganization_IdAndSkuIgnoreCase(UUID organizationId, String sku);
 
     boolean existsByWarehouse_IdAndActiveTrue(UUID warehouseId);
+
+    @Query("select coalesce(sum(s.quantityOnHand), 0) from StockItem s "
+            + "where s.warehouse.id = :warehouseId and s.active = true")
+    long sumActiveQuantityByWarehouseId(@Param("warehouseId") UUID warehouseId);
 
     long countByOrganization_Id(UUID organizationId);
 

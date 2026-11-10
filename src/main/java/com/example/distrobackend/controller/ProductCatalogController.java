@@ -59,6 +59,13 @@ public class ProductCatalogController {
         return stockService.categories(actor);
     }
 
+    @GetMapping("/manufacturers")
+    @PreAuthorize("hasAnyRole('DISTRIBUTOR_ADMIN','DISTRIBUTOR_STAFF') and @tenantAccess.hasOrganization(authentication)")
+    public List<com.example.distrobackend.dto.CatalogManufacturerResponse> manufacturers(
+            @AuthenticationPrincipal AuthenticatedUser actor) {
+        return productCatalogService.manufacturers(actor);
+    }
+
     @PostMapping
     @PreAuthorize("hasAnyRole('MANUFACTURER_ADMIN','MANUFACTURER_STAFF') and @tenantAccess.hasOrganization(authentication)")
     public ProductResponse create(@AuthenticationPrincipal AuthenticatedUser actor,

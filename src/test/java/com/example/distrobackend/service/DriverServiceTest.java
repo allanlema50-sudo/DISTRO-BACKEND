@@ -130,7 +130,8 @@ class DriverServiceTest {
                 Organizationtype.MANUFACTURER,
                 Instant.now().plus(Duration.ofMinutes(5)));
 
-        driverService.list(actor, org.springframework.data.domain.PageRequest.of(0, 20));
+        driverService.list(actor, organizationId, null, null, null,
+                org.springframework.data.domain.PageRequest.of(0, 20));
 
         verify(userRepository).searchDrivers(eq(organizationId), isNull(), isNull(), isNull(),
                 eq(UserRole.DRIVER), any());

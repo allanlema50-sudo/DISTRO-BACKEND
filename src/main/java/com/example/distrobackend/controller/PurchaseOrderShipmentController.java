@@ -44,6 +44,6 @@ public class PurchaseOrderShipmentController {
     public PurchaseOrderShipmentResponse receive(@AuthenticationPrincipal AuthenticatedUser actor,
                                     @PathVariable UUID shipmentId,
                                     @Valid @RequestBody(required = false) ReceiveShipmentRequest request) {
-        return shipmentService.receive(actor, shipmentId, request == null ? null : request.note());
+        return shipmentService.receive(actor, shipmentId, request);
     }
 }

@@ -6,6 +6,8 @@ import com.example.distrobackend.dto.RestockRequestResponse;
 import com.example.distrobackend.dto.StockAdjustmentRequest;
 import com.example.distrobackend.dto.StockItemResponse;
 import com.example.distrobackend.dto.StockMovementResponse;
+import com.example.distrobackend.dto.PutAwayStockRequest;
+import com.example.distrobackend.dto.StockLocationResponse;
 import com.example.distrobackend.dto.StockAuditRequestCreate;
 import com.example.distrobackend.dto.StockAuditRequestResponse;
 import com.example.distrobackend.dto.UpdateStockItemRequest;
@@ -15,6 +17,7 @@ import com.example.distrobackend.dto.UpdateRestockRequestStatus;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.service.StockService;
 import com.example.distrobackend.service.StockAuditRequestService;
+import com.example.distrobackend.service.StockLocationService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -37,6 +40,24 @@ public class StockController {
 
     private final StockService stockService;
     private final StockAuditRequestService stockAuditRequestService;
+    private final StockLocationService stockLocationService;
+
+    @GetMapping("/items/{stockItemId}/locations")
+    @PreAuthorize("hasAnyRole('DISTRIBUTOR_ADMIN','DISTRIBUTOR_STAFF') and @tenantAccess.hasOrganization(authentication)")
+    public java.util.List<StockLocationResponse> locations(
+            @AuthenticationPrincipal AuthenticatedUser user,
+            @PathVariable UUID stockItemId) {
+        return stockLocationService.list(user, stockItemId);
+    }
+
+    @PostMapping("/items/{stockItemId}/locations")
+    @PreAuthorize("hasAnyRole('DISTRIBUTOR_ADMIN','DISTRIBUTOR_STAFF') and @tenantAccess.hasOrganization(authentication)")
+    public StockLocationResponse putAway(
+            @AuthenticationPrincipal AuthenticatedUser user,
+            @PathVariable UUID stockItemId,
+            @Valid @RequestBody PutAwayStockRequest request) {
+        return stockLocationService.putAway(user, stockItemId, request);
+    }
 
     @PostMapping("/audits")
     @PreAuthorize("hasAnyRole('MANUFACTURER_ADMIN','MANUFACTURER_STAFF') and @tenantAccess.hasOrganization(authentication)")

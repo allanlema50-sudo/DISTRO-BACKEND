@@ -49,6 +49,15 @@ public class Warehouse {
     @Column(name = "address", columnDefinition = "TEXT")
     private String address;
 
+    @Column(name = "city", length = 60)
+    private String city;
+
+    @Column(name = "postal_code", length = 20)
+    private String postalCode;
+
+    @Column(name = "site_manager", length = 80)
+    private String siteManager;
+
     @Column(name = "active", nullable = false)
     private boolean active = true;
 

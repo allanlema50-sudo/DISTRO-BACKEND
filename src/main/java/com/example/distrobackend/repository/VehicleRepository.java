@@ -41,6 +41,8 @@ public interface VehicleRepository extends JpaRepository<Vehicle, UUID> {
     boolean existsByOrganization_IdAndRegistrationNumberIgnoreCase(
             UUID organizationId, String registrationNumber);
 
+    boolean existsByAssignedDriver_IdAndIdNot(UUID driverId, UUID vehicleId);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select v from Vehicle v join fetch v.organization "
             + "where v.id = :vehicleId and v.organization.id = :organizationId")

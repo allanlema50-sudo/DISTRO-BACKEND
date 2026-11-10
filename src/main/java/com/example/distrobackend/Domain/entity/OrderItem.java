@@ -35,6 +35,12 @@ public class OrderItem {
     @Column(name = "quantity", nullable = false)
     private int quantity;
 
+    @Column(name = "picked_quantity", nullable = false)
+    private int pickedQuantity = 0;
+
+    @Column(name = "packed_quantity", nullable = false)
+    private int packedQuantity = 0;
+
     // snapshot of unit price at order time, independent of later stock_item price changes
     @Column(name = "unit_price", nullable = false, precision = 12, scale = 2)
     private BigDecimal unitPrice;

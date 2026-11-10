@@ -2,6 +2,8 @@ package com.example.distrobackend.repository;
 
 import com.example.distrobackend.Domain.entity.Order;
 import com.example.distrobackend.Domain.enums.OrderStatus;
+import com.example.distrobackend.Domain.enums.UserRole;
+import org.springframework.data.jpa.repository.EntityGraph;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -32,6 +34,8 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     Optional<Order> findByIdWithOwnershipForUpdate(@Param("id") UUID id);
 
     long countByCustomer_IdAndStatus(UUID customerId, OrderStatus status);
+
+    boolean existsByOrganization_IdAndCustomer_Id(UUID organizationId, UUID customerId);
 
     long countByStatus(OrderStatus status);
 
@@ -104,6 +108,10 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     @Query(value = "SELECT o FROM Order o JOIN FETCH o.customer c JOIN FETCH o.organization org WHERE o.organization.id = :organizationId",
            countQuery = "SELECT COUNT(o) FROM Order o WHERE o.organization.id = :organizationId")
     Page<Order> findByOrganizationIdWithDetails(@Param("organizationId") UUID organizationId, Pageable pageable);
+
+    @EntityGraph(attributePaths = "customer")
+    List<Order> findByOrganization_IdAndCustomer_RoleOrderByPlacedAtDesc(
+            UUID organizationId, UserRole role);
 
     @Query(value = "SELECT o FROM Order o JOIN FETCH o.customer c JOIN FETCH o.organization org",
            countQuery = "SELECT COUNT(o) FROM Order o")

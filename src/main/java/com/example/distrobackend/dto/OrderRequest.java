@@ -10,5 +10,16 @@ public record OrderRequest(
         String deliveryAddress,
         Double deliveryLat,
         Double deliveryLng,
-        @NotEmpty List<@Valid OrderItemRequest> items
-) {}
+        @NotEmpty List<@Valid OrderItemRequest> items,
+        UUID customerId
+) {
+    public OrderRequest(
+            UUID organizationId,
+            String deliveryAddress,
+            Double deliveryLat,
+            Double deliveryLng,
+            List<@Valid OrderItemRequest> items
+    ) {
+        this(organizationId, deliveryAddress, deliveryLat, deliveryLng, items, null);
+    }
+}

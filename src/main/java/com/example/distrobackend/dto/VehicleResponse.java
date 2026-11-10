@@ -14,6 +14,7 @@ public record VehicleResponse(
         String make,
         String model,
         Integer capacityKg,
+        UUID driverId,
         VehicleStatus status,
         long version,
         OffsetDateTime createdAt,
@@ -23,6 +24,7 @@ public record VehicleResponse(
         return new VehicleResponse(
                 vehicle.getId(), vehicle.getOrganization().getId(), vehicle.getRegistrationNumber(),
                 vehicle.getVehicleType(), vehicle.getMake(), vehicle.getModel(), vehicle.getCapacityKg(),
+                vehicle.getAssignedDriver() == null ? null : vehicle.getAssignedDriver().getId(),
                 vehicle.getStatus(), vehicle.getVersion(), vehicle.getCreatedAt(), vehicle.getUpdatedAt());
     }
 }

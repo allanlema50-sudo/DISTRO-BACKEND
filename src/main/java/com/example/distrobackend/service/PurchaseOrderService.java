@@ -90,6 +90,15 @@ public class PurchaseOrderService {
                         "The distributor is not authorized to purchase this manufacturer product");
             }
 
+            if (requestItem.quantity() > stockItem.getAvailableQuantity()) {
+                throw new ApiException(ErrorCode.CONFLICT, "Insufficient available manufacturer stock for " + stockItem.getSku());
+            }
+            try {
+                stockItem.setReservedQuantity(Math.addExact(stockItem.getReservedQuantity(), requestItem.quantity()));
+            } catch (ArithmeticException ex) {
+                throw new ApiException(ErrorCode.CONFLICT, "Requested stock quantity exceeds supported limits");
+            }
+
             PurchaseOrderItem item = new PurchaseOrderItem();
             item.setStockItem(stockItem);
             if (requestItem.distributorOfferId() != null) {
@@ -110,6 +119,7 @@ public class PurchaseOrderService {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Purchase order total must be positive");
         }
         purchaseOrder.setTotalAmount(total);
+        purchaseOrder.setStockReserved(true);
         PurchaseOrder saved = purchaseOrderRepository.save(purchaseOrder);
 
         PurchaseOrderSettlement settlement = new PurchaseOrderSettlement();
@@ -164,6 +174,9 @@ public class PurchaseOrderService {
             throw new ApiException(ErrorCode.BAD_REQUEST, "A rejection reason is required");
         }
         purchaseOrder.setStatus(request.status());
+        if (request.status() == PurchaseOrderStatus.REJECTED) {
+            releaseStockReservation(purchaseOrder);
+        }
         purchaseOrder.setRejectionReason(request.status() == PurchaseOrderStatus.REJECTED ? note : null);
         purchaseOrder.setReviewedBy(userRepository.getReferenceById(actor.userId()));
         purchaseOrder.setReviewedAt(OffsetDateTime.now());
@@ -230,6 +243,19 @@ public class PurchaseOrderService {
         }
     }
 
+    private void releaseStockReservation(PurchaseOrder purchaseOrder) {
+        if (!purchaseOrder.isStockReserved()) return;
+        for (PurchaseOrderItem item : purchaseOrder.getItems()) {
+            StockItem stockItem = stockItemRepository.findByIdAndOrganizationIdForUpdate(
+                            item.getStockItem().getId(), purchaseOrder.getSupplierOrganization().getId())
+                    .orElseThrow(() -> new ApiException(ErrorCode.STOCK_NOT_FOUND));
+            if (stockItem.getReservedQuantity() < item.getQuantity()) {
+                throw new ApiException(ErrorCode.CONFLICT, "Purchase-order stock reservation is inconsistent");
+            }
+            stockItem.setReservedQuantity(stockItem.getReservedQuantity() - item.getQuantity());
+        }
+        purchaseOrder.setStockReserved(false);
+    }
     private PurchaseOrderResponse toResponse(PurchaseOrder purchaseOrder) {
         return new PurchaseOrderResponse(
                 purchaseOrder.getId(), purchaseOrder.getPurchaseOrderNumber(),

@@ -135,9 +135,10 @@ public class InvitationService {
         UUID organizationId = requireOrganizationAdmin(actor);
         Organization organization = organizationRepository.findById(organizationId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Organization not found"));
-        if (organization.getType() != com.example.distrobackend.Domain.enums.Organizationtype.DISTRIBUTOR) {
+        if (organization.getType() != com.example.distrobackend.Domain.enums.Organizationtype.DISTRIBUTOR
+                && organization.getType() != com.example.distrobackend.Domain.enums.Organizationtype.MANUFACTURER) {
             throw new ApiException(ErrorCode.ROLE_NOT_ALLOWED,
-                    "Drivers can only be onboarded by distributor organizations");
+                    "Drivers can only be onboarded by manufacturer or distributor organizations");
         }
 
         String email = normalizeEmail(request.email());

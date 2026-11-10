@@ -10,6 +10,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.OneToMany;
 import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
@@ -22,6 +23,8 @@ import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 @Entity
@@ -91,4 +94,12 @@ public class PurchaseOrderShipment {
     @Version
     @Column(name = "version", nullable = false)
     private long version;
+
+    @OneToMany(mappedBy = "shipment", cascade = jakarta.persistence.CascadeType.ALL, orphanRemoval = true)
+    private List<PurchaseOrderShipmentReceiptLine> receiptLines = new ArrayList<>();
+
+    public void addReceiptLine(PurchaseOrderShipmentReceiptLine line) {
+        receiptLines.add(line);
+        line.setShipment(this);
+    }
 }

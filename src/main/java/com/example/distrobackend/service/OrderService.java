@@ -5,6 +5,8 @@ import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.OrderStatus;
 import com.example.distrobackend.Domain.enums.PaymentStatus;
 import com.example.distrobackend.Domain.enums.UserRole;
+import com.example.distrobackend.Domain.enums.UserStatus;
+import com.example.distrobackend.Domain.enums.StockMovementType;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.Exception.InsufficientStockException;
@@ -13,6 +15,8 @@ import com.example.distrobackend.repository.OrderRepository;
 import com.example.distrobackend.repository.OrganizationRepository;
 import com.example.distrobackend.repository.PaymentRepository;
 import com.example.distrobackend.repository.StockItemRepository;
+import com.example.distrobackend.repository.StockMovementRepository;
+import com.example.distrobackend.repository.StockLocationRepository;
 import com.example.distrobackend.repository.UserRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +39,8 @@ public class OrderService {
 
     private final OrderRepository orderRepository;
     private final StockItemRepository stockItemRepository;
+    private final StockMovementRepository stockMovementRepository;
+    private final StockLocationRepository stockLocationRepository;
     private final UserRepository userRepository;
     private final OrganizationRepository organizationRepository;
     private final PaymentRepository paymentRepository;
@@ -50,7 +56,8 @@ public class OrderService {
     private static final Map<OrderStatus, Set<OrderStatus>> ALLOWED_TRANSITIONS = Map.of(
             OrderStatus.PENDING, Set.of(OrderStatus.CONFIRMED, OrderStatus.CANCELLED, OrderStatus.FAILED),
             OrderStatus.CONFIRMED, Set.of(OrderStatus.PROCESSING, OrderStatus.CANCELLED),
-            OrderStatus.PROCESSING, Set.of(OrderStatus.AWAITING_DISPATCH, OrderStatus.CANCELLED),
+            OrderStatus.PROCESSING, Set.of(OrderStatus.READY_TO_PACK, OrderStatus.CANCELLED),
+            OrderStatus.READY_TO_PACK, Set.of(OrderStatus.AWAITING_DISPATCH, OrderStatus.CANCELLED),
             OrderStatus.AWAITING_DISPATCH, Set.of(OrderStatus.IN_TRANSIT, OrderStatus.CANCELLED),
             // Dispatched inventory cannot be restored by an order status update.
             // A return requires a separate warehouse/driver custody workflow.
@@ -204,6 +211,65 @@ public class OrderService {
     }
 
     @Transactional
+    public OrderResponse createOrderForDistributor(AuthenticatedUser actor, OrderRequest request) {
+        if (actor == null || actor.organizationId() == null
+                || (actor.role() != UserRole.DISTRIBUTOR_ADMIN
+                && actor.role() != UserRole.DISTRIBUTOR_STAFF)) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        if (request.customerId() == null) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "A customer account is required");
+        }
+        if (request.organizationId() != null
+                && !actor.organizationId().equals(request.organizationId())) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED,
+                    "Orders can only be created for the distributor's organization");
+        }
+
+        User customer = userRepository.findById(request.customerId())
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Customer not found"));
+        if (customer.getRole() != UserRole.CUSTOMER || customer.getOrganization() != null
+                || customer.getStatus() != UserStatus.ACTIVE) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    "The selected account is not an active customer");
+        }
+        if (!orderRepository.existsByOrganization_IdAndCustomer_Id(
+                actor.organizationId(), customer.getId())) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED,
+                    "The customer account is not linked to this distributor");
+        }
+
+        OrderRequest scopedRequest = new OrderRequest(
+                actor.organizationId(),
+                request.deliveryAddress(),
+                request.deliveryLat(),
+                request.deliveryLng(),
+                request.items(),
+                request.customerId());
+        return createOrder(customer.getId(), scopedRequest);
+    }
+
+    @Transactional(readOnly = true)
+    public List<OrganizationCustomerResponse> customersForDistributor(AuthenticatedUser actor) {
+        if (actor == null || actor.organizationId() == null
+                || (actor.role() != UserRole.DISTRIBUTOR_ADMIN
+                && actor.role() != UserRole.DISTRIBUTOR_STAFF)) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        Map<UUID, OrganizationCustomerResponse> customers = new LinkedHashMap<>();
+        for (Order order : orderRepository.findByOrganization_IdAndCustomer_RoleOrderByPlacedAtDesc(
+                actor.organizationId(), UserRole.CUSTOMER)) {
+            User customer = order.getCustomer();
+            customers.putIfAbsent(customer.getId(), new OrganizationCustomerResponse(
+                    customer.getId(),
+                    customer.getFullName(),
+                    customer.getFullName(),
+                    order.getDeliveryAddress()));
+        }
+        return List.copyOf(customers.values());
+    }
+
+    @Transactional
     public OrderResponse updateOrderStatus(UUID orderId, UUID changedById, OrderStatusUpdate update) {
         Order order = orderRepository.findByIdWithItemsForUpdate(orderId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
@@ -212,6 +278,15 @@ public class OrderService {
         if (update.status() == OrderStatus.CONFIRMED) {
             throw new ApiException(ErrorCode.BAD_REQUEST,
                     "Orders are confirmed only after a verified payment");
+        }
+        if (update.status() == OrderStatus.IN_TRANSIT) {
+            throw new ApiException(ErrorCode.INVALID_STATE_TRANSITION,
+                    "Orders can enter transit only when their assigned delivery trip is dispatched");
+        }
+        if (update.status() == OrderStatus.READY_TO_PACK
+                || update.status() == OrderStatus.AWAITING_DISPATCH) {
+            throw new ApiException(ErrorCode.INVALID_STATE_TRANSITION,
+                    "Warehouse picking and packing must be confirmed through their warehouse actions");
         }
         if (!allowedNext.contains(update.status())) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Cannot transition from " + order.getStatus() + " to " + update.status());
@@ -337,7 +412,7 @@ public class OrderService {
         order.setStatus(OrderStatus.CONFIRMED);
         order.setConfirmedAt(OffsetDateTime.now());
         order.setReservationExpiresAt(null);
-        commitReservations(order);
+        // Keep paid stock reserved until the assigned delivery trip is dispatched.
         return orderRepository.save(order);
     }
 
@@ -394,7 +469,112 @@ public class OrderService {
         return true;
     }
 
-    private void commitReservations(Order order) {
+    @Transactional
+    public OrderResponse dispatchFromTrip(AuthenticatedUser actor, UUID orderId) {
+        if (actor == null || actor.organizationId() == null
+                || (actor.role() != UserRole.DISTRIBUTOR_ADMIN
+                && actor.role() != UserRole.DISTRIBUTOR_STAFF)) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        Order order = orderRepository.findByIdWithItemsForUpdate(orderId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
+        if (!actor.organizationId().equals(order.getOrganization().getId())) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        if (order.getStatus() != OrderStatus.AWAITING_DISPATCH) {
+            throw new ApiException(ErrorCode.INVALID_STATE_TRANSITION,
+                    "Only an order ready for dispatch can enter transit");
+        }
+        User changedBy = userRepository.findById(actor.userId())
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "User not found"));
+        OrderStatusHistory history = new OrderStatusHistory();
+        history.setFromStatus(order.getStatus());
+        history.setToStatus(OrderStatus.IN_TRANSIT);
+        history.setChangedBy(changedBy);
+        history.setNote("Dispatched with assigned delivery trip");
+        order.addStatusHistory(history);
+        commitReservations(order, changedBy);
+        order.setStatus(OrderStatus.IN_TRANSIT);
+        return mapToResponse(orderRepository.save(order));
+    }
+
+    @Transactional
+    public OrderResponse pickOrderItem(AuthenticatedUser actor, UUID orderId,
+                                       PickOrderItemRequest request) {
+        Order order = findWarehouseOrderForUpdate(actor, orderId);
+        if (order.getStatus() != OrderStatus.CONFIRMED && order.getStatus() != OrderStatus.PROCESSING) {
+            throw new ApiException(ErrorCode.INVALID_STATE_TRANSITION,
+                    "Only paid orders awaiting picking can be picked");
+        }
+        OrderItem line = order.getOrderItems().stream()
+                .filter(item -> item.getId().equals(request.orderItemId()))
+                .findFirst().orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order item not found"));
+        if (request.pickedQuantity() < line.getPickedQuantity()
+                || request.pickedQuantity() > line.getQuantity()) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    "Picked quantity must be between the already picked and requested quantities");
+        }
+        if (request.pickedQuantity() == line.getPickedQuantity()) return mapToResponse(order);
+        OrderStatus previous = order.getStatus();
+        line.setPickedQuantity(request.pickedQuantity());
+        boolean complete = order.getOrderItems().stream()
+                .allMatch(item -> item.getPickedQuantity() == item.getQuantity());
+        order.setStatus(complete ? OrderStatus.READY_TO_PACK : OrderStatus.PROCESSING);
+        recordWarehouseHistory(order, actor, previous, order.getStatus(),
+                "Picked " + request.pickedQuantity() + " of " + line.getQuantity()
+                        + " units for item " + line.getId());
+        return mapToResponse(orderRepository.save(order));
+    }
+
+    @Transactional
+    public OrderResponse packOrder(AuthenticatedUser actor, UUID orderId, PackOrderRequest request) {
+        if (request.packageCount() <= 0) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Package count must be a positive integer");
+        }
+        Order order = findWarehouseOrderForUpdate(actor, orderId);
+        if (order.getStatus() == OrderStatus.AWAITING_DISPATCH
+                && order.getPackageCount() == request.packageCount()) return mapToResponse(order);
+        if (order.getStatus() != OrderStatus.READY_TO_PACK
+                || order.getOrderItems().stream().anyMatch(item -> item.getPickedQuantity() != item.getQuantity())) {
+            throw new ApiException(ErrorCode.INVALID_STATE_TRANSITION,
+                    "All order quantities must be picked before packing");
+        }
+        OrderStatus previous = order.getStatus();
+        order.getOrderItems().forEach(item -> item.setPackedQuantity(item.getPickedQuantity()));
+        order.setPackageCount(request.packageCount());
+        order.setStatus(OrderStatus.AWAITING_DISPATCH);
+        recordWarehouseHistory(order, actor, previous, order.getStatus(),
+                "Packed into " + request.packageCount() + " package(s)");
+        return mapToResponse(orderRepository.save(order));
+    }
+
+    private Order findWarehouseOrderForUpdate(AuthenticatedUser actor, UUID orderId) {
+        if (actor == null || actor.organizationId() == null
+                || (actor.role() != UserRole.DISTRIBUTOR_ADMIN
+                && actor.role() != UserRole.DISTRIBUTOR_STAFF)) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        Order order = orderRepository.findByIdWithItemsForUpdate(orderId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
+        if (!actor.organizationId().equals(order.getOrganization().getId())) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        return order;
+    }
+
+    private void recordWarehouseHistory(Order order, AuthenticatedUser actor, OrderStatus previous,
+                                        OrderStatus next, String note) {
+        User user = userRepository.findById(actor.userId())
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "User not found"));
+        OrderStatusHistory history = new OrderStatusHistory();
+        history.setFromStatus(previous);
+        history.setToStatus(next);
+        history.setChangedBy(user);
+        history.setNote(note);
+        order.addStatusHistory(history);
+    }
+
+    private void commitReservations(Order order, User performedBy) {
         for (OrderItem item : order.getOrderItems()) {
             StockItem stockItem = stockItemRepository.findByIdForUpdate(item.getStockItem().getId())
                     .orElseThrow(() -> new ApiException(ErrorCode.STOCK_ITEM_NOT_FOUND,
@@ -409,6 +589,31 @@ public class OrderService {
                 stockItem.setQuantityOnHand(stockItem.getQuantityOnHand() - item.getQuantity());
                 item.setStockCheckStatus("COMMITTED");
                 stockItemRepository.save(stockItem);
+                deductStoredLocations(stockItem.getId(), item.getQuantity());
+                StockMovement movement = new StockMovement();
+                movement.setStockItem(stockItem);
+                movement.setMovementType(StockMovementType.SALE_OUT);
+                movement.setQuantityDelta(-item.getQuantity());
+                movement.setReferenceType("CUSTOMER_ORDER");
+                movement.setReferenceId(order.getId());
+                movement.setPerformedBy(performedBy);
+                movement.setNote("Order dispatched");
+                stockMovementRepository.save(movement);
+            }
+        }
+    }
+
+    private void deductStoredLocations(UUID stockItemId, int quantity) {
+        int remaining = quantity;
+        for (StockLocation location : stockLocationRepository.findAllForUpdate(stockItemId)) {
+            if (remaining == 0) break;
+            int deducted = Math.min(remaining, location.getQuantity());
+            int next = location.getQuantity() - deducted;
+            remaining -= deducted;
+            if (next == 0) stockLocationRepository.delete(location);
+            else {
+                location.setQuantity(next);
+                stockLocationRepository.save(location);
             }
         }
     }
@@ -469,6 +674,8 @@ public class OrderService {
                 i.getId(),
                 i.getStockItem().getId(),
                 i.getQuantity(),
+                i.getPickedQuantity(),
+                i.getPackedQuantity(),
                 i.getUnitPrice(),
                 i.getLineTotal() != null ? i.getLineTotal() : i.getUnitPrice().multiply(BigDecimal.valueOf(i.getQuantity()))
         )).collect(Collectors.toList());
@@ -485,6 +692,7 @@ public class OrderService {
                 order.getSubtotalAmount(),
                 order.getDeliveryFee(),
                 order.getTotalAmount(),
+                order.getPackageCount(),
                 order.getCancellationReason(),
                 order.getPlacedAt(),
                 order.getReservationExpiresAt(),

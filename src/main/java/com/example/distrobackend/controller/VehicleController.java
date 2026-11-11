@@ -4,6 +4,7 @@ import com.example.distrobackend.Domain.enums.VehicleStatus;
 import com.example.distrobackend.dto.CreateVehicleRequest;
 import com.example.distrobackend.dto.UpdateVehicleRequest;
 import com.example.distrobackend.dto.VehicleResponse;
+import com.example.distrobackend.dto.VehicleDriverAssignmentRequest;
 import com.example.distrobackend.dto.VehicleStatusUpdateRequest;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.service.VehicleService;
@@ -67,6 +68,13 @@ public class VehicleController {
         return vehicleService.update(actor, vehicleId, request);
     }
 
+    @PatchMapping("/{vehicleId}/driver")
+    public VehicleResponse assignDriver(
+            @AuthenticationPrincipal AuthenticatedUser actor,
+            @PathVariable UUID vehicleId,
+            @Valid @RequestBody VehicleDriverAssignmentRequest request) {
+        return vehicleService.assignDriver(actor, vehicleId, request);
+    }
     @PatchMapping("/{vehicleId}/status")
     public VehicleResponse updateStatus(
             @AuthenticationPrincipal AuthenticatedUser actor,

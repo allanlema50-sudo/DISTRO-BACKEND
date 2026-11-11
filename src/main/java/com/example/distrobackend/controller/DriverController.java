@@ -43,13 +43,23 @@ public class DriverController {
     private final DriverService driverService;
 
     @PostMapping
-    @ResponseStatus(HttpStatus.CREATED)
-    public DriverResponse registerForReview(
+    public org.springframework.http.ResponseEntity<?> registerOrInvite(
             @AuthenticationPrincipal AuthenticatedUser actor,
             @Valid @RequestBody DriverRegistrationRequest request) {
-        return driverService.registerForReview(actor, request);
+        if (actor != null && (actor.role() == UserRole.MANUFACTURER_ADMIN
+                || actor.role() == UserRole.DISTRIBUTOR_ADMIN)) {
+            if (request.email() == null || request.email().isBlank()) {
+                throw new ApiException(ErrorCode.BAD_REQUEST, "An email address is required to invite a driver");
+            }
+            InvitationResponse invitation = driverService.invite(actor,
+                    new CreateDriverInvitationRequest(request.fullName(), request.email(),
+                            request.phoneNumber(), request.licenseNumber(), request.nationalId(),
+                            request.licenseExpiryDate(), request.baseWarehouseId(), request.notes()));
+            return org.springframework.http.ResponseEntity.status(HttpStatus.ACCEPTED).body(invitation);
+        }
+        DriverResponse driver = driverService.registerForReview(actor, request);
+        return org.springframework.http.ResponseEntity.status(HttpStatus.CREATED).body(driver);
     }
-
     @PostMapping("/invitations")
     @ResponseStatus(HttpStatus.ACCEPTED)
     public InvitationResponse invite(

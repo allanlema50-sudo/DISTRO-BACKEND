@@ -436,8 +436,7 @@ public class PurchaseOrderShipmentService {
                 && (requested == PurchaseOrderShipmentStatus.IN_TRANSIT
                 || requested == PurchaseOrderShipmentStatus.CANCELLED))
                 || (current == PurchaseOrderShipmentStatus.IN_TRANSIT
-                && (requested == PurchaseOrderShipmentStatus.DELIVERED
-                || requested == PurchaseOrderShipmentStatus.CANCELLED));
+                && requested == PurchaseOrderShipmentStatus.DELIVERED);
     }
 
     private void notifyOrganizationAdministrators(Organization organization, String title,

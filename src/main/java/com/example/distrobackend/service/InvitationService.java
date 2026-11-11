@@ -145,6 +145,23 @@ public class InvitationService {
         String phone = PhoneNormalizer.normalize(request.phoneNumber());
         if (userRepository.existsByEmail(email)) throw new ApiException(ErrorCode.DUPLICATE_EMAIL);
         if (userRepository.existsByPhoneNumber(phone)) throw new ApiException(ErrorCode.DUPLICATE_PHONE);
+        String nationalId = trimToNull(request.nationalId());
+        if (nationalId != null && entityManager.createQuery(
+                "select count(profile) from RiderProfile profile where lower(profile.nationalId) = lower(:nationalId)",
+                Long.class).setParameter("nationalId", nationalId).getSingleResult() > 0) {
+            throw new ApiException(ErrorCode.CONFLICT, "A driver with this national ID is already registered");
+        }
+        com.example.distrobackend.Domain.entity.Warehouse baseWarehouse = null;
+        if (request.warehouseId() != null) {
+            baseWarehouse = entityManager.createQuery(
+                            "select w from Warehouse w where w.id = :warehouseId and w.organization.id = :organizationId",
+                            com.example.distrobackend.Domain.entity.Warehouse.class)
+                    .setParameter("warehouseId", request.warehouseId())
+                    .setParameter("organizationId", organizationId)
+                    .getResultStream().findFirst()
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND,
+                            "Warehouse not found in this organization"));
+        }
         if (invitationRepository.existsByEmailIgnoreCaseAndOrganizationIdAndStatus(
                 email, organizationId, InvitationStatus.PENDING)) {
             throw new ApiException(ErrorCode.CONFLICT, "A pending driver invitation already exists");
@@ -158,18 +175,26 @@ public class InvitationService {
         invitedUser.setRole(UserRole.DRIVER);
         invitedUser.setDriverApprovalStatus(DriverApprovalStatus.PENDING_REVIEW);
         invitedUser.setOrganization(organization);
+        invitedUser.setBaseWarehouse(baseWarehouse);
         invitedUser.setStatus(com.example.distrobackend.Domain.enums.UserStatus.INVITED);
         invitedUser.setEmailVerified(false);
         invitedUser.setPhoneVerified(false);
         User savedUser = userRepository.save(invitedUser);
-
-        // RiderProfile is created on first driver-profile read/update so the
-        // invitation transaction does not need a second persistence aggregate.
+        com.example.distrobackend.Domain.entity.RiderProfile profile =
+                new com.example.distrobackend.Domain.entity.RiderProfile();
+        profile.setUser(savedUser);
+        profile.setUserId(savedUser.getId());
+        profile.setLicenseNumber(request.licenseNumber().trim());
+        profile.setNationalId(nationalId);
+        profile.setLicenseExpiryDate(request.licenseExpiryDate());
+        profile.setInternalNotes(trimToNull(request.notes()));
+        entityManager.persist(profile);
         String rawToken = SecretTokenService.generate();
         Invitation invitation = new Invitation();
         invitation.setOrganization(organization);
         invitation.setInvitedUser(savedUser);
         invitation.setDriverLicenseNumber(request.licenseNumber().trim());
+        invitation.setBaseWarehouse(baseWarehouse);
         invitation.setFullName(request.fullName().trim());
         invitation.setEmail(email);
         invitation.setPhoneNumber(phone);

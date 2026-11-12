@@ -1258,6 +1258,15 @@ broader operational actions within their organization.
 | `GET` | `/api/distributor/dashboard` | Distributor admin/staff | Current distributor workspace placeholder |
 | `GET` | `/api/distributor/staff` | Distributor admin | Current distributor staff placeholder |
 
+Personal notifications are also sent to the recipient's registered device tokens
+after the database transaction commits. Firebase delivery is disabled by default.
+Enable it with `FIREBASE_PUSH_ENABLED=true`, set `FIREBASE_PROJECT_ID`, and give
+the backend Google Application Default Credentials with permission to send FCM
+messages. For local development, point `GOOGLE_APPLICATION_CREDENTIALS` at a
+service-account JSON file kept outside the repository. The Firebase Cloud
+Messaging API must be enabled in the Firebase project. Push delivery is best
+effort; the in-app notification remains the source of truth.
+
 ## WebSocket/STOMP live updates
 
 The WebSocket handshake is:

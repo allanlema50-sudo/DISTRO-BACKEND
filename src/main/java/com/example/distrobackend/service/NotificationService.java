@@ -2,6 +2,7 @@ package com.example.distrobackend.service;
 
 import com.example.distrobackend.Domain.entity.Notification;
 import com.example.distrobackend.Domain.entity.User;
+import com.example.distrobackend.event.PushNotificationEvent;
 import com.example.distrobackend.Domain.enums.NotificationPriority;
 import com.example.distrobackend.Domain.enums.NotificationStatus;
 import com.example.distrobackend.Domain.enums.NotificationType;
@@ -9,6 +10,7 @@ import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.repository.NotificationRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,6 +22,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class NotificationService {
     private final NotificationRepository notificationRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Transactional
     public Notification create(User recipient, String title, String message,
@@ -34,7 +37,11 @@ public class NotificationService {
         notification.setStatus(NotificationStatus.UNREAD);
         notification.setReferenceId(referenceId);
         notification.setReferenceType(referenceType);
-        return notificationRepository.save(notification);
+        Notification saved = notificationRepository.save(notification);
+        eventPublisher.publishEvent(new PushNotificationEvent(recipient.getId(), saved.getId(), saved.getTitle(),
+                saved.getMessage(), saved.getType(), saved.getPriority(), saved.getReferenceId(),
+                saved.getReferenceType()));
+        return saved;
     }
 
     @Transactional(readOnly = true)

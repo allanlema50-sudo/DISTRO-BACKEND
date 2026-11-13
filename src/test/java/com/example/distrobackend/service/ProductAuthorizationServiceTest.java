@@ -104,6 +104,21 @@ class ProductAuthorizationServiceTest {
                 .hasMessage("Authorization decision note must not exceed 1000 characters");
     }
 
+    @Test
+    void approvalRequiresWholesalePriceAndMinimumQuantityTogether() {
+        UUID manufacturerId = UUID.randomUUID();
+        ProductAuthorizationService service = new ProductAuthorizationService(
+                authorizationRepository, stockItemRepository, organizationRepository, userRepository,
+                notificationService);
+
+        assertThatThrownBy(() -> service.decide(
+                actor(manufacturerId, Organizationtype.MANUFACTURER), UUID.randomUUID(),
+                new ProductAuthorizationDecisionRequest(ProductAuthorizationStatus.APPROVED,
+                        "Approved", java.math.BigDecimal.valueOf(25), null)))
+                .isInstanceOf(ApiException.class)
+                .hasMessage("Wholesale price and minimum order quantity must be supplied together");
+    }
+
     private static Organization organization(UUID id, Organizationtype type) {
         Organization organization = new Organization();
         organization.setId(id);

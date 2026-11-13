@@ -14,6 +14,12 @@ public record ProductAuthorizationResponse(
         ProductAuthorizationStatus status,
         String requestNote,
         String decisionNote,
+        String targetMarket,
+        String salesChannels,
+        String geographicalCoverage,
+        String distributionStrategy,
+        java.math.BigDecimal agreedWholesalePrice,
+        Integer minimumOrderQuantity,
         OffsetDateTime createdAt,
         OffsetDateTime decidedAt
 ) {
@@ -26,6 +32,12 @@ public record ProductAuthorizationResponse(
                 authorization.getStatus(),
                 authorization.getRequestNote(),
                 authorization.getDecisionNote(),
+                authorization.getTargetMarket(),
+                authorization.getSalesChannels(),
+                authorization.getGeographicalCoverage(),
+                authorization.getDistributionStrategy(),
+                authorization.getAgreedWholesalePrice(),
+                authorization.getMinimumOrderQuantity(),
                 authorization.getCreatedAt(),
                 authorization.getDecidedAt());
     }

@@ -249,12 +249,12 @@ class StockServiceTest {
                         .and(org.springframework.data.domain.Sort.by("id").ascending()));
         AuthenticatedUser customer = new AuthenticatedUser(
                 UUID.randomUUID(), UserRole.CUSTOMER, null, null, Instant.now().plusSeconds(60));
-        when(stockItemRepository.findActiveCatalog(eq(""), eq(stable)))
+        when(stockItemRepository.findActiveCatalog(eq(""), eq(""), eq(null), eq(stable)))
                 .thenReturn(org.springframework.data.domain.Page.empty());
 
         stockService.catalog(customer, null, pageable);
 
-        verify(stockItemRepository).findActiveCatalog("", stable);
+        verify(stockItemRepository).findActiveCatalog("", "", null, stable);
     }
     @Test
     void superAdminCanBrowseActiveProductsAcrossOrganizations() {
@@ -264,12 +264,12 @@ class StockServiceTest {
                         .and(org.springframework.data.domain.Sort.by("id").ascending()));
         AuthenticatedUser superAdmin = new AuthenticatedUser(
                 UUID.randomUUID(), UserRole.SUPER_ADMIN, null, null, Instant.now().plusSeconds(60));
-        when(stockItemRepository.findActiveCatalogForPlatform(eq(""), eq(stable)))
+        when(stockItemRepository.findActiveCatalogForPlatform(eq(""), eq(""), eq(null), eq(stable)))
                 .thenReturn(org.springframework.data.domain.Page.empty());
 
         stockService.catalog(superAdmin, null, pageable);
 
-        verify(stockItemRepository).findActiveCatalogForPlatform("", stable);
+        verify(stockItemRepository).findActiveCatalogForPlatform("", "", null, stable);
     }
     @Test
     void superAdminCanBrowsePlatformProductCategories() {

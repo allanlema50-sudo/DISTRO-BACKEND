@@ -82,8 +82,10 @@ public class StockService {
         }
         Pageable stablePageable = stablePageable(pageable);
         Page<StockItem> items = switch (user.role()) {
-            case SUPER_ADMIN -> stockItemRepository.findActiveCatalogForPlatform(normalizedCategory, stablePageable);
-            case CUSTOMER -> stockItemRepository.findActiveCatalog(normalizedCategory, stablePageable);
+            case SUPER_ADMIN -> stockItemRepository.findActiveCatalogForPlatform(
+                    normalizedCategory, normalizedSearch, manufacturerId, stablePageable);
+            case CUSTOMER -> stockItemRepository.findActiveCatalog(
+                    normalizedCategory, normalizedSearch, manufacturerId, stablePageable);
             case MANUFACTURER_ADMIN, MANUFACTURER_STAFF ->
                     stockItemRepository.findManufacturerManagementCatalog(
                             requiredCatalogOrganization(user), normalizedSearch, stablePageable);

@@ -67,6 +67,8 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
 
     @Query("""
             select s from StockItem s
+            left join s.sourceStockItem source
+            left join source.organization sourceOrganization
             where s.active = true
               and s.publicationStatus = com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED
               and s.quantityOnHand > s.reservedQuantity
@@ -77,17 +79,35 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
               and s.organization.type = com.example.distrobackend.Domain.enums.Organizationtype.DISTRIBUTOR
               and s.warehouse.active = true
               and (:category = '' or lower(s.category) = lower(:category))
+              and (:manufacturerId is null or sourceOrganization.id = :manufacturerId)
+              and (:search = '' or lower(s.name) like concat('%', lower(:search), '%')
+                   or lower(s.sku) like concat('%', lower(:search), '%')
+                   or lower(sourceOrganization.name) like concat('%', lower(:search), '%'))
             """)
-    Page<StockItem> findActiveCatalog(@Param("category") String category, Pageable pageable);
+    Page<StockItem> findActiveCatalog(@Param("category") String category,
+                                      @Param("search") String search,
+                                      @Param("manufacturerId") UUID manufacturerId,
+                                      Pageable pageable);
 
     @Query("""
             select s from StockItem s
+            left join s.sourceStockItem source
+            left join source.organization sourceOrganization
             where s.active = true
               and s.publicationStatus = com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED
               and (:category = '' or lower(s.category) = lower(:category))
+              and (:manufacturerId is null or
+                   (s.organization.type = com.example.distrobackend.Domain.enums.Organizationtype.MANUFACTURER
+                    and s.organization.id = :manufacturerId)
+                   or sourceOrganization.id = :manufacturerId)
+              and (:search = '' or lower(s.name) like concat('%', lower(:search), '%')
+                   or lower(s.sku) like concat('%', lower(:search), '%')
+                   or lower(s.organization.name) like concat('%', lower(:search), '%')
+                   or lower(sourceOrganization.name) like concat('%', lower(:search), '%'))
             """)
     Page<StockItem> findActiveCatalogForPlatform(
-            @Param("category") String category, Pageable pageable);
+            @Param("category") String category, @Param("search") String search,
+            @Param("manufacturerId") UUID manufacturerId, Pageable pageable);
 
     @Query("""
             select s from StockItem s

@@ -24,6 +24,7 @@ import com.example.distrobackend.repository.PurchaseOrderRepository;
 import com.example.distrobackend.repository.PurchaseOrderSettlementRepository;
 import com.example.distrobackend.repository.StockItemRepository;
 import com.example.distrobackend.repository.UserRepository;
+import com.example.distrobackend.repository.DistributorProductAuthorizationRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -48,6 +49,7 @@ public class PurchaseOrderService {
     private final UserRepository userRepository;
     private final NotificationService notificationService;
     private final ProductAuthorizationService productAuthorizationService;
+    private final DistributorProductAuthorizationRepository authorizationRepository;
 
     @Transactional
     public PurchaseOrderResponse create(AuthenticatedUser actor, CreatePurchaseOrderRequest request) {
@@ -90,6 +92,15 @@ public class PurchaseOrderService {
                         "The distributor is not authorized to purchase this manufacturer product");
             }
 
+            var authorization = authorizationRepository
+                    .findByProduct_IdAndDistributorOrganization_Id(stockItem.getId(), buyer.getId())
+                    .orElseThrow(() -> new ApiException(ErrorCode.ACCESS_DENIED));
+            if (authorization.getMinimumOrderQuantity() != null
+                    && requestItem.quantity() < authorization.getMinimumOrderQuantity()) {
+                throw new ApiException(ErrorCode.BAD_REQUEST,
+                        "Quantity is below the agreed minimum order quantity for " + stockItem.getSku());
+            }
+
             if (requestItem.quantity() > stockItem.getAvailableQuantity()) {
                 throw new ApiException(ErrorCode.CONFLICT, "Insufficient available manufacturer stock for " + stockItem.getSku());
             }
@@ -110,9 +121,11 @@ public class PurchaseOrderService {
                 item.setDistributorOffer(offer);
             }
             item.setQuantity(requestItem.quantity());
-            item.setUnitPrice(stockItem.getUnitPrice());
+            BigDecimal unitPrice = authorization.getAgreedWholesalePrice() != null
+                    ? authorization.getAgreedWholesalePrice() : stockItem.getUnitPrice();
+            item.setUnitPrice(unitPrice);
             purchaseOrder.addItem(item);
-            total = total.add(stockItem.getUnitPrice().multiply(BigDecimal.valueOf(requestItem.quantity())));
+            total = total.add(unitPrice.multiply(BigDecimal.valueOf(requestItem.quantity())));
         }
 
         if (total.compareTo(BigDecimal.ZERO) <= 0) {

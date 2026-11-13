@@ -53,7 +53,10 @@ public class ProductAuthorizationController {
                                                 @Valid @RequestBody(required = false)
                                                 CreateAuthorizationRequestBody body) {
         return service.request(actor, new CreateProductAuthorizationRequest(
-                productId, body == null ? null : body.requestNote()));
+                productId, body == null ? null : body.requestNote(),
+                body == null ? null : body.targetMarket(), body == null ? null : body.salesChannels(),
+                body == null ? null : body.geographicalCoverage(),
+                body == null ? null : body.distributionStrategy()));
     }
 
     @PatchMapping("/authorizations/{authorizationId}")
@@ -88,5 +91,9 @@ public class ProductAuthorizationController {
     }
 
     public record CreateAuthorizationRequestBody(
-            @jakarta.validation.constraints.Size(max = 1000) String requestNote) {}
+            @jakarta.validation.constraints.Size(max = 1000) String requestNote,
+            @jakarta.validation.constraints.Size(max = 500) String targetMarket,
+            @jakarta.validation.constraints.Size(max = 500) String salesChannels,
+            @jakarta.validation.constraints.Size(max = 500) String geographicalCoverage,
+            @jakarta.validation.constraints.Size(max = 4000) String distributionStrategy) {}
 }

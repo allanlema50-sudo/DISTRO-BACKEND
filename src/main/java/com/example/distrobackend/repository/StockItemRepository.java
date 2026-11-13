@@ -14,6 +14,48 @@ import java.util.List;
 import java.util.UUID;
 
 public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
+    @Query(value = """
+            select s from StockItem s
+            where s.organization.type = com.example.distrobackend.Domain.enums.Organizationtype.MANUFACTURER
+              and s.sourceStockItem is null
+              and s.active = true
+              and s.publicationStatus = com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED
+              and (:manufacturerId is null or s.organization.id = :manufacturerId)
+              and (:category = '' or lower(s.category) = lower(:category))
+              and (:search = '' or lower(s.name) like concat('%', lower(:search), '%')
+                   or lower(s.sku) like concat('%', lower(:search), '%')
+                   or lower(s.organization.name) like concat('%', lower(:search), '%'))
+            """,
+            countQuery = """
+            select count(s) from StockItem s
+            where s.organization.type = com.example.distrobackend.Domain.enums.Organizationtype.MANUFACTURER
+              and s.sourceStockItem is null
+              and s.active = true
+              and s.publicationStatus = com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED
+              and (:manufacturerId is null or s.organization.id = :manufacturerId)
+              and (:category = '' or lower(s.category) = lower(:category))
+              and (:search = '' or lower(s.name) like concat('%', lower(:search), '%')
+                   or lower(s.sku) like concat('%', lower(:search), '%')
+                   or lower(s.organization.name) like concat('%', lower(:search), '%'))
+            """)
+    Page<StockItem> findDistributorMasterCatalog(
+            @Param("search") String search, @Param("category") String category,
+            @Param("manufacturerId") UUID manufacturerId, Pageable pageable);
+
+    @Query(value = """
+            select s from StockItem s
+            where s.organization.id = :organizationId
+              and (:search = '' or lower(s.name) like concat('%', lower(:search), '%')
+                   or lower(s.sku) like concat('%', lower(:search), '%'))
+            """,
+            countQuery = """
+            select count(s) from StockItem s
+            where s.organization.id = :organizationId
+              and (:search = '' or lower(s.name) like concat('%', lower(:search), '%')
+                   or lower(s.sku) like concat('%', lower(:search), '%'))
+            """)
+    Page<StockItem> findManufacturerManagementCatalog(
+            @Param("organizationId") UUID organizationId, @Param("search") String search, Pageable pageable);
     Page<StockItem> findByOrganization_Id(UUID organizationId, Pageable pageable);
 
     @Query(value = "select s from StockItem s where (:organizationId is null or s.organization.id = :organizationId) "
@@ -25,8 +67,11 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
 
     @Query("""
             select s from StockItem s
+            left join s.sourceStockItem source
+            left join source.organization sourceOrganization
             where s.active = true
               and s.publicationStatus = com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED
+              and s.quantityOnHand > s.reservedQuantity
               and s.sourceStockItem is not null
               and s.sourceStockItem.active = true
               and s.sourceStockItem.publicationStatus = com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED
@@ -34,17 +79,35 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
               and s.organization.type = com.example.distrobackend.Domain.enums.Organizationtype.DISTRIBUTOR
               and s.warehouse.active = true
               and (:category = '' or lower(s.category) = lower(:category))
+              and (:manufacturerId is null or sourceOrganization.id = :manufacturerId)
+              and (:search = '' or lower(s.name) like concat('%', lower(:search), '%')
+                   or lower(s.sku) like concat('%', lower(:search), '%')
+                   or lower(sourceOrganization.name) like concat('%', lower(:search), '%'))
             """)
-    Page<StockItem> findActiveCatalog(@Param("category") String category, Pageable pageable);
+    Page<StockItem> findActiveCatalog(@Param("category") String category,
+                                      @Param("search") String search,
+                                      @Param("manufacturerId") UUID manufacturerId,
+                                      Pageable pageable);
 
     @Query("""
             select s from StockItem s
+            left join s.sourceStockItem source
+            left join source.organization sourceOrganization
             where s.active = true
               and s.publicationStatus = com.example.distrobackend.Domain.enums.ProductPublicationStatus.PUBLISHED
               and (:category = '' or lower(s.category) = lower(:category))
+              and (:manufacturerId is null or
+                   (s.organization.type = com.example.distrobackend.Domain.enums.Organizationtype.MANUFACTURER
+                    and s.organization.id = :manufacturerId)
+                   or sourceOrganization.id = :manufacturerId)
+              and (:search = '' or lower(s.name) like concat('%', lower(:search), '%')
+                   or lower(s.sku) like concat('%', lower(:search), '%')
+                   or lower(s.organization.name) like concat('%', lower(:search), '%')
+                   or lower(sourceOrganization.name) like concat('%', lower(:search), '%'))
             """)
     Page<StockItem> findActiveCatalogForPlatform(
-            @Param("category") String category, Pageable pageable);
+            @Param("category") String category, @Param("search") String search,
+            @Param("manufacturerId") UUID manufacturerId, Pageable pageable);
 
     @Query("""
             select s from StockItem s
@@ -140,6 +203,10 @@ public interface StockItemRepository extends JpaRepository<StockItem, UUID> {
     boolean existsByOrganization_IdAndSkuIgnoreCase(UUID organizationId, String sku);
 
     boolean existsByWarehouse_IdAndActiveTrue(UUID warehouseId);
+
+    @Query("select coalesce(sum(s.quantityOnHand), 0) from StockItem s "
+            + "where s.warehouse.id = :warehouseId and s.active = true")
+    long sumActiveQuantityByWarehouseId(@Param("warehouseId") UUID warehouseId);
 
     long countByOrganization_Id(UUID organizationId);
 

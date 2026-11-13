@@ -11,10 +11,12 @@ import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.dto.CreateVehicleRequest;
 import com.example.distrobackend.dto.UpdateVehicleRequest;
 import com.example.distrobackend.dto.VehicleResponse;
+import com.example.distrobackend.dto.VehicleDriverAssignmentRequest;
 import com.example.distrobackend.dto.VehicleStatusUpdateRequest;
 import com.example.distrobackend.repository.OrganizationRepository;
 import com.example.distrobackend.repository.VehicleRepository;
 import com.example.distrobackend.repository.TripRepository;
+import com.example.distrobackend.repository.UserRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -33,6 +35,7 @@ public class VehicleService {
     private final VehicleRepository vehicleRepository;
     private final OrganizationRepository organizationRepository;
     private final TripRepository tripRepository;
+    private final UserRepository userRepository;
 
     @Transactional(readOnly = true)
     public Page<VehicleResponse> list(AuthenticatedUser actor, VehicleStatus status, Pageable pageable) {
@@ -145,6 +148,35 @@ public class VehicleService {
                     "A vehicle assigned to an active trip cannot be deactivated");
         }
         vehicle.setStatus(request.status());
+        return VehicleResponse.from(vehicleRepository.save(vehicle));
+    }
+
+    @Transactional
+    public VehicleResponse assignDriver(AuthenticatedUser actor, UUID vehicleId,
+                                        VehicleDriverAssignmentRequest request) {
+        UUID organizationId = requireOrganizationAdmin(actor);
+        Vehicle vehicle = vehicleRepository.findByIdAndOrganizationForUpdate(vehicleId, organizationId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Vehicle not found"));
+        if (tripRepository.existsByVehicle_IdAndStatusIn(vehicleId,
+                List.of(TripStatus.SCHEDULED, TripStatus.ONGOING, TripStatus.DELAYED))) {
+            throw new ApiException(ErrorCode.CONFLICT, "A vehicle on an active trip cannot be reassigned");
+        }
+        if (request.driverId() == null) {
+            vehicle.setAssignedDriver(null);
+        } else {
+            var assignedDriver = userRepository.findOrganizationDriverForUpdate(
+                            request.driverId(), organizationId, UserRole.DRIVER)
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Driver not found"));
+            if (assignedDriver.getStatus() != com.example.distrobackend.Domain.enums.UserStatus.ACTIVE
+                    || assignedDriver.getDriverApprovalStatus()
+                    != com.example.distrobackend.Domain.enums.DriverApprovalStatus.APPROVED) {
+                throw new ApiException(ErrorCode.CONFLICT, "Only approved, active drivers can be assigned");
+            }
+            if (vehicleRepository.existsByAssignedDriver_IdAndIdNot(request.driverId(), vehicleId)) {
+                throw new ApiException(ErrorCode.CONFLICT, "This driver is already assigned to another vehicle");
+            }
+            vehicle.setAssignedDriver(assignedDriver);
+        }
         return VehicleResponse.from(vehicleRepository.save(vehicle));
     }
 

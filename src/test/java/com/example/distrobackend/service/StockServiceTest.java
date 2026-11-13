@@ -229,44 +229,48 @@ class StockServiceTest {
     }
 
     @Test
-    void distributorCatalogIncludesManufacturersButNotOtherDistributors() {
+    void distributorCatalogReturnsPublishedCanonicalProductsWithFiltersAndStablePagination() {
         var pageable = org.springframework.data.domain.PageRequest.of(0, 20);
-        when(stockItemRepository.findActiveCatalogForDistributor(
-                eq(organizationId), eq(Organizationtype.MANUFACTURER), eq(""), eq(pageable)))
+        var stable = org.springframework.data.domain.PageRequest.of(0, 20,
+                org.springframework.data.domain.Sort.by("name").ascending()
+                        .and(org.springframework.data.domain.Sort.by("id").ascending()));
+        when(stockItemRepository.findDistributorMasterCatalog("", "", null, stable))
                 .thenReturn(org.springframework.data.domain.Page.empty());
 
-        stockService.catalog(user, null, pageable);
+        stockService.catalog(user, null, "  ", null, pageable);
 
-        verify(stockItemRepository).findActiveCatalogForDistributor(
-                organizationId, Organizationtype.MANUFACTURER, "", pageable);
+        verify(stockItemRepository).findDistributorMasterCatalog("", "", null, stable);
     }
-
     @Test
     void customerCatalogCanBrowseAcrossOrganizations() {
         var pageable = org.springframework.data.domain.PageRequest.of(0, 20);
+        var stable = org.springframework.data.domain.PageRequest.of(0, 20,
+                org.springframework.data.domain.Sort.by("name").ascending()
+                        .and(org.springframework.data.domain.Sort.by("id").ascending()));
         AuthenticatedUser customer = new AuthenticatedUser(
                 UUID.randomUUID(), UserRole.CUSTOMER, null, null, Instant.now().plusSeconds(60));
-        when(stockItemRepository.findActiveCatalog(eq(""), eq(pageable)))
+        when(stockItemRepository.findActiveCatalog(eq(""), eq(""), eq(null), eq(stable)))
                 .thenReturn(org.springframework.data.domain.Page.empty());
 
         stockService.catalog(customer, null, pageable);
 
-        verify(stockItemRepository).findActiveCatalog("", pageable);
+        verify(stockItemRepository).findActiveCatalog("", "", null, stable);
     }
-
     @Test
     void superAdminCanBrowseActiveProductsAcrossOrganizations() {
         var pageable = org.springframework.data.domain.PageRequest.of(0, 20);
+        var stable = org.springframework.data.domain.PageRequest.of(0, 20,
+                org.springframework.data.domain.Sort.by("name").ascending()
+                        .and(org.springframework.data.domain.Sort.by("id").ascending()));
         AuthenticatedUser superAdmin = new AuthenticatedUser(
                 UUID.randomUUID(), UserRole.SUPER_ADMIN, null, null, Instant.now().plusSeconds(60));
-        when(stockItemRepository.findActiveCatalogForPlatform(eq(""), eq(pageable)))
+        when(stockItemRepository.findActiveCatalogForPlatform(eq(""), eq(""), eq(null), eq(stable)))
                 .thenReturn(org.springframework.data.domain.Page.empty());
 
         stockService.catalog(superAdmin, null, pageable);
 
-        verify(stockItemRepository).findActiveCatalogForPlatform("", pageable);
+        verify(stockItemRepository).findActiveCatalogForPlatform("", "", null, stable);
     }
-
     @Test
     void superAdminCanBrowsePlatformProductCategories() {
         AuthenticatedUser superAdmin = new AuthenticatedUser(

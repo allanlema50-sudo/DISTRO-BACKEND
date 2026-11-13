@@ -2,10 +2,12 @@ package com.example.distrobackend.service;
 
 import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.StockItem;
+import com.example.distrobackend.Domain.enums.OrganizationStatus;
 import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.repository.StockItemRepository;
+import com.example.distrobackend.repository.OrganizationRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -13,6 +15,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -24,10 +27,12 @@ class ProductCatalogServiceTest {
 
     @Mock
     private StockItemRepository stockItemRepository;
+    @Mock
+    private OrganizationRepository organizationRepository;
 
     @Test
     void manufacturerCannotReadAnotherOrganizationsInventory() {
-        ProductCatalogService service = new ProductCatalogService(stockItemRepository);
+        ProductCatalogService service = new ProductCatalogService(stockItemRepository, organizationRepository);
         UUID itemId = UUID.randomUUID();
         Organization other = organization(UUID.randomUUID());
         StockItem item = new StockItem();
@@ -44,7 +49,7 @@ class ProductCatalogServiceTest {
 
     @Test
     void superAdminCanReadPlatformInventory() {
-        ProductCatalogService service = new ProductCatalogService(stockItemRepository);
+        ProductCatalogService service = new ProductCatalogService(stockItemRepository, organizationRepository);
         UUID itemId = UUID.randomUUID();
         StockItem item = new StockItem();
         item.setId(itemId);
@@ -57,6 +62,30 @@ class ProductCatalogServiceTest {
 
         assertThat(service.getInventory(principal(UUID.randomUUID(), UserRole.SUPER_ADMIN, null), itemId).id())
                 .isEqualTo(itemId);
+    }
+
+    @Test
+    void distributorSeesOnlyActiveManufacturerOrganizations() {
+        ProductCatalogService service = new ProductCatalogService(stockItemRepository, organizationRepository);
+        Organization manufacturer = organization(UUID.randomUUID());
+        manufacturer.setName("Acme Manufacturing");
+        when(organizationRepository.findAllByTypeAndStatusOrderByNameAsc(
+                Organizationtype.MANUFACTURER, OrganizationStatus.ACTIVE))
+                .thenReturn(List.of(manufacturer));
+
+        assertThat(service.manufacturers(
+                principal(UUID.randomUUID(), UserRole.DISTRIBUTOR_ADMIN, UUID.randomUUID())))
+                .containsExactly(new com.example.distrobackend.dto.CatalogManufacturerResponse(
+                        manufacturer.getId(), manufacturer.getName()));
+    }
+
+    @Test
+    void manufacturerCannotReadManufacturerDirectory() {
+        ProductCatalogService service = new ProductCatalogService(stockItemRepository, organizationRepository);
+
+        assertThatThrownBy(() -> service.manufacturers(
+                principal(UUID.randomUUID(), UserRole.MANUFACTURER_ADMIN, UUID.randomUUID())))
+                .isInstanceOf(ApiException.class);
     }
 
     private static Organization organization(UUID id) {

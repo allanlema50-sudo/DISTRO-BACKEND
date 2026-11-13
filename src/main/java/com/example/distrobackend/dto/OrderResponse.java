@@ -18,6 +18,7 @@ public record OrderResponse(
         BigDecimal subtotalAmount,
         BigDecimal deliveryFee,
         BigDecimal totalAmount,
+        int packageCount,
         String cancellationReason,
         OffsetDateTime placedAt,
         OffsetDateTime reservationExpiresAt,

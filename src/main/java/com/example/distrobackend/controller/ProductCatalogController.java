@@ -50,13 +50,21 @@ public class ProductCatalogController {
     @GetMapping
     public Page<ProductResponse> list(@AuthenticationPrincipal AuthenticatedUser actor,
                                       @RequestParam(required = false) String category,
+                                      @RequestParam(required = false) String search,
+                                      @RequestParam(required = false) UUID manufacturerId,
                                       Pageable pageable) {
-        return stockService.catalog(actor, category, pageable);
+        return stockService.catalog(actor, category, search, manufacturerId, pageable);
     }
-
     @GetMapping("/categories")
     public List<String> categories(@AuthenticationPrincipal AuthenticatedUser actor) {
         return stockService.categories(actor);
+    }
+
+    @GetMapping("/manufacturers")
+    @PreAuthorize("hasAnyRole('DISTRIBUTOR_ADMIN','DISTRIBUTOR_STAFF') and @tenantAccess.hasOrganization(authentication)")
+    public List<com.example.distrobackend.dto.CatalogManufacturerResponse> manufacturers(
+            @AuthenticationPrincipal AuthenticatedUser actor) {
+        return productCatalogService.manufacturers(actor);
     }
 
     @PostMapping

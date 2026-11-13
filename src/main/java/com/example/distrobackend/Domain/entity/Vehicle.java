@@ -57,6 +57,10 @@ public class Vehicle {
     @Column(name = "capacity_kg")
     private Integer capacityKg;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "assigned_driver_id")
+    private User assignedDriver;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)
     private VehicleStatus status = VehicleStatus.ACTIVE;

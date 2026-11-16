@@ -121,7 +121,7 @@ public class DriverService {
 
     @Transactional
     public Page<DriverResponse> list(AuthenticatedUser actor, Pageable pageable) {
-        UUID organizationId = requireDistributor(actor);
+        UUID organizationId = requireDriverOrganization(actor);
         return userRepository.findByOrganization_IdAndRole(organizationId, UserRole.DRIVER, pageable)
                 .map(user -> DriverResponse.from(user, ensureProfile(user)));
     }
@@ -134,7 +134,7 @@ public class DriverService {
         if (actor != null && actor.role() == UserRole.SUPER_ADMIN) {
             organizationId = requestedOrganizationId;
         } else {
-            organizationId = requireDistributor(actor);
+            organizationId = requireDriverOrganization(actor);
             if (requestedOrganizationId != null && !requestedOrganizationId.equals(organizationId)) {
                 throw new ApiException(ErrorCode.ACCESS_DENIED);
             }
@@ -289,7 +289,7 @@ public class DriverService {
                     .filter(user -> user.getRole() == UserRole.DRIVER)
                     .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Driver not found"));
         }
-        UUID organizationId = requireDistributor(actor);
+        UUID organizationId = requireDriverOrganization(actor);
         User driver = userRepository.findWithOrganizationById(driverId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Driver not found"));
         if (driver.getRole() != UserRole.DRIVER || driver.getOrganization() == null
@@ -306,7 +306,7 @@ public class DriverService {
                     .filter(user -> user.getRole() == UserRole.DRIVER)
                     .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Driver not found"));
         }
-        UUID organizationId = requireDistributor(actor);
+        UUID organizationId = requireDriverOrganization(actor);
         User driver = userRepository.findByIdForUpdate(driverId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Driver not found"));
         if (driver.getRole() != UserRole.DRIVER || driver.getOrganization() == null
@@ -346,17 +346,18 @@ public class DriverService {
         return actor.organizationId();
     }
 
-    private static UUID requireDistributor(AuthenticatedUser actor) {
+    private static UUID requireDriverOrganization(AuthenticatedUser actor) {
         UUID organizationId = requireOrganization(actor);
-        if (actor.organizationType() != Organizationtype.DISTRIBUTOR) {
+        if (actor.organizationType() != Organizationtype.DISTRIBUTOR
+                && actor.organizationType() != Organizationtype.MANUFACTURER) {
             throw new ApiException(ErrorCode.ACCESS_DENIED,
-                    "Driver operations are available only to distributor organizations");
+                    "Driver operations are available only to manufacturer or distributor organizations");
         }
         return organizationId;
     }
 
     private static void requireOrganizationAdmin(AuthenticatedUser actor) {
-        requireDistributor(actor);
+        requireDriverOrganization(actor);
         if (!isOrganizationAdmin(actor)) {
             throw new ApiException(ErrorCode.ACCESS_DENIED);
         }

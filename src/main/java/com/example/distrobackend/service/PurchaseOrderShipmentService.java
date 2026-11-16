@@ -4,6 +4,7 @@ import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.PurchaseOrder;
 import com.example.distrobackend.Domain.entity.PurchaseOrderItem;
 import com.example.distrobackend.Domain.entity.PurchaseOrderShipment;
+import com.example.distrobackend.Domain.entity.PurchaseOrderShipmentReceiptLine;
 import com.example.distrobackend.Domain.entity.PurchaseOrderSettlement;
 import com.example.distrobackend.Domain.entity.StockItem;
 import com.example.distrobackend.Domain.entity.StockMovement;
@@ -21,6 +22,7 @@ import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.Exception.ResourceNotFoundException;
 import com.example.distrobackend.dto.CreateShipmentRequest;
 import com.example.distrobackend.dto.PurchaseOrderShipmentResponse;
+import com.example.distrobackend.dto.ReceiveShipmentRequest;
 import com.example.distrobackend.dto.ShipmentStatusRequest;
 import com.example.distrobackend.repository.PurchaseOrderRepository;
 import com.example.distrobackend.repository.PurchaseOrderSettlementRepository;
@@ -40,6 +42,8 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
 import java.util.UUID;
 
 import static org.springframework.data.domain.Pageable.unpaged;
@@ -180,6 +184,7 @@ public class PurchaseOrderShipmentService {
         shipment.setStatus(request.status());
         shipment.setLastUpdatedBy(userRepository.getReferenceById(actor.userId()));
         if (request.status() == PurchaseOrderShipmentStatus.IN_TRANSIT) {
+            dispatchPurchaseOrderStock(shipment, actor);
             shipment.setDispatchedAt(now);
             shipment.setDispatchNote(trimToNull(request.note()));
         } else if (request.status() == PurchaseOrderShipmentStatus.DELIVERED) {
@@ -201,6 +206,12 @@ public class PurchaseOrderShipmentService {
 
     @Transactional
     public PurchaseOrderShipmentResponse receive(AuthenticatedUser actor, UUID shipmentId, String note) {
+        return receive(actor, shipmentId, new ReceiveShipmentRequest(note, null));
+    }
+
+    @Transactional
+    public PurchaseOrderShipmentResponse receive(AuthenticatedUser actor, UUID shipmentId,
+                                                  ReceiveShipmentRequest request) {
         requireDistributor(actor);
         PurchaseOrderShipment shipment = shipmentRepository.findByIdWithDetailsForUpdate(shipmentId)
                 .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.NOT_FOUND, "Shipment not found"));
@@ -229,6 +240,38 @@ public class PurchaseOrderShipmentService {
             throw new ApiException(ErrorCode.CONFLICT,
                     "The shipment has no destination offer for every purchase-order item");
         }
+        Map<UUID, ReceiveShipmentRequest.Line> receiptLines = new HashMap<>();
+        if (request == null || request.lines() == null) {
+            for (PurchaseOrderItem item : items) {
+                receiptLines.put(item.getId(), new ReceiveShipmentRequest.Line(
+                        item.getId(), item.getQuantity(), 0, 0));
+            }
+        } else {
+            for (ReceiveShipmentRequest.Line line : request.lines()) {
+                if (line == null || line.purchaseOrderItemId() == null
+                        || line.acceptedQuantity() < 0 || line.damagedQuantity() < 0
+                        || line.missingQuantity() < 0) {
+                    throw new ApiException(ErrorCode.BAD_REQUEST,
+                            "Receipt quantities must be non-negative and linked to a purchase-order item");
+                }
+                if (receiptLines.putIfAbsent(line.purchaseOrderItemId(), line) != null) {
+                    throw new ApiException(ErrorCode.BAD_REQUEST,
+                            "Each purchase-order item must appear once in the receipt");
+                }
+            }
+        }
+        if (receiptLines.size() != items.size()) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    "A receipt quantity breakdown is required for every purchase-order item");
+        }
+        for (PurchaseOrderItem item : items) {
+            ReceiveShipmentRequest.Line line = receiptLines.get(item.getId());
+            if (line == null || (long) line.acceptedQuantity() + line.damagedQuantity()
+                    + line.missingQuantity() != item.getQuantity()) {
+                throw new ApiException(ErrorCode.BAD_REQUEST,
+                        "Accepted, damaged, and missing quantities must equal each ordered quantity");
+            }
+        }
         items.sort(Comparator.comparing(item -> item.getDistributorOffer().getId()));
         List<StockItem> lockedOffers = new ArrayList<>();
         for (PurchaseOrderItem item : items) {
@@ -247,29 +290,39 @@ public class PurchaseOrderShipmentService {
         for (int i = 0; i < items.size(); i++) {
             PurchaseOrderItem item = items.get(i);
             StockItem offer = lockedOffers.get(i);
-            int quantity;
-            try {
-                quantity = Math.addExact(offer.getQuantityOnHand(), item.getQuantity());
-            } catch (ArithmeticException ex) {
-                throw new ApiException(ErrorCode.INVALID_STOCK_ADJUSTMENT,
-                        "Receiving this shipment exceeds the supported stock quantity");
+            ReceiveShipmentRequest.Line received = receiptLines.get(item.getId());
+            PurchaseOrderShipmentReceiptLine receiptLine = new PurchaseOrderShipmentReceiptLine();
+            receiptLine.setPurchaseOrderItem(item);
+            receiptLine.setExpectedQuantity(item.getQuantity());
+            receiptLine.setAcceptedQuantity(received.acceptedQuantity());
+            receiptLine.setDamagedQuantity(received.damagedQuantity());
+            receiptLine.setMissingQuantity(received.missingQuantity());
+            shipment.addReceiptLine(receiptLine);
+            if (received.acceptedQuantity() > 0) {
+                int quantity;
+                try {
+                    quantity = Math.addExact(offer.getQuantityOnHand(), received.acceptedQuantity());
+                } catch (ArithmeticException ex) {
+                    throw new ApiException(ErrorCode.INVALID_STOCK_ADJUSTMENT,
+                            "Receiving this shipment exceeds the supported stock quantity");
+                }
+                offer.setQuantityOnHand(quantity);
+                StockMovement movement = new StockMovement();
+                movement.setStockItem(offer);
+                movement.setMovementType(StockMovementType.RESTOCK_IN);
+                movement.setQuantityDelta(received.acceptedQuantity());
+                movement.setReferenceType("PURCHASE_ORDER_SHIPMENT");
+                movement.setReferenceId(shipment.getId());
+                movement.setPerformedBy(userRepository.getReferenceById(actor.userId()));
+                movement.setNote(trimToNull(request == null ? null : request.note()));
+                stockMovementRepository.save(movement);
             }
-            offer.setQuantityOnHand(quantity);
-            StockMovement movement = new StockMovement();
-            movement.setStockItem(offer);
-            movement.setMovementType(StockMovementType.RESTOCK_IN);
-            movement.setQuantityDelta(item.getQuantity());
-            movement.setReferenceType("PURCHASE_ORDER_SHIPMENT");
-            movement.setReferenceId(shipment.getId());
-            movement.setPerformedBy(userRepository.getReferenceById(actor.userId()));
-            movement.setNote(trimToNull(note));
-            stockMovementRepository.save(movement);
         }
 
         OffsetDateTime now = OffsetDateTime.now();
         shipment.setStatus(PurchaseOrderShipmentStatus.RECEIVED);
         shipment.setReceivedAt(now);
-        shipment.setReceiptNote(trimToNull(note));
+        shipment.setReceiptNote(trimToNull(request == null ? null : request.note()));
         shipment.setLastUpdatedBy(userRepository.getReferenceById(actor.userId()));
         purchaseOrder.setStatus(PurchaseOrderStatus.FULFILLED);
         purchaseOrder.setFulfilledAt(now);
@@ -282,6 +335,36 @@ public class PurchaseOrderShipmentService {
         return PurchaseOrderShipmentResponse.from(shipment);
     }
 
+    private void dispatchPurchaseOrderStock(PurchaseOrderShipment shipment, AuthenticatedUser actor) {
+        var purchaseOrder = shipment.getPurchaseOrder();
+        for (var item : purchaseOrder.getItems()) {
+            StockItem stock = stockItemRepository.findByIdAndOrganizationIdForUpdate(
+                            item.getStockItem().getId(), purchaseOrder.getSupplierOrganization().getId())
+                    .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.STOCK_ITEM_NOT_FOUND));
+            if (stock.getQuantityOnHand() < item.getQuantity()
+                    || (purchaseOrder.isStockReserved()
+                    ? stock.getReservedQuantity() < item.getQuantity()
+                    : stock.getAvailableQuantity() < item.getQuantity())) {
+                throw new ApiException(ErrorCode.CONFLICT,
+                        "Insufficient reserved manufacturer stock to dispatch the purchase order");
+            }
+            stock.setQuantityOnHand(stock.getQuantityOnHand() - item.getQuantity());
+            if (purchaseOrder.isStockReserved()) {
+                stock.setReservedQuantity(stock.getReservedQuantity() - item.getQuantity());
+            }
+            StockMovement movement = new StockMovement();
+            movement.setStockItem(stock);
+            movement.setMovementType(StockMovementType.SALE_OUT);
+            movement.setQuantityDelta(-item.getQuantity());
+            movement.setReferenceType("PURCHASE_ORDER_SHIPMENT");
+            movement.setReferenceId(shipment.getId());
+            movement.setPerformedBy(userRepository.getReferenceById(actor.userId()));
+            movement.setNote("Dispatch for " + purchaseOrder.getPurchaseOrderNumber());
+            stockMovementRepository.save(movement);
+        }
+        purchaseOrder.setStockReserved(false);
+        purchaseOrderRepository.save(purchaseOrder);
+    }
     private StockItem resolveOffer(PurchaseOrderItem item, Organization buyer, Warehouse warehouse) {
         if (item.getDistributorOffer() != null) {
             StockItem offer = stockItemRepository.findByIdAndOrganizationIdForUpdateWithWarehouse(
@@ -353,8 +436,7 @@ public class PurchaseOrderShipmentService {
                 && (requested == PurchaseOrderShipmentStatus.IN_TRANSIT
                 || requested == PurchaseOrderShipmentStatus.CANCELLED))
                 || (current == PurchaseOrderShipmentStatus.IN_TRANSIT
-                && (requested == PurchaseOrderShipmentStatus.DELIVERED
-                || requested == PurchaseOrderShipmentStatus.CANCELLED));
+                && requested == PurchaseOrderShipmentStatus.DELIVERED);
     }
 
     private void notifyOrganizationAdministrators(Organization organization, String title,

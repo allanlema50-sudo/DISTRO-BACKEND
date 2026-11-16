@@ -1179,13 +1179,13 @@ fleet.
 
 | Method | Endpoint | Access | Purpose |
 |---|---|---|---|
-| `POST` | `/api/v1/drivers/invitations` | Distributor admin | Create an invited driver and send the email activation link |
-| `POST` | `/api/v1/drivers/{driverId}/invitation` | Distributor admin | Reissue an expired invitation or re-invite a revoked, unaccepted driver |
-| `GET` | `/api/v1/drivers` | Super Admin or distributor staff/admin | List drivers; supports `status=APPROVED` (active), `availability=AVAILABLE|UNAVAILABLE`, and Super Admin `organizationId` filters |
-| `GET` | `/api/v1/drivers/{driverId}` | Super Admin, distributor staff/admin, or that driver | Read one organization driver |
-| `PATCH` | `/api/v1/drivers/{driverId}` | Distributor admin | Update driver profile and license details |
-| `PATCH` | `/api/v1/drivers/{driverId}/status` | Distributor admin | Activate, suspend, or deactivate a driver |
-| `PATCH` | `/api/v1/drivers/{driverId}/availability` | Driver or distributor admin | Set whether an active driver is available |
+| `POST` | `/api/v1/drivers/invitations` | Manufacturer/distributor admin | Create an invited driver and send the email activation link |
+| `POST` | `/api/v1/drivers/{driverId}/invitation` | Manufacturer/distributor admin | Reissue an expired invitation or re-invite a revoked, unaccepted driver |
+| `GET` | `/api/v1/drivers` | Super Admin or organization staff/admin | List drivers within the caller's organization; supports `status=APPROVED` (active) and `availability=AVAILABLE|UNAVAILABLE`; Super Admin may use `organizationId` filters |
+| `GET` | `/api/v1/drivers/{driverId}` | Super Admin, organization staff/admin, or that driver | Read one organization driver within the caller's tenant |
+| `PATCH` | `/api/v1/drivers/{driverId}` | Manufacturer/distributor admin | Update driver profile and license details |
+| `PATCH` | `/api/v1/drivers/{driverId}/status` | Manufacturer/distributor admin | Activate, suspend, or deactivate a driver |
+| `PATCH` | `/api/v1/drivers/{driverId}/availability` | Driver or manufacturer/distributor admin | Set whether an approved active driver is available |
 | `POST` | `/api/v1/drivers/me/location` | Driver | Update the driver's latest profile location |
 | `GET` | `/api/v1/vehicles` | Super Admin or distributor staff/admin | List vehicles; filters include `status`, `organizationId` (Super Admin), and derived `status=AVAILABLE` |
 | `GET` | `/api/v1/vehicles/{vehicleId}` | Super Admin or distributor staff/admin | Read one vehicle |

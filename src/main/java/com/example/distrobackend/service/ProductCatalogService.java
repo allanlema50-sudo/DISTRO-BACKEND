@@ -1,12 +1,16 @@
 package com.example.distrobackend.service;
 
 import com.example.distrobackend.Domain.entity.StockItem;
+import com.example.distrobackend.Domain.enums.OrganizationStatus;
+import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.dto.ProductStatsResponse;
+import com.example.distrobackend.dto.CatalogManufacturerResponse;
 import com.example.distrobackend.dto.StockItemResponse;
 import com.example.distrobackend.repository.StockItemRepository;
+import com.example.distrobackend.repository.OrganizationRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -19,6 +23,22 @@ import java.util.UUID;
 public class ProductCatalogService {
 
     private final StockItemRepository stockItemRepository;
+    private final OrganizationRepository organizationRepository;
+
+    @Transactional(readOnly = true)
+    public java.util.List<CatalogManufacturerResponse> manufacturers(AuthenticatedUser actor) {
+        if (actor == null || actor.organizationId() == null
+                || (actor.role() != UserRole.DISTRIBUTOR_ADMIN
+                && actor.role() != UserRole.DISTRIBUTOR_STAFF)) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        return organizationRepository.findAllByTypeAndStatusOrderByNameAsc(
+                        Organizationtype.MANUFACTURER, OrganizationStatus.ACTIVE)
+                .stream()
+                .map(organization -> new CatalogManufacturerResponse(
+                        organization.getId(), organization.getName()))
+                .toList();
+    }
 
     @Transactional(readOnly = true)
     public StockItemResponse getInventory(AuthenticatedUser actor, UUID productId) {

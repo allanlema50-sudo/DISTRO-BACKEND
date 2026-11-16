@@ -5,6 +5,7 @@ import com.example.distrobackend.Domain.enums.PurchaseOrderShipmentStatus;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
+import java.util.List;
 
 public record PurchaseOrderShipmentResponse(
         UUID id,
@@ -23,7 +24,8 @@ public record PurchaseOrderShipmentResponse(
         OffsetDateTime deliveredAt,
         OffsetDateTime receivedAt,
         OffsetDateTime createdAt,
-        OffsetDateTime updatedAt
+        OffsetDateTime updatedAt,
+        List<PurchaseOrderShipmentReceiptLineResponse> receiptLines
 ) {
     public static PurchaseOrderShipmentResponse from(PurchaseOrderShipment shipment) {
         return new PurchaseOrderShipmentResponse(
@@ -43,6 +45,12 @@ public record PurchaseOrderShipmentResponse(
                 shipment.getDeliveredAt(),
                 shipment.getReceivedAt(),
                 shipment.getCreatedAt(),
-                shipment.getUpdatedAt());
+                shipment.getUpdatedAt(),
+                shipment.getReceiptLines().stream().map(line -> new PurchaseOrderShipmentReceiptLineResponse(
+                        line.getPurchaseOrderItem().getId(),
+                        line.getPurchaseOrderItem().getStockItem().getId(),
+                        line.getPurchaseOrderItem().getStockItem().getName(),
+                        line.getExpectedQuantity(), line.getAcceptedQuantity(),
+                        line.getDamagedQuantity(), line.getMissingQuantity())).toList());
     }
 }

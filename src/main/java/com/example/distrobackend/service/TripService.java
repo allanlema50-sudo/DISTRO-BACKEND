@@ -371,6 +371,15 @@ public class TripService {
         if (trip.getStops() == null || trip.getStops().isEmpty()) {
             throw new ApiException(ErrorCode.CONFLICT, "A trip needs at least one stop before dispatch");
         }
+        if (trip.getTripType() == TripType.DELIVERY) {
+            for (TripStop stop : trip.getStops()) {
+                if (stop.getOrder() == null) {
+                    throw new ApiException(ErrorCode.CONFLICT,
+                            "Every delivery trip stop must reference a customer order");
+                }
+                orderService.dispatchFromTrip(actor, stop.getOrder().getId());
+            }
+        }
         TripStatus previous = trip.getStatus();
         trip.setStatus(TripStatus.ONGOING);
         trip.getStops().stream()

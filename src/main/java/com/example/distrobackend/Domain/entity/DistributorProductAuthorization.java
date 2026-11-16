@@ -69,6 +69,24 @@ public class DistributorProductAuthorization {
     @Column(name = "request_note", length = 1000)
     private String requestNote;
 
+    @Column(name = "target_market", length = 500)
+    private String targetMarket;
+
+    @Column(name = "sales_channels", length = 500)
+    private String salesChannels;
+
+    @Column(name = "geographical_coverage", length = 500)
+    private String geographicalCoverage;
+
+    @Column(name = "distribution_strategy", columnDefinition = "TEXT")
+    private String distributionStrategy;
+
+    @Column(name = "agreed_wholesale_price", precision = 12, scale = 2)
+    private java.math.BigDecimal agreedWholesalePrice;
+
+    @Column(name = "minimum_order_quantity")
+    private Integer minimumOrderQuantity;
+
     @Column(name = "decided_at")
     private OffsetDateTime decidedAt;
 

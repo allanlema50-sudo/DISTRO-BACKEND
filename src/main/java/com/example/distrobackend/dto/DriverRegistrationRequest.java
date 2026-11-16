@@ -17,4 +17,10 @@ public record DriverRegistrationRequest(
         @NotBlank @Size(max = 50) @JsonAlias({"nationalIdNumber", "identityNumber", "national_id"}) String nationalId,
         @NotBlank @Size(max = 50) @JsonAlias({"drivingLicenseNumber", "license_number", "driving_license_number"}) String licenseNumber,
         @NotNull @Future @JsonAlias({"licenseExpiry", "expiryDate", "license_expiry_date", "license_expiry"}) LocalDate licenseExpiryDate,
-        @Size(max = 2000) @JsonAlias("internalNotes") String notes) {}
+        @Size(max = 2000) @JsonAlias("internalNotes") String notes,
+        @JsonAlias({"warehouseId", "base_warehouse_id"}) java.util.UUID baseWarehouseId) {
+    public DriverRegistrationRequest(String fullName, String email, String phoneNumber, String nationalId,
+                                    String licenseNumber, LocalDate licenseExpiryDate, String notes) {
+        this(fullName, email, phoneNumber, nationalId, licenseNumber, licenseExpiryDate, notes, null);
+    }
+}

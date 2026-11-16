@@ -46,6 +46,9 @@ public class PurchaseOrder {
     @Column(name = "status", nullable = false, length = 20)
     private PurchaseOrderStatus status = PurchaseOrderStatus.SUBMITTED;
 
+    @Column(name = "stock_reserved", nullable = false)
+    private boolean stockReserved = false;
+
     @Column(name = "total_amount", nullable = false, precision = 12, scale = 2)
     private BigDecimal totalAmount = BigDecimal.ZERO;
 

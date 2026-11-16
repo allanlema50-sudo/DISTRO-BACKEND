@@ -11,6 +11,7 @@ import com.example.distrobackend.dto.UpdateWarehouseStatusRequest;
 import com.example.distrobackend.dto.WarehouseResponse;
 import com.example.distrobackend.repository.OrganizationRepository;
 import com.example.distrobackend.repository.StockItemRepository;
+import com.example.distrobackend.repository.UserRepository;
 import com.example.distrobackend.repository.WarehouseRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
 import lombok.RequiredArgsConstructor;
@@ -30,6 +31,7 @@ public class WarehouseService {
     private final WarehouseRepository warehouseRepository;
     private final OrganizationRepository organizationRepository;
     private final StockItemRepository stockItemRepository;
+    private final UserRepository userRepository;
 
     @Transactional
     public WarehouseResponse create(AuthenticatedUser user, CreateWarehouseRequest request) {
@@ -43,9 +45,12 @@ public class WarehouseService {
         warehouse.setCode(code);
         warehouse.setName(request.name().trim());
         warehouse.setAddress(trimToNull(request.address()));
+        warehouse.setCity(request.city().trim());
+        warehouse.setPostalCode(trimToNull(request.postalCode()));
+        warehouse.setSiteManager(request.siteManager().trim());
         warehouse.setActive(true);
         try {
-            return WarehouseResponse.from(warehouseRepository.saveAndFlush(warehouse));
+            return toResponse(warehouseRepository.saveAndFlush(warehouse));
         } catch (DataIntegrityViolationException ex) {
             String detail = ex.getMostSpecificCause().getMessage();
             if (detail != null && detail.contains("uk_warehouses_organization_code")) {
@@ -58,19 +63,20 @@ public class WarehouseService {
     @Transactional(readOnly = true)
     public Page<WarehouseResponse> list(AuthenticatedUser user, Pageable pageable) {
         return warehouseRepository.findByOrganization_Id(userOrganizationId(user), pageable)
-                .map(WarehouseResponse::from);
+                .map(this::toResponse);
     }
 
     @Transactional(readOnly = true)
     public WarehouseResponse get(AuthenticatedUser user, UUID warehouseId) {
-        return WarehouseResponse.from(findOwnedWarehouse(user, warehouseId));
+        return toResponse(findOwnedWarehouse(user, warehouseId));
     }
 
     @Transactional
     public WarehouseResponse update(AuthenticatedUser user, UUID warehouseId, UpdateWarehouseRequest request) {
         Warehouse warehouse = findOwnedWarehouse(user, warehouseId);
         checkVersion(warehouse, request.version());
-        if (request.name() == null && request.address() == null) {
+        if (request.name() == null && request.address() == null && request.city() == null
+                && request.postalCode() == null && request.siteManager() == null) {
             throw new ApiException(ErrorCode.BAD_REQUEST,
                     "At least one warehouse field is required");
         }
@@ -84,7 +90,16 @@ public class WarehouseService {
         if (request.address() != null) {
             warehouse.setAddress(trimToNull(request.address()));
         }
-        return WarehouseResponse.from(warehouseRepository.saveAndFlush(warehouse));
+        if (request.city() != null) {
+            if (request.city().isBlank()) throw new ApiException(ErrorCode.BAD_REQUEST, "Warehouse city cannot be blank");
+            warehouse.setCity(request.city().trim());
+        }
+        if (request.postalCode() != null) warehouse.setPostalCode(trimToNull(request.postalCode()));
+        if (request.siteManager() != null) {
+            if (request.siteManager().isBlank()) throw new ApiException(ErrorCode.BAD_REQUEST, "Site manager cannot be blank");
+            warehouse.setSiteManager(request.siteManager().trim());
+        }
+        return toResponse(warehouseRepository.saveAndFlush(warehouse));
     }
 
     @Transactional
@@ -98,7 +113,14 @@ public class WarehouseService {
                     "A warehouse with active stock cannot be deactivated");
         }
         warehouse.setActive(request.active());
-        return WarehouseResponse.from(warehouseRepository.saveAndFlush(warehouse));
+        return toResponse(warehouseRepository.saveAndFlush(warehouse));
+    }
+
+    private WarehouseResponse toResponse(Warehouse warehouse) {
+        return WarehouseResponse.from(warehouse,
+                stockItemRepository.sumActiveQuantityByWarehouseId(warehouse.getId()),
+                userRepository.countByBaseWarehouse_IdAndStatus(
+                        warehouse.getId(), com.example.distrobackend.Domain.enums.UserStatus.ACTIVE));
     }
 
     private Warehouse findOwnedWarehouse(AuthenticatedUser user, UUID warehouseId) {

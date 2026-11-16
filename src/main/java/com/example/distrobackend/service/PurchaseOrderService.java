@@ -24,6 +24,7 @@ import com.example.distrobackend.repository.PurchaseOrderRepository;
 import com.example.distrobackend.repository.PurchaseOrderSettlementRepository;
 import com.example.distrobackend.repository.StockItemRepository;
 import com.example.distrobackend.repository.UserRepository;
+import com.example.distrobackend.repository.DistributorProductAuthorizationRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -48,6 +49,7 @@ public class PurchaseOrderService {
     private final UserRepository userRepository;
     private final NotificationService notificationService;
     private final ProductAuthorizationService productAuthorizationService;
+    private final DistributorProductAuthorizationRepository authorizationRepository;
 
     @Transactional
     public PurchaseOrderResponse create(AuthenticatedUser actor, CreatePurchaseOrderRequest request) {
@@ -90,6 +92,24 @@ public class PurchaseOrderService {
                         "The distributor is not authorized to purchase this manufacturer product");
             }
 
+            var authorization = authorizationRepository
+                    .findByProduct_IdAndDistributorOrganization_Id(stockItem.getId(), buyer.getId())
+                    .orElseThrow(() -> new ApiException(ErrorCode.ACCESS_DENIED));
+            if (authorization.getMinimumOrderQuantity() != null
+                    && requestItem.quantity() < authorization.getMinimumOrderQuantity()) {
+                throw new ApiException(ErrorCode.BAD_REQUEST,
+                        "Quantity is below the agreed minimum order quantity for " + stockItem.getSku());
+            }
+
+            if (requestItem.quantity() > stockItem.getAvailableQuantity()) {
+                throw new ApiException(ErrorCode.CONFLICT, "Insufficient available manufacturer stock for " + stockItem.getSku());
+            }
+            try {
+                stockItem.setReservedQuantity(Math.addExact(stockItem.getReservedQuantity(), requestItem.quantity()));
+            } catch (ArithmeticException ex) {
+                throw new ApiException(ErrorCode.CONFLICT, "Requested stock quantity exceeds supported limits");
+            }
+
             PurchaseOrderItem item = new PurchaseOrderItem();
             item.setStockItem(stockItem);
             if (requestItem.distributorOfferId() != null) {
@@ -101,15 +121,18 @@ public class PurchaseOrderService {
                 item.setDistributorOffer(offer);
             }
             item.setQuantity(requestItem.quantity());
-            item.setUnitPrice(stockItem.getUnitPrice());
+            BigDecimal unitPrice = authorization.getAgreedWholesalePrice() != null
+                    ? authorization.getAgreedWholesalePrice() : stockItem.getUnitPrice();
+            item.setUnitPrice(unitPrice);
             purchaseOrder.addItem(item);
-            total = total.add(stockItem.getUnitPrice().multiply(BigDecimal.valueOf(requestItem.quantity())));
+            total = total.add(unitPrice.multiply(BigDecimal.valueOf(requestItem.quantity())));
         }
 
         if (total.compareTo(BigDecimal.ZERO) <= 0) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Purchase order total must be positive");
         }
         purchaseOrder.setTotalAmount(total);
+        purchaseOrder.setStockReserved(true);
         PurchaseOrder saved = purchaseOrderRepository.save(purchaseOrder);
 
         PurchaseOrderSettlement settlement = new PurchaseOrderSettlement();
@@ -164,6 +187,9 @@ public class PurchaseOrderService {
             throw new ApiException(ErrorCode.BAD_REQUEST, "A rejection reason is required");
         }
         purchaseOrder.setStatus(request.status());
+        if (request.status() == PurchaseOrderStatus.REJECTED) {
+            releaseStockReservation(purchaseOrder);
+        }
         purchaseOrder.setRejectionReason(request.status() == PurchaseOrderStatus.REJECTED ? note : null);
         purchaseOrder.setReviewedBy(userRepository.getReferenceById(actor.userId()));
         purchaseOrder.setReviewedAt(OffsetDateTime.now());
@@ -230,6 +256,19 @@ public class PurchaseOrderService {
         }
     }
 
+    private void releaseStockReservation(PurchaseOrder purchaseOrder) {
+        if (!purchaseOrder.isStockReserved()) return;
+        for (PurchaseOrderItem item : purchaseOrder.getItems()) {
+            StockItem stockItem = stockItemRepository.findByIdAndOrganizationIdForUpdate(
+                            item.getStockItem().getId(), purchaseOrder.getSupplierOrganization().getId())
+                    .orElseThrow(() -> new ApiException(ErrorCode.STOCK_NOT_FOUND));
+            if (stockItem.getReservedQuantity() < item.getQuantity()) {
+                throw new ApiException(ErrorCode.CONFLICT, "Purchase-order stock reservation is inconsistent");
+            }
+            stockItem.setReservedQuantity(stockItem.getReservedQuantity() - item.getQuantity());
+        }
+        purchaseOrder.setStockReserved(false);
+    }
     private PurchaseOrderResponse toResponse(PurchaseOrder purchaseOrder) {
         return new PurchaseOrderResponse(
                 purchaseOrder.getId(), purchaseOrder.getPurchaseOrderNumber(),

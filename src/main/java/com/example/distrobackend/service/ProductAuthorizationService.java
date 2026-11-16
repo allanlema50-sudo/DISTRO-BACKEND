@@ -84,6 +84,12 @@ public class ProductAuthorizationService {
         authorization.setDistributorOrganization(distributor);
         authorization.setStatus(ProductAuthorizationStatus.PENDING);
         authorization.setRequestNote(request.requestNote() == null ? null : request.requestNote().trim());
+        authorization.setTargetMarket(trim(request.targetMarket()));
+        authorization.setSalesChannels(trim(request.salesChannels()));
+        authorization.setGeographicalCoverage(trim(request.geographicalCoverage()));
+        authorization.setDistributionStrategy(trim(request.distributionStrategy()));
+        authorization.setAgreedWholesalePrice(null);
+        authorization.setMinimumOrderQuantity(null);
         authorization.setDecisionNote(null);
         authorization.setDecidedBy(null);
         authorization.setDecidedAt(null);
@@ -102,6 +108,11 @@ public class ProductAuthorizationService {
             throw new ApiException(ErrorCode.INVALID_STATE_TRANSITION,
                     "Decision must be APPROVED, REJECTED, or REVOKED");
         }
+        if (request.status() == ProductAuthorizationStatus.APPROVED
+                && ((request.agreedWholesalePrice() == null) != (request.minimumOrderQuantity() == null))) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    "Wholesale price and minimum order quantity must be supplied together");
+        }
         DistributorProductAuthorization authorization = authorizationRepository
                 .findByIdAndManufacturerOrganizationForUpdate(authorizationId, manufacturerId)
                 .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.NOT_FOUND,
@@ -118,6 +129,10 @@ public class ProductAuthorizationService {
         }
         authorization.setStatus(request.status());
         authorization.setDecisionNote(request.note() == null ? null : request.note().trim());
+        if (request.status() == ProductAuthorizationStatus.APPROVED) {
+            authorization.setAgreedWholesalePrice(request.agreedWholesalePrice());
+            authorization.setMinimumOrderQuantity(request.minimumOrderQuantity());
+        }
         authorization.setDecidedBy(userRepository.getReferenceById(actor.userId()));
         authorization.setDecidedAt(OffsetDateTime.now());
         authorizationRepository.save(authorization);
@@ -147,6 +162,8 @@ public class ProductAuthorizationService {
                     "Authorization decision note must not exceed " + MAX_DECISION_NOTE_LENGTH + " characters");
         }
     }
+
+    private static String trim(String value) { return value == null ? null : value.trim(); }
 
     private Organization organization(AuthenticatedUser actor, Organizationtype type) {
         UUID id = requireOrganization(actor, type);

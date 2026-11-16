@@ -3,12 +3,21 @@ package com.example.distrobackend.service;
 import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.PurchaseOrder;
 import com.example.distrobackend.Domain.entity.PurchaseOrderSettlement;
+import com.example.distrobackend.Domain.entity.PurchaseOrderItem;
+import com.example.distrobackend.Domain.entity.PurchaseOrderShipment;
+import com.example.distrobackend.Domain.entity.StockItem;
+import com.example.distrobackend.Domain.entity.StockMovement;
+import com.example.distrobackend.Domain.entity.Warehouse;
+import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.PurchaseOrderStatus;
+import com.example.distrobackend.Domain.enums.PurchaseOrderShipmentStatus;
 import com.example.distrobackend.Domain.enums.SettlementStatus;
 import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.dto.CreateShipmentRequest;
+import com.example.distrobackend.dto.ReceiveShipmentRequest;
+import com.example.distrobackend.dto.ShipmentStatusRequest;
 import com.example.distrobackend.repository.PurchaseOrderRepository;
 import com.example.distrobackend.repository.PurchaseOrderSettlementRepository;
 import com.example.distrobackend.repository.PurchaseOrderShipmentRepository;
@@ -25,12 +34,17 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
 
 @ExtendWith(MockitoExtension.class)
 class PurchaseOrderShipmentServiceTest {
@@ -67,6 +81,171 @@ class PurchaseOrderShipmentServiceTest {
                 .hasMessageContaining("settled");
     }
 
+    @Test
+    void receiptAddsOnlyAcceptedQuantitiesAndIsIdempotent() {
+        UUID distributorId = UUID.randomUUID();
+        UUID manufacturerId = UUID.randomUUID();
+        UUID shipmentId = UUID.randomUUID();
+        UUID warehouseId = UUID.randomUUID();
+        UUID sourceId = UUID.randomUUID();
+        UUID offerId = UUID.randomUUID();
+        UUID poId = UUID.randomUUID();
+        Organization distributor = organization(distributorId, Organizationtype.DISTRIBUTOR);
+        Organization manufacturer = organization(manufacturerId, Organizationtype.MANUFACTURER);
+        Warehouse warehouse = new Warehouse();
+        warehouse.setId(warehouseId);
+        warehouse.setOrganization(distributor);
+        warehouse.setActive(true);
+        StockItem source = new StockItem();
+        source.setId(sourceId);
+        source.setOrganization(manufacturer);
+        source.setSku("SOURCE-1");
+        source.setName("Rice");
+        StockItem offer = new StockItem();
+        offer.setId(offerId);
+        offer.setOrganization(distributor);
+        offer.setWarehouse(warehouse);
+        offer.setSourceStockItem(source);
+        offer.setSku("RICE-1");
+        offer.setName("Rice");
+        offer.setQuantityOnHand(10);
+        PurchaseOrder po = new PurchaseOrder();
+        po.setId(poId);
+        po.setPurchaseOrderNumber("PO-17");
+        po.setBuyerOrganization(distributor);
+        po.setSupplierOrganization(manufacturer);
+        PurchaseOrderItem item = new PurchaseOrderItem();
+        item.setId(UUID.randomUUID());
+        item.setStockItem(source);
+        item.setDistributorOffer(offer);
+        item.setQuantity(5);
+        po.addItem(item);
+        PurchaseOrderShipment shipment = new PurchaseOrderShipment();
+        shipment.setId(shipmentId);
+        shipment.setPurchaseOrder(po);
+        shipment.setDestinationWarehouse(warehouse);
+        shipment.setStatus(com.example.distrobackend.Domain.enums.PurchaseOrderShipmentStatus.DELIVERED);
+        AuthenticatedUser actor = principal(UUID.randomUUID(), UserRole.DISTRIBUTOR_ADMIN, distributorId);
+        when(shipmentRepository.findByIdWithDetailsForUpdate(shipmentId)).thenReturn(Optional.of(shipment));
+        when(warehouseRepository.findByIdAndOrganization_IdForUpdate(warehouseId, distributorId))
+                .thenReturn(Optional.of(warehouse));
+        when(stockItemRepository.findByIdAndOrganizationIdForUpdateWithWarehouse(offerId, distributorId))
+                .thenReturn(Optional.of(offer));
+        when(shipmentRepository.save(any(PurchaseOrderShipment.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(purchaseOrderRepository.save(any(PurchaseOrder.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(userRepository.findByOrganization_IdAndRole(any(), any(), any()))
+                .thenReturn(org.springframework.data.domain.Page.empty());
+
+        var response = shipmentService.receive(actor, shipmentId, new ReceiveShipmentRequest("Short receipt", List.of(
+                new ReceiveShipmentRequest.Line(item.getId(), 2, 1, 2))));
+
+        assertThat(response.status()).isEqualTo(com.example.distrobackend.Domain.enums.PurchaseOrderShipmentStatus.RECEIVED);
+        assertThat(offer.getQuantityOnHand()).isEqualTo(12);
+        assertThat(response.receiptLines()).singleElement().satisfies(line -> {
+            assertThat(line.acceptedQuantity()).isEqualTo(2);
+            assertThat(line.damagedQuantity()).isEqualTo(1);
+            assertThat(line.missingQuantity()).isEqualTo(2);
+        });
+        verify(stockMovementRepository).save(any(StockMovement.class));
+
+        shipmentService.receive(actor, shipmentId, new ReceiveShipmentRequest("Retry", List.of()));
+        assertThat(offer.getQuantityOnHand()).isEqualTo(12);
+        verify(stockMovementRepository).save(any(StockMovement.class));
+    }
+
+    @Test
+    void dispatchedShipmentCannotBeCancelledReplacedOrDeductedTwice() {
+        UUID manufacturerId = UUID.randomUUID();
+        UUID distributorId = UUID.randomUUID();
+        UUID shipmentId = UUID.randomUUID();
+        UUID purchaseOrderId = UUID.randomUUID();
+        UUID sourceId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        Organization manufacturer = organization(manufacturerId, Organizationtype.MANUFACTURER);
+        Organization distributor = organization(distributorId, Organizationtype.DISTRIBUTOR);
+        Warehouse warehouse = new Warehouse();
+        warehouse.setId(UUID.randomUUID());
+        warehouse.setOrganization(distributor);
+        warehouse.setActive(true);
+
+        StockItem source = new StockItem();
+        source.setId(sourceId);
+        source.setOrganization(manufacturer);
+        source.setSku("SOURCE-1");
+        source.setName("Rice");
+        source.setQuantityOnHand(20);
+        source.setReservedQuantity(5);
+
+        PurchaseOrder purchaseOrder = new PurchaseOrder();
+        purchaseOrder.setId(purchaseOrderId);
+        purchaseOrder.setPurchaseOrderNumber("PO-42");
+        purchaseOrder.setBuyerOrganization(distributor);
+        purchaseOrder.setSupplierOrganization(manufacturer);
+        purchaseOrder.setStatus(PurchaseOrderStatus.APPROVED);
+        purchaseOrder.setTotalAmount(BigDecimal.valueOf(50));
+        purchaseOrder.setCurrency("KES");
+        purchaseOrder.setStockReserved(true);
+        PurchaseOrderItem line = new PurchaseOrderItem();
+        line.setId(UUID.randomUUID());
+        line.setStockItem(source);
+        line.setQuantity(5);
+        purchaseOrder.addItem(line);
+
+        PurchaseOrderShipment shipment = new PurchaseOrderShipment();
+        shipment.setId(shipmentId);
+        shipment.setPurchaseOrder(purchaseOrder);
+        shipment.setDestinationWarehouse(warehouse);
+        shipment.setStatus(PurchaseOrderShipmentStatus.READY_FOR_DISPATCH);
+        User actorUser = new User();
+        actorUser.setId(userId);
+        AuthenticatedUser actor = principal(userId, UserRole.MANUFACTURER_ADMIN, manufacturerId);
+
+        when(shipmentRepository.findByIdWithDetailsForUpdate(shipmentId)).thenReturn(Optional.of(shipment));
+        when(stockItemRepository.findByIdAndOrganizationIdForUpdate(sourceId, manufacturerId))
+                .thenReturn(Optional.of(source));
+        when(userRepository.getReferenceById(userId)).thenReturn(actorUser);
+        when(shipmentRepository.save(any(PurchaseOrderShipment.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(purchaseOrderRepository.save(any(PurchaseOrder.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(stockMovementRepository.save(any(StockMovement.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        shipmentService.updateStatus(actor, shipmentId,
+                new ShipmentStatusRequest(PurchaseOrderShipmentStatus.IN_TRANSIT, "Dispatched"));
+        assertThat(source.getQuantityOnHand()).isEqualTo(15);
+        assertThat(source.getReservedQuantity()).isZero();
+
+        assertThatThrownBy(() -> shipmentService.updateStatus(actor, shipmentId,
+                new ShipmentStatusRequest(PurchaseOrderShipmentStatus.CANCELLED, "Cancel after dispatch")))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("cannot move from IN_TRANSIT");
+        assertThat(shipment.getStatus()).isEqualTo(PurchaseOrderShipmentStatus.IN_TRANSIT);
+
+        shipmentService.updateStatus(actor, shipmentId,
+                new ShipmentStatusRequest(PurchaseOrderShipmentStatus.IN_TRANSIT, "Retry"));
+
+        PurchaseOrderSettlement settlement = new PurchaseOrderSettlement();
+        settlement.setStatus(SettlementStatus.SETTLED);
+        settlement.setAmount(BigDecimal.valueOf(50));
+        settlement.setCurrency("KES");
+        when(purchaseOrderRepository.findByIdForUpdate(purchaseOrderId)).thenReturn(Optional.of(purchaseOrder));
+        when(purchaseOrderRepository.findByIdWithItems(purchaseOrderId)).thenReturn(Optional.of(purchaseOrder));
+        when(settlementRepository.findByPurchaseOrderIdOrderByCreatedAtDesc(purchaseOrderId))
+                .thenReturn(List.of(settlement));
+        when(shipmentRepository.findByPurchaseOrderId(purchaseOrderId)).thenReturn(Optional.of(shipment));
+
+        assertThatThrownBy(() -> shipmentService.create(actor,
+                new CreateShipmentRequest(purchaseOrderId, warehouse.getId(), "REPLACEMENT", "Carrier")))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("A shipment already exists");
+
+        assertThat(source.getQuantityOnHand()).isEqualTo(15);
+        assertThat(source.getReservedQuantity()).isZero();
+        verify(stockMovementRepository, times(1)).save(any(StockMovement.class));
+    }
     private PurchaseOrder purchaseOrder(UUID purchaseOrderId, UUID manufacturerId) {
         PurchaseOrder purchaseOrder = new PurchaseOrder();
         Organization buyer = organization(UUID.randomUUID(), Organizationtype.DISTRIBUTOR);

@@ -3,6 +3,7 @@ package com.example.distrobackend.service;
 import com.example.distrobackend.Domain.entity.Invitation;
 import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.User;
+import com.example.distrobackend.Domain.entity.RiderProfile;
 import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.OtpPurpose;
 import com.example.distrobackend.Domain.enums.UserRole;
@@ -11,12 +12,14 @@ import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Util.SecretTokenService;
 import com.example.distrobackend.dto.AcceptInvitationRequest;
 import com.example.distrobackend.dto.CreateInvitationRequest;
+import com.example.distrobackend.dto.CreateDriverInvitationRequest;
 import com.example.distrobackend.dto.InvitationResponse;
 import com.example.distrobackend.dto.RegisterResponse;
 import com.example.distrobackend.repository.InvitationRepository;
 import com.example.distrobackend.repository.OrganizationRepository;
 import com.example.distrobackend.repository.UserRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
+import com.example.distrobackend.event.OnboardingEmailRequested;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -25,9 +28,12 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.context.ApplicationEventPublisher;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.TypedQuery;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.Optional;
 import java.util.UUID;
@@ -36,6 +42,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentCaptor.forClass;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -48,6 +57,8 @@ class InvitationServiceTest {
     @Mock private PasswordEncoder passwordEncoder;
     @Mock private OtpService otpService;
     @Mock private ApplicationEventPublisher eventPublisher;
+    @Mock private EntityManager entityManager;
+    @Mock private TypedQuery<Long> countQuery;
 
     private InvitationService invitationService;
     private Organization manufacturer;
@@ -59,6 +70,7 @@ class InvitationServiceTest {
                 passwordEncoder, otpService, eventPublisher);
         ReflectionTestUtils.setField(invitationService, "frontendBaseUrl", "https://app.example.test");
         ReflectionTestUtils.setField(invitationService, "invitationTtl", Duration.ofDays(7));
+        ReflectionTestUtils.setField(invitationService, "entityManager", entityManager);
 
         manufacturer = new Organization();
         manufacturer.setId(UUID.randomUUID());
@@ -103,6 +115,42 @@ class InvitationServiceTest {
         assertThat(result.response().role()).isEqualTo(UserRole.MANUFACTURER_ADMIN.name());
     }
 
+    @Test
+    void manufacturerDriverSaveCreatesInvitedAccountAndPublishesEmailRequest() {
+        UUID manufacturerId = manufacturer.getId();
+        UUID invitedUserId = UUID.randomUUID();
+        when(organizationRepository.findById(manufacturerId)).thenReturn(Optional.of(manufacturer));
+        when(userRepository.existsByEmail("driver@example.test")).thenReturn(false);
+        when(userRepository.existsByPhoneNumber("+254700000001")).thenReturn(false);
+        when(invitationRepository.existsByEmailIgnoreCaseAndOrganizationIdAndStatus(any(), any(), any()))
+                .thenReturn(false);
+        when(entityManager.createQuery(anyString(), eq(Long.class))).thenReturn(countQuery);
+        when(countQuery.setParameter(eq("nationalId"), any())).thenReturn(countQuery);
+        when(countQuery.getSingleResult()).thenReturn(0L);
+        when(passwordEncoder.encode(any())).thenReturn("encoded-password");
+        when(userRepository.save(any(User.class))).thenAnswer(invocation -> {
+            User user = invocation.getArgument(0);
+            user.setId(invitedUserId);
+            return user;
+        });
+        when(invitationRepository.save(any(Invitation.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        InvitationResponse response = invitationService.createDriver(
+                principal(UserRole.MANUFACTURER_ADMIN, manufacturerId, Organizationtype.MANUFACTURER),
+                new CreateDriverInvitationRequest("Driver One", "driver@example.test", "+254700000001",
+                        "DL-100", "NID-100", LocalDate.now().plusYears(1), null, "Fleet driver"));
+
+        assertThat(response.email()).isEqualTo("driver@example.test");
+        assertThat(response.status()).isEqualTo("PENDING");
+        var profileCaptor = forClass(RiderProfile.class);
+        verify(entityManager).persist(profileCaptor.capture());
+        assertThat(profileCaptor.getValue().getUserId()).isEqualTo(invitedUserId);
+        assertThat(profileCaptor.getValue().getNationalId()).isEqualTo("NID-100");
+        assertThat(profileCaptor.getValue().getLicenseExpiryDate()).isEqualTo(LocalDate.now().plusYears(1));
+        verify(eventPublisher).publishEvent(argThat((Object event) -> event instanceof OnboardingEmailRequested email
+                && email.recipient().equals("driver@example.test")));
+    }
     @Test
     void acceptingInvitationVerifiesEmailWithoutIssuingPhoneOtp() {
         String rawToken = "invitation-token";

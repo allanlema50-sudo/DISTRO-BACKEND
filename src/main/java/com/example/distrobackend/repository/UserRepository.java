@@ -23,6 +23,13 @@ public interface UserRepository  extends JpaRepository<User, UUID> {
     Optional<User> findByEmail(String email);
     Optional<User> findByEmailIgnoreCase(String email);
     Optional<User> findByPhoneNumber(String phoneNumber);
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select u from User u join fetch u.organization "
+            + "where u.id = :id and u.organization.id = :organizationId and u.role = :role")
+    Optional<User> findOrganizationDriverForUpdate(
+            @Param("id") UUID id,
+            @Param("organizationId") UUID organizationId,
+            @Param("role") UserRole role);
     List<User> findByRole(UserRole role);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select u from User u where u.id = :id")
@@ -72,6 +79,9 @@ public interface UserRepository  extends JpaRepository<User, UUID> {
     long countByStatus(com.example.distrobackend.Domain.enums.UserStatus status);
 
     long countByOrganization_Id(UUID organizationId);
+
+    long countByBaseWarehouse_IdAndStatus(
+            UUID warehouseId, com.example.distrobackend.Domain.enums.UserStatus status);
 
     @Query("select u.organization.id, count(u) from User u "
             + "where u.organization.id in :organizationIds group by u.organization.id")

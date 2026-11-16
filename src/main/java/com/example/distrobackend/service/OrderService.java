@@ -670,6 +670,7 @@ public class OrderService {
     }
 
     private OrderResponse mapToResponse(Order order) {
+        return com.example.distrobackend.mapper.OrderMapper.toResponse(order);
         List<OrderItemResponse> items = order.getOrderItems().stream().map(i -> new OrderItemResponse(
                 i.getId(),
                 i.getStockItem().getId(),

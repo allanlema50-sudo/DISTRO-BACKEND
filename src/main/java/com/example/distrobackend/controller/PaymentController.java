@@ -7,6 +7,7 @@ import com.example.distrobackend.dto.PaymentResponse;
 import com.example.distrobackend.dto.mpesa.MpesaCallbackRequest;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.service.PaymentService;
+import com.example.distrobackend.service.callbackhandling;
 import com.example.distrobackend.service.PaymentAdministrationService;
 import com.example.distrobackend.service.PurchaseOrderService;
 import jakarta.validation.Valid;
@@ -27,6 +28,7 @@ import org.springframework.data.domain.Pageable;
 public class PaymentController {
 
     private final PaymentService paymentService;
+    private final callbackhandling callbackHandling;
     private final PaymentAdministrationService paymentAdministrationService;
     private final com.example.distrobackend.service.PurchaseOrderService purchaseOrderService;
 
@@ -79,8 +81,7 @@ public class PaymentController {
     public ResponseEntity<String> mpesaCallback(
             @RequestHeader(value = "X-Mpesa-Callback-Secret", required = false) String callbackSecret,
             @RequestBody MpesaCallbackRequest callbackRequest) {
-        paymentService.processMpesaCallback(callbackSecret, callbackRequest);
-        return ResponseEntity.ok("{\"ResultCode\":0,\"ResultDesc\":\"Accepted\"}");
+        return ResponseEntity.ok(callbackHandling.handle(callbackSecret, callbackRequest));
     }
 
     @GetMapping("/{orderId}/status")

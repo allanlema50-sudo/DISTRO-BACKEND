@@ -23,19 +23,6 @@ public record PaymentResponse(
         String failureReason
 ) {
     public static PaymentResponse from(Payment payment) {
-        return new PaymentResponse(
-                payment.getId(),
-                payment.getOrder() != null ? payment.getOrder().getId() : null,
-                payment.getAmount(),
-                payment.getMethod(),
-                payment.getStatus(),
-                payment.getMpesaReceiptNumber(),
-                payment.getInitiatedAt(),
-                payment.getConfirmedAt(),
-                "CUSTOMER_ORDER",
-                payment.getMethod() == null ? null : payment.getMethod().name(),
-                payment.getCurrency(),
-                payment.getFailureReason()
-        );
+        return com.example.distrobackend.mapper.PaymentMapper.toResponse(payment);
     }
 }

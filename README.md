@@ -613,13 +613,19 @@ JWT contains the new role. Do not expose a public endpoint for assigning
 production deployment.
 
 For production, set `SPRING_PROFILES_ACTIVE=prod` and configure the real OTP
-provider variables. `OTP_PROVIDER=mailgun` sends OTPs through Mailgun's HTTPS
-API and works with the sandbox domain for up to five individually verified
-recipient addresses. Set `MAILGUN_API_KEY` and `MAILGUN_DOMAIN` in Render; use
+provider variables. `EMAIL_PROVIDER` selects the HTTPS transport for OTP mail
+and onboarding mail: `mailgun`, `brevo`, or `log`. `log` prints the email and
+OTP to the console and the application refuses to start with it unless the
+`local` profile is active. `OTP_PROVIDER=mailgun` sends OTPs through Mailgun's
+HTTPS API and works with the sandbox domain for up to five individually verified
+recipient addresses. Set `MAILGUN_API_KEY` and `MAILGUN_DOMAIN`; use
 `MAILGUN_API_BASE_URL=https://api.mailgun.net` for the US region or
-`https://api.eu.mailgun.net` for the EU region. Set `MAIL_ENABLED=true` to send
-post-approval activation links and invitations through the same Mailgun HTTPS
-API. The local profile logs OTP codes for development and must not be used for
+`https://api.eu.mailgun.net` for the EU region. `OTP_PROVIDER=brevo` with
+`EMAIL_PROVIDER=brevo` sends the same mail through Brevo's HTTP API
+(`BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, `BREVO_SENDER_NAME`). That path does
+not use SMTP, which Render's free tier blocks. Set `MAIL_ENABLED=true` to send
+post-approval activation links and invitations through the selected provider.
+The local profile logs OTP codes for development and must not be used for
 a live deployment.
 
 ### Platform administration API

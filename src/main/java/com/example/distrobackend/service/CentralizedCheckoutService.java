@@ -20,6 +20,13 @@ import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.web.client.RestTemplate;
+import org.springframework.http.*;
+import java.nio.charset.StandardCharsets;
+import java.time.format.DateTimeFormatter;
+import java.time.ZoneId;
+import java.util.Base64;
 
 @Service
 @RequiredArgsConstructor
@@ -36,6 +43,7 @@ public class CentralizedCheckoutService {
     private final OrganizationRepository organizationRepository;
     private final UserRepository userRepository;
     private final PurchaseOrderService purchaseOrderService;
+    @Qualifier("darajaRestTemplate") private final RestTemplate darajaRestTemplate;
 
     @Value("${logiflow.marketplace-checkout.enabled:false}") private boolean marketplaceCheckoutEnabled;
     @Value("${logiflow.demo-payments.enabled:false}") private boolean demoEnabled;
@@ -43,6 +51,13 @@ public class CentralizedCheckoutService {
     @Value("${logiflow.demo-payments.outcome:SUCCESS}") private String demoOutcome;
     @Value("${logiflow.demo-payments.confirmation-delay-seconds:3}") private long confirmationDelaySeconds;
     @Value("${spring.profiles.active:local}") private String activeProfiles;
+    @Value("${mpesa.base-url:https://sandbox.safaricom.co.ke}") private String mpesaBaseUrl;
+    @Value("${mpesa.consumer-key:}") private String mpesaConsumerKey;
+    @Value("${mpesa.consumer-secret:}") private String mpesaConsumerSecret;
+    @Value("${mpesa.shortcode:}") private String mpesaShortcode;
+    @Value("${mpesa.passkey:}") private String mpesaPasskey;
+    @Value("${mpesa.callback-url:}") private String mpesaCallbackUrl;
+    @Value("${mpesa.callback-secret:}") private String mpesaCallbackSecret;
 
     @PostConstruct
     void validateDemoConfiguration() {
@@ -62,16 +77,13 @@ public class CentralizedCheckoutService {
     public CheckoutResponse create(AuthenticatedUser actor, CreateCheckoutRequest request, String idempotencyKey) {
         requireDistributor(actor);
         if (!marketplaceCheckoutEnabled) throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "Marketplace checkout is disabled");
-        ensureDemoAuthorized(actor);
         String key = clean(idempotencyKey);
         if (key == null) throw new ApiException(ErrorCode.BAD_REQUEST, "Idempotency-Key header is required");
         if (key != null) {
             Checkout existing = checkoutRepository.findByBuyerOrganization_IdAndIdempotencyKey(actor.organizationId(), key).orElse(null);
             if (existing != null) return response(existing);
         }
-        if (request.supplierOrders().size() < 2) {
-            throw new ApiException(ErrorCode.BAD_REQUEST, "Centralized checkout requires products from at least two suppliers");
-        }
+        if (request.supplierOrders().isEmpty()) throw new ApiException(ErrorCode.BAD_REQUEST, "Checkout requires at least one supplier order");
         Set<UUID> suppliers = new HashSet<>();
         for (var supplierOrder : request.supplierOrders()) {
             if (!suppliers.add(supplierOrder.supplierOrganizationId())) {
@@ -151,14 +163,15 @@ public class CentralizedCheckoutService {
     public CheckoutResponse initiatePayment(AuthenticatedUser actor, UUID checkoutId, InitiateCheckoutPaymentRequest request,
                                             String idempotencyHeader) {
         requireDistributor(actor);
-        ensureDemoAuthorized(actor);
         Checkout checkout = checkoutRepository.findByIdAndBuyerOrganization_Id(checkoutId, actor.organizationId())
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Checkout not found"));
         String method = request.method().trim().toUpperCase(Locale.ROOT);
+        boolean demo = method.equals("DEMO");
+        if (demo) ensureDemoAuthorized(actor);
         PaymentMethod paymentMethod = switch (method) {
-            case "DEMO_MPESA" -> PaymentMethod.MPESA;
-            case "DEMO_CARD" -> PaymentMethod.CARD;
-            default -> throw new ApiException(ErrorCode.BAD_REQUEST, "method must be DEMO_MPESA or DEMO_CARD");
+            case "DEMO" -> PaymentMethod.OTHER;
+            case "MPESA_SANDBOX", "MPESA" -> PaymentMethod.MPESA;
+            default -> throw new ApiException(ErrorCode.BAD_REQUEST, "method must be MPESA_SANDBOX or DEMO");
         };
         CheckoutPayment existing = checkoutPaymentRepository.findByCheckout_Id(checkoutId).orElse(null);
         if (existing != null) {
@@ -177,14 +190,39 @@ public class CentralizedCheckoutService {
         payment.setStatus(CheckoutPaymentStatus.PENDING);
         payment.setAmount(checkout.getTotalAmount());
         payment.setCurrency(checkout.getCurrency());
-        payment.setDemo(true);
-        payment.setDemoLabel(DEMO_LABEL);
+        payment.setDemo(demo);
+        payment.setDemoLabel(demo ? DEMO_LABEL : null);
         payment.setIdempotencyKey(idempotencyKey);
-        payment.setProviderReference("DEMO-PENDING-" + UUID.randomUUID());
+        payment.setProviderReference(demo ? "DEMO-PENDING-" + UUID.randomUUID() : null);
         payment.setInitiatedAt(OffsetDateTime.now());
         checkoutPaymentRepository.save(payment);
+        if (!demo) initiateDaraja(payment, request.phoneNumber());
         checkout.setPayment(payment);
         return response(checkout);
+    }
+
+    private void initiateDaraja(CheckoutPayment payment, String phone) {
+        if (phone == null || phone.isBlank()) throw new ApiException(ErrorCode.BAD_REQUEST, "phoneNumber is required for M-Pesa Sandbox");
+        if (mpesaBaseUrl == null || !mpesaBaseUrl.startsWith("https://sandbox.safaricom.co.ke") || mpesaConsumerKey.isBlank() || mpesaConsumerSecret.isBlank() || mpesaShortcode.isBlank() || mpesaPasskey.isBlank() || mpesaCallbackUrl.isBlank() || mpesaCallbackSecret.isBlank())
+            throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "M-Pesa sandbox is not fully configured");
+        String tokenUrl = "https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials";
+        HttpHeaders authHeaders = new HttpHeaders();
+        authHeaders.setBasicAuth(mpesaConsumerKey, mpesaConsumerSecret);
+        ResponseEntity<Map> tokenResult = darajaRestTemplate.exchange(tokenUrl, HttpMethod.GET, new HttpEntity<>(authHeaders), Map.class);
+        Object accessToken = tokenResult.getBody() == null ? null : tokenResult.getBody().get("access_token");
+        if (accessToken == null) throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "Daraja sandbox authentication failed");
+        String timestamp = java.time.LocalDateTime.now(ZoneId.of("Africa/Nairobi")).format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
+        String password = Base64.getEncoder().encodeToString((mpesaShortcode + mpesaPasskey + timestamp).getBytes(StandardCharsets.UTF_8));
+        Map<String,Object> body = Map.of("BusinessShortCode",mpesaShortcode,"Password",password,"Timestamp",timestamp,"TransactionType","CustomerPayBillOnline","Amount",payment.getAmount().setScale(0,java.math.RoundingMode.CEILING).intValueExact(),"PartyA",phone,"PartyB",mpesaShortcode,"PhoneNumber",phone,"CallBackURL",mpesaCallbackUrl,"AccountReference",payment.getCheckout().getCheckoutReference(),"TransactionDesc","LogiFlow checkout");
+        HttpHeaders headers = new HttpHeaders(); headers.setBearerAuth(String.valueOf(accessToken)); headers.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<Map> result = darajaRestTemplate.postForEntity("https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest", new HttpEntity<>(body,headers), Map.class);
+        Map data=result.getBody();
+        if (data == null || data.get("CheckoutRequestID") == null || data.get("MerchantRequestID") == null || !"0".equals(String.valueOf(data.get("ResponseCode")))) throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "Daraja sandbox did not accept STK request");
+        payment.setMpesaCheckoutRequestId(String.valueOf(data.get("CheckoutRequestID")));
+        payment.setMpesaMerchantRequestId(String.valueOf(data.get("MerchantRequestID")));
+        payment.setProviderReference(String.valueOf(data.get("CheckoutRequestID")));
+        payment.setProviderPayload(Map.of("responseDescription", String.valueOf(data.getOrDefault("ResponseDescription", "Accepted"))));
+        checkoutPaymentRepository.save(payment);
     }
 
     
@@ -209,6 +247,35 @@ public class CentralizedCheckoutService {
         checkout.setStatus(CheckoutStatus.CANCELLED);
         checkoutRepository.save(checkout);
         return response(checkout);
+    }
+
+    @Transactional
+    public void processMpesaCallback(String suppliedSecret, com.example.distrobackend.dto.mpesa.MpesaCallbackRequest request) {
+        if (mpesaCallbackSecret.isBlank() || suppliedSecret == null || !java.security.MessageDigest.isEqual(mpesaCallbackSecret.getBytes(StandardCharsets.UTF_8), suppliedSecret.getBytes(StandardCharsets.UTF_8))) throw new ApiException(ErrorCode.UNAUTHENTICATED, "Invalid M-Pesa callback credentials");
+        var callback = request == null || request.getBody() == null ? null : request.getBody().getStkCallback();
+        if (callback == null || callback.getCheckoutRequestId() == null || callback.getResultCode() == null) throw new ApiException(ErrorCode.BAD_REQUEST, "Invalid M-Pesa callback");
+        CheckoutPayment payment = checkoutPaymentRepository.findByMpesaCheckoutRequestId(callback.getCheckoutRequestId()).orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Checkout payment not found"));
+        if (payment.getStatus() != CheckoutPaymentStatus.PENDING) return;
+        try {
+            String timestamp=java.time.LocalDateTime.now(ZoneId.of("Africa/Nairobi")).format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
+            String password=Base64.getEncoder().encodeToString((mpesaShortcode+mpesaPasskey+timestamp).getBytes(StandardCharsets.UTF_8));
+            Map<String,String> query=Map.of("BusinessShortCode",mpesaShortcode,"Password",password,"Timestamp",timestamp,"CheckoutRequestID",callback.getCheckoutRequestId());
+            HttpHeaders headers=new HttpHeaders(); headers.setBasicAuth(mpesaConsumerKey,mpesaConsumerSecret);
+            ResponseEntity<Map> token=darajaRestTemplate.exchange("https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials",HttpMethod.GET,new HttpEntity<>(headers),Map.class);
+            HttpHeaders queryHeaders=new HttpHeaders(); queryHeaders.setBearerAuth(String.valueOf(token.getBody().get("access_token"))); queryHeaders.setContentType(MediaType.APPLICATION_JSON);
+            ResponseEntity<Map> verified=darajaRestTemplate.postForEntity("https://sandbox.safaricom.co.ke/mpesa/stkpushquery/v1/query",new HttpEntity<>(query,queryHeaders),Map.class);
+            if(verified.getBody()==null || !String.valueOf(callback.getResultCode()).equals(String.valueOf(verified.getBody().get("ResultCode")))) throw new ApiException(ErrorCode.BAD_REQUEST,"M-Pesa callback could not be reconciled");
+        } catch (ApiException e) { throw e; } catch (Exception e) { throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED,"M-Pesa payment verification failed"); }
+        payment.setMpesaMerchantRequestId(callback.getMerchantRequestId());
+        payment.setConfirmedAt(OffsetDateTime.now());
+        Checkout checkout=payment.getCheckout();
+        if(callback.getResultCode()==0) {
+            String amount=null, receipt=null;
+            if(callback.getCallbackMetadata()!=null && callback.getCallbackMetadata().getItem()!=null) for(var item:callback.getCallbackMetadata().getItem()) { if("Amount".equals(item.getName())) amount=String.valueOf(item.getValue()); if("MpesaReceiptNumber".equals(item.getName())) receipt=String.valueOf(item.getValue()); }
+            if(amount==null || new BigDecimal(amount).compareTo(payment.getAmount().setScale(0,java.math.RoundingMode.CEILING))!=0 || receipt==null) throw new ApiException(ErrorCode.BAD_REQUEST,"M-Pesa success details do not match checkout");
+            payment.setStatus(CheckoutPaymentStatus.SUCCESS); payment.setProviderReference(receipt); checkout.setStatus(CheckoutStatus.PAID); recordAllocations(payment);
+        } else { payment.setStatus(callback.getResultCode()==1032 ? CheckoutPaymentStatus.CANCELLED : CheckoutPaymentStatus.FAILED); payment.setFailureReason(callback.getResultDesc()); checkout.setStatus(payment.getStatus()==CheckoutPaymentStatus.CANCELLED?CheckoutStatus.CANCELLED:CheckoutStatus.PAYMENT_FAILED); cancelAndRelease(checkout); }
+        checkoutPaymentRepository.save(payment); checkoutRepository.save(checkout);
     }
     public SupplierFinancialStatusResponse supplierFinancialStatus(AuthenticatedUser actor, UUID purchaseOrderId) {
         requireManufacturer(actor);
@@ -251,7 +318,7 @@ public class CentralizedCheckoutService {
         if (!demoEnabled || Arrays.stream(activeProfiles.split(",")).map(String::trim)
                 .anyMatch(p -> p.equalsIgnoreCase("prod") || p.equalsIgnoreCase("production"))) return;
         OffsetDateTime cutoff = OffsetDateTime.now().minusSeconds(confirmationDelaySeconds);
-        for (CheckoutPayment payment : checkoutPaymentRepository.findByStatusAndInitiatedAtBefore(CheckoutPaymentStatus.PENDING, cutoff)) {
+        for (CheckoutPayment payment : checkoutPaymentRepository.findByDemoTrueAndStatusAndInitiatedAtBefore(CheckoutPaymentStatus.PENDING, cutoff)) {
             Checkout checkout = payment.getCheckout();
             String outcome = demoOutcome.toUpperCase(Locale.ROOT);
             payment.setProviderReference("DEMO-" + UUID.randomUUID().toString().toUpperCase(Locale.ROOT));
@@ -320,7 +387,7 @@ public class CentralizedCheckoutService {
     private CheckoutResponse response(Checkout checkout) {
         CheckoutPayment payment = checkout.getPayment();
         CheckoutResponse.Payment paymentResponse = payment == null ? null : new CheckoutResponse.Payment(
-                payment.getId(), payment.isDemo() ? "DEMO_" + payment.getMethod().name() : payment.getMethod().name(),
+                payment.getId(), payment.isDemo() ? "DEMO" : payment.getMethod().name(),
                 payment.getStatus().name(), payment.getProviderReference(), payment.isDemo(), payment.getDemoLabel(), payment.getInitiatedAt(), payment.getConfirmedAt());
         List<CheckoutResponse.SupplierOrder> orderResponses = purchaseOrderRepository.findByCheckout_Id(checkout.getId()).stream().map(this::supplierOrder).toList();
         List<CheckoutResponse.Allocation> allocations = payment == null ? List.of()

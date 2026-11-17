@@ -42,7 +42,7 @@ class CentralizedCheckoutServiceTest {
   ReflectionTestUtils.setField(service,"confirmationDelaySeconds",0L);
   Checkout checkout=new Checkout(); checkout.setId(UUID.randomUUID()); checkout.setTotalAmount(new BigDecimal("5000000.00")); checkout.setCurrency("KES");
   CheckoutPayment payment=new CheckoutPayment(); payment.setId(UUID.randomUUID()); payment.setCheckout(checkout); payment.setAmount(checkout.getTotalAmount()); payment.setCurrency("KES"); payment.setStatus(CheckoutPaymentStatus.PENDING); payment.setDemo(true); payment.setInitiatedAt(OffsetDateTime.now().minusMinutes(1));
-  when(checkoutPaymentRepository.findByStatusAndInitiatedAtBefore(eq(CheckoutPaymentStatus.PENDING),any())).thenReturn(List.of(payment));
+  when(checkoutPaymentRepository.findByDemoTrueAndStatusAndInitiatedAtBefore(eq(CheckoutPaymentStatus.PENDING),any())).thenReturn(List.of(payment));
   List<PurchaseOrder> orders=List.of(order(checkout,"1000000.00"),order(checkout,"1500000.00"),order(checkout,"2500000.00"));
   when(purchaseOrderRepository.findByCheckout_Id(checkout.getId())).thenReturn(orders);
   when(allocationRepository.save(any(PaymentAllocation.class))).thenAnswer(invocation->invocation.getArgument(0));
@@ -83,9 +83,9 @@ class CentralizedCheckoutServiceTest {
   when(checkoutPaymentRepository.findByCheckout_Id(checkout.getId())).thenReturn(java.util.Optional.empty());
   when(purchaseOrderRepository.findByCheckout_Id(checkout.getId())).thenReturn(List.of());
   var actor=new com.example.distrobackend.security.AuthenticatedUser(UUID.randomUUID(),UserRole.DISTRIBUTOR_ADMIN,buyerId,Organizationtype.DISTRIBUTOR,java.time.Instant.now().plusSeconds(60));
-  CheckoutResponse result=service.initiatePayment(actor,checkout.getId(),new com.example.distrobackend.dto.InitiateCheckoutPaymentRequest("DEMO_MPESA","payment-key"),"payment-key-1");
+  CheckoutResponse result=service.initiatePayment(actor,checkout.getId(),new com.example.distrobackend.dto.InitiateCheckoutPaymentRequest("DEMO","payment-key"),"payment-key-1");
   assertThat(result.payment()).isNotNull();
-  assertThat(result.payment().method()).isEqualTo("DEMO_MPESA");
+  assertThat(result.payment().method()).isEqualTo("DEMO");
   assertThat(result.payment().status()).isEqualTo("PENDING");
   assertThat(result.payment().demoLabel()).isEqualTo("DEMO \u2014 NO MONEY TRANSFERRED");
   assertThat(result.payment().providerReference()).startsWith("DEMO-PENDING-");

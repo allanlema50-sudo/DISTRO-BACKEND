@@ -9,5 +9,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface CheckoutPaymentRepository extends JpaRepository<CheckoutPayment, UUID> {
  Optional<CheckoutPayment> findByCheckout_Id(UUID checkoutId);
  List<CheckoutPayment> findByStatusAndInitiatedAtBefore(CheckoutPaymentStatus status, OffsetDateTime before);
+ List<CheckoutPayment> findByDemoTrueAndStatusAndInitiatedAtBefore(CheckoutPaymentStatus status, OffsetDateTime before);
  Optional<CheckoutPayment> findByIdAndCheckout_Id(UUID paymentId, UUID checkoutId);
+ Optional<CheckoutPayment> findByMpesaCheckoutRequestId(String checkoutRequestId);
 }

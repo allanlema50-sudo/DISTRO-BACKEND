@@ -142,7 +142,7 @@ public class ProductAuthorizationService {
         String title = request.status() == ProductAuthorizationStatus.APPROVED
                 ? "Product authorization approved" : "Product authorization updated";
         String message = request.status() == ProductAuthorizationStatus.APPROVED
-                ? "The manufacturer approved your product authorization request. You may now create a distributor offer and purchase order."
+                ? "The manufacturer approved your product authorization request. You may now purchase this product directly."
                 : "The manufacturer changed your product authorization request to " + request.status() + ".";
         userRepository.findByOrganization_IdAndRole(
                         authorization.getDistributorOrganization().getId(),

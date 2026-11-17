@@ -12,6 +12,8 @@ public record PurchaseOrderResponse(
         String purchaseOrderNumber,
         UUID buyerOrganizationId,
         UUID supplierOrganizationId,
+        String buyerOrganizationName,
+        String supplierOrganizationName,
         PurchaseOrderStatus status,
         BigDecimal totalAmount,
         String currency,

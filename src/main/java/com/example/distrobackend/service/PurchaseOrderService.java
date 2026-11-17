@@ -71,7 +71,9 @@ public class PurchaseOrderService {
         purchaseOrder.setBuyerOrganization(buyer);
         purchaseOrder.setSupplierOrganization(supplier);
         purchaseOrder.setCreatedBy(userRepository.getReferenceById(actor.userId()));
-        purchaseOrder.setStatus(PurchaseOrderStatus.SUBMITTED);
+        // Distribution authorization is the manufacturer's commercial approval.
+        // A purchase created against that authorization is payable immediately.
+        purchaseOrder.setStatus(PurchaseOrderStatus.APPROVED);
         purchaseOrder.setSubmittedAt(OffsetDateTime.now());
 
         BigDecimal total = BigDecimal.ZERO;
@@ -273,6 +275,7 @@ public class PurchaseOrderService {
         return new PurchaseOrderResponse(
                 purchaseOrder.getId(), purchaseOrder.getPurchaseOrderNumber(),
                 purchaseOrder.getBuyerOrganization().getId(), purchaseOrder.getSupplierOrganization().getId(),
+                displayName(purchaseOrder.getBuyerOrganization()), displayName(purchaseOrder.getSupplierOrganization()),
                 purchaseOrder.getStatus(), purchaseOrder.getTotalAmount(), purchaseOrder.getCurrency(),
                 purchaseOrder.getRejectionReason(), purchaseOrder.getSubmittedAt(),
                 purchaseOrder.getReviewedAt(), purchaseOrder.getFulfilledAt(),
@@ -285,6 +288,11 @@ public class PurchaseOrderService {
                                 .multiply(BigDecimal.valueOf(item.getQuantity())))).toList(),
                 settlementRepository.findByPurchaseOrderIdOrderByCreatedAtDesc(purchaseOrder.getId())
                         .stream().map(this::toSettlementResponse).toList());
+    }
+
+    private String displayName(Organization organization) {
+        return organization == null || organization.getName() == null || organization.getName().isBlank()
+                ? "Organization details unavailable" : organization.getName();
     }
 
     private void validateOfferForSource(StockItem offer, StockItem source, Organization buyer) {

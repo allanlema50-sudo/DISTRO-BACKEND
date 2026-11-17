@@ -13,6 +13,8 @@ public record PurchaseOrderShipmentResponse(
         String purchaseOrderNumber,
         UUID buyerOrganizationId,
         UUID supplierOrganizationId,
+        String buyerOrganizationName,
+        String supplierOrganizationName,
         UUID destinationWarehouseId,
         PurchaseOrderShipmentStatus status,
         String trackingNumber,
@@ -34,6 +36,8 @@ public record PurchaseOrderShipmentResponse(
                 shipment.getPurchaseOrder().getPurchaseOrderNumber(),
                 shipment.getPurchaseOrder().getBuyerOrganization().getId(),
                 shipment.getPurchaseOrder().getSupplierOrganization().getId(),
+                displayName(shipment.getPurchaseOrder().getBuyerOrganization().getName()),
+                displayName(shipment.getPurchaseOrder().getSupplierOrganization().getName()),
                 shipment.getDestinationWarehouse().getId(),
                 shipment.getStatus(),
                 shipment.getTrackingNumber(),
@@ -52,5 +56,9 @@ public record PurchaseOrderShipmentResponse(
                         line.getPurchaseOrderItem().getStockItem().getName(),
                         line.getExpectedQuantity(), line.getAcceptedQuantity(),
                         line.getDamagedQuantity(), line.getMissingQuantity())).toList());
+    }
+
+    private static String displayName(String name) {
+        return name == null || name.isBlank() ? "Organization details unavailable" : name;
     }
 }

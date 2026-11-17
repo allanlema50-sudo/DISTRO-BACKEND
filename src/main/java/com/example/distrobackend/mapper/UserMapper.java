@@ -14,7 +14,7 @@ public class UserMapper {
         Organization org = user.getOrganization();
         return new UserResponse(user.getId(), user.getFullName(), user.getEmail(), user.getPhoneNumber(),
                 user.getRole(), org == null ? null : org.getId(), org == null ? null : org.getName(),
-                org == null ? null : org.getType(), user.isPhoneVerified(), user.getStatus(),
+                org == null ? null : org.getType(), user.isPhoneVerified(), user.isEmailVerified(), user.getStatus(),
                 user.getJobTitle(), user.getBaseWarehouse() == null ? null : user.getBaseWarehouse().getId());
     }
 }

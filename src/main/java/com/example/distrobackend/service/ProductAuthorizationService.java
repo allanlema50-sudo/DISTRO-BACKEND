@@ -27,6 +27,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -71,14 +72,16 @@ public class ProductAuthorizationService {
                     "Authorization requests must target a published manufacturer product");
         }
         Organization manufacturer = product.getOrganization();
-        DistributorProductAuthorization authorization = authorizationRepository
-                .findByProduct_IdAndDistributorOrganization_Id(product.getId(), distributor.getId())
-                .orElseGet(DistributorProductAuthorization::new);
-        if (authorization.getStatus() == ProductAuthorizationStatus.PENDING
-                || authorization.getStatus() == ProductAuthorizationStatus.APPROVED) {
+        Optional<DistributorProductAuthorization> existingAuthorization = authorizationRepository
+                .findByProduct_IdAndDistributorOrganization_Id(product.getId(), distributor.getId());
+        if (existingAuthorization.isPresent()
+                && (existingAuthorization.get().getStatus() == ProductAuthorizationStatus.PENDING
+                || existingAuthorization.get().getStatus() == ProductAuthorizationStatus.APPROVED)) {
             throw new ApiException(ErrorCode.CONFLICT,
                     "An active authorization request already exists for this product");
         }
+        DistributorProductAuthorization authorization = existingAuthorization.orElseGet(
+                DistributorProductAuthorization::new);
         authorization.setProduct(product);
         authorization.setManufacturerOrganization(manufacturer);
         authorization.setDistributorOrganization(distributor);

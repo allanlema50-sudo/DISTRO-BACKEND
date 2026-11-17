@@ -15,6 +15,7 @@ import com.example.distrobackend.dto.CreateDriverInvitationRequest;
 import com.example.distrobackend.dto.DriverRegistrationRequest;
 import com.example.distrobackend.dto.DriverLocationRequest;
 import com.example.distrobackend.dto.DriverResponse;
+import com.example.distrobackend.dto.DriverSelfProfileResponse;
 import com.example.distrobackend.dto.UpdateDriverAvailabilityRequest;
 import com.example.distrobackend.dto.UpdateDriverRequest;
 import com.example.distrobackend.dto.UpdateUserStatusRequest;
@@ -108,8 +109,20 @@ public class DriverService {
     }
 
     @Transactional
+    public void revokeInvitation(AuthenticatedUser actor, UUID driverId) {
+        requireOrganizationAdmin(actor);
+        Invitation invitation = invitationRepository.findTopByInvitedUser_IdOrderByCreatedAtDesc(driverId)
+                .orElseThrow(() -> new ApiException(ErrorCode.INVITATION_NOT_FOUND));
+        if (invitation.getInvitedUser() == null
+                || invitation.getInvitedUser().getRole() != UserRole.DRIVER) {
+            throw new ApiException(ErrorCode.INVITATION_NOT_FOUND);
+        }
+        invitationService.revoke(actor, invitation.getId());
+    }
+
+    @Transactional
     public Page<DriverResponse> list(AuthenticatedUser actor, Pageable pageable) {
-        UUID organizationId = requireDistributor(actor);
+        UUID organizationId = requireDriverOrganization(actor);
         return userRepository.findByOrganization_IdAndRole(organizationId, UserRole.DRIVER, pageable)
                 .map(user -> DriverResponse.from(user, ensureProfile(user)));
     }
@@ -122,7 +135,7 @@ public class DriverService {
         if (actor != null && actor.role() == UserRole.SUPER_ADMIN) {
             organizationId = requestedOrganizationId;
         } else {
-            organizationId = requireDistributor(actor);
+            organizationId = requireDriverOrganization(actor);
             if (requestedOrganizationId != null && !requestedOrganizationId.equals(organizationId)) {
                 throw new ApiException(ErrorCode.ACCESS_DENIED);
             }
@@ -172,6 +185,18 @@ public class DriverService {
         }
         User driver = findDriver(actor, driverId);
         return DriverResponse.from(driver, ensureProfile(driver), actor.role() != UserRole.DRIVER);
+    }
+
+    @Transactional(readOnly = true)
+    public DriverSelfProfileResponse getMyProfile(AuthenticatedUser actor) {
+        if (actor == null || actor.role() != UserRole.DRIVER) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        User driver = userRepository.findById(actor.userId())
+                .filter(user -> user.getRole() == UserRole.DRIVER)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Driver not found"));
+        RiderProfile profile = riderProfileRepository.findById(actor.userId()).orElse(null);
+        return DriverSelfProfileResponse.from(driver, profile);
     }
 
     @Transactional
@@ -277,7 +302,7 @@ public class DriverService {
                     .filter(user -> user.getRole() == UserRole.DRIVER)
                     .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Driver not found"));
         }
-        UUID organizationId = requireDistributor(actor);
+        UUID organizationId = requireDriverOrganization(actor);
         User driver = userRepository.findWithOrganizationById(driverId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Driver not found"));
         if (driver.getRole() != UserRole.DRIVER || driver.getOrganization() == null
@@ -294,7 +319,7 @@ public class DriverService {
                     .filter(user -> user.getRole() == UserRole.DRIVER)
                     .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Driver not found"));
         }
-        UUID organizationId = requireDistributor(actor);
+        UUID organizationId = requireDriverOrganization(actor);
         User driver = userRepository.findByIdForUpdate(driverId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Driver not found"));
         if (driver.getRole() != UserRole.DRIVER || driver.getOrganization() == null
@@ -316,9 +341,13 @@ public class DriverService {
     }
 
     private RiderProfile persistNewProfile(RiderProfile profile) {
-        // RiderProfile derives its ID from User through @MapsId. Spring Data's
-        // save() can classify that derived ID as an existing entity and call
-        // merge(), which fails for a new profile. Persist explicitly instead.
+        // Hibernate's registration failure reported a RiderProfile with a null
+        // identifier while processing its @MapsId one-to-one association. Set
+        // the derived key from the already-persisted User before writing it.
+        if (profile.getUser() == null || profile.getUser().getId() == null) {
+            throw new IllegalStateException("A rider profile requires a persisted user");
+        }
+        profile.setUserId(profile.getUser().getId());
         entityManager.persist(profile);
         return profile;
     }
@@ -330,17 +359,18 @@ public class DriverService {
         return actor.organizationId();
     }
 
-    private static UUID requireDistributor(AuthenticatedUser actor) {
+    private static UUID requireDriverOrganization(AuthenticatedUser actor) {
         UUID organizationId = requireOrganization(actor);
-        if (actor.organizationType() != Organizationtype.DISTRIBUTOR) {
+        if (actor.organizationType() != Organizationtype.DISTRIBUTOR
+                && actor.organizationType() != Organizationtype.MANUFACTURER) {
             throw new ApiException(ErrorCode.ACCESS_DENIED,
-                    "Driver operations are available only to distributor organizations");
+                    "Driver operations are available only to manufacturer or distributor organizations");
         }
         return organizationId;
     }
 
     private static void requireOrganizationAdmin(AuthenticatedUser actor) {
-        requireDistributor(actor);
+        requireDriverOrganization(actor);
         if (!isOrganizationAdmin(actor)) {
             throw new ApiException(ErrorCode.ACCESS_DENIED);
         }

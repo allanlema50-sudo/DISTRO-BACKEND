@@ -12,7 +12,14 @@ public record ProductAuthorizationResponse(
         UUID manufacturerOrganizationId,
         UUID distributorOrganizationId,
         ProductAuthorizationStatus status,
+        String requestNote,
         String decisionNote,
+        String targetMarket,
+        String salesChannels,
+        String geographicalCoverage,
+        String distributionStrategy,
+        java.math.BigDecimal agreedWholesalePrice,
+        Integer minimumOrderQuantity,
         OffsetDateTime createdAt,
         OffsetDateTime decidedAt
 ) {
@@ -23,7 +30,14 @@ public record ProductAuthorizationResponse(
                 authorization.getManufacturerOrganization().getId(),
                 authorization.getDistributorOrganization().getId(),
                 authorization.getStatus(),
+                authorization.getRequestNote(),
                 authorization.getDecisionNote(),
+                authorization.getTargetMarket(),
+                authorization.getSalesChannels(),
+                authorization.getGeographicalCoverage(),
+                authorization.getDistributionStrategy(),
+                authorization.getAgreedWholesalePrice(),
+                authorization.getMinimumOrderQuantity(),
                 authorization.getCreatedAt(),
                 authorization.getDecidedAt());
     }

@@ -7,6 +7,8 @@ public record OrderItemResponse(
         UUID id,
         UUID stockItemId,
         int quantity,
+        int pickedQuantity,
+        int packedQuantity,
         BigDecimal unitPrice,
         BigDecimal lineTotal
 ) {}

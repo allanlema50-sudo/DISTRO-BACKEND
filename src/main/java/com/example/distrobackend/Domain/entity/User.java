@@ -57,6 +57,13 @@ public class User {
     @JoinColumn(name = "organization_id")
     private Organization organization;
 
+    @Column(name = "job_title", length = 100)
+    private String jobTitle;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "base_warehouse_id")
+    private Warehouse baseWarehouse;
+
     @Column(name = "is_phone_verified", nullable = false)
     private boolean phoneVerified = false;
 

@@ -5,12 +5,14 @@ import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.repository.UserRepository;
+import com.example.distrobackend.security.AuthenticatedUser;
 import io.jsonwebtoken.Claims;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.core.Authentication;
 
 import java.time.Instant;
 import java.util.Date;
@@ -56,12 +58,16 @@ class JwtAuthenticationServiceTest {
     }
 
     @Test
-    void rejectsDriverTokenWithoutOrganizationClaims() {
-        stubClaims(UUID.randomUUID(), UserRole.DRIVER, null, null);
+    void acceptsPlatformPoolDriverTokenWithoutOrganizationClaims() {
+        UUID driverId = UUID.randomUUID();
+        stubClaims(driverId, UserRole.DRIVER, null, null);
+        stubActiveUser(driverId, UserRole.DRIVER, null, null);
 
-        assertThatThrownBy(() -> authenticationService.authenticateBearer("Bearer token"))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Drivers must belong to an organization");
+        Authentication authentication = authenticationService.authenticateBearer("Bearer token");
+
+        AuthenticatedUser principal = (AuthenticatedUser) authentication.getPrincipal();
+        assertThat(principal.role()).isEqualTo(UserRole.DRIVER);
+        assertThat(principal.organizationId()).isNull();
     }
 
     @Test

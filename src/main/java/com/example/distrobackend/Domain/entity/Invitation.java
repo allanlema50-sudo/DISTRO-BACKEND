@@ -34,6 +34,13 @@ public class Invitation {
     @JoinColumn(name = "invited_user_id")
     private User invitedUser;
 
+    @Column(name = "job_title", length = 100)
+    private String jobTitle;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "base_warehouse_id")
+    private Warehouse baseWarehouse;
+
     @Column(name = "driver_license_number", length = 50)
     private String driverLicenseNumber;
 

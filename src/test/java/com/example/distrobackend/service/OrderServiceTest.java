@@ -3,11 +3,14 @@ package com.example.distrobackend.service;
 import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.Order;
 import com.example.distrobackend.Domain.entity.OrderItem;
+import com.example.distrobackend.Domain.entity.StockMovement;
 import com.example.distrobackend.Domain.entity.Payment;
 import com.example.distrobackend.Domain.entity.StockItem;
 import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.entity.Warehouse;
 import com.example.distrobackend.Domain.enums.Organizationtype;
+import com.example.distrobackend.Domain.enums.UserRole;
+import com.example.distrobackend.Domain.enums.UserStatus;
 import com.example.distrobackend.Exception.InsufficientStockException;
 import com.example.distrobackend.dto.OrderItemRequest;
 import com.example.distrobackend.dto.OrderRequest;
@@ -15,7 +18,10 @@ import com.example.distrobackend.repository.OrderRepository;
 import com.example.distrobackend.repository.OrganizationRepository;
 import com.example.distrobackend.repository.PaymentRepository;
 import com.example.distrobackend.repository.StockItemRepository;
+import com.example.distrobackend.repository.StockMovementRepository;
+import com.example.distrobackend.repository.StockLocationRepository;
 import com.example.distrobackend.repository.UserRepository;
+import com.example.distrobackend.security.AuthenticatedUser;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -26,6 +32,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -46,6 +53,8 @@ class OrderServiceTest {
 
     @Mock private OrderRepository orderRepository;
     @Mock private StockItemRepository stockItemRepository;
+    @Mock private StockMovementRepository stockMovementRepository;
+    @Mock private StockLocationRepository stockLocationRepository;
     @Mock private UserRepository userRepository;
     @Mock private OrganizationRepository organizationRepository;
     @Mock private PaymentRepository paymentRepository;
@@ -114,6 +123,51 @@ class OrderServiceTest {
     }
 
     @Test
+    void distributorCannotCreateAnOrderForAnotherOrganization() {
+        AuthenticatedUser actor = new AuthenticatedUser(
+                UUID.randomUUID(), UserRole.DISTRIBUTOR_ADMIN, distributorId,
+                Organizationtype.DISTRIBUTOR, Instant.now().plusSeconds(300));
+        OrderRequest request = new OrderRequest(
+                UUID.randomUUID(), "1 Main Street", null, null,
+                List.of(new OrderItemRequest(stockItemId, 1)), customerId);
+
+        assertThatThrownBy(() -> orderService.createOrderForDistributor(actor, request))
+                .isInstanceOf(com.example.distrobackend.Exception.ApiException.class)
+                .hasMessageContaining("distributor's organization");
+
+        verify(userRepository, never()).findById(any());
+    }
+
+    @Test
+    void distributorCanCreateAnOrderForAnExistingLinkedCustomer() {
+        AuthenticatedUser actor = new AuthenticatedUser(
+                UUID.randomUUID(), UserRole.DISTRIBUTOR_STAFF, distributorId,
+                Organizationtype.DISTRIBUTOR, Instant.now().plusSeconds(300));
+        customer.setRole(UserRole.CUSTOMER);
+        customer.setStatus(UserStatus.ACTIVE);
+
+        when(userRepository.findById(customerId)).thenReturn(Optional.of(customer));
+        when(orderRepository.existsByOrganization_IdAndCustomer_Id(distributorId, customerId))
+                .thenReturn(true);
+        when(platformSettingsService.resolveDeliveryFee()).thenReturn(BigDecimal.ZERO);
+        when(userRepository.findByIdForUpdate(customerId)).thenReturn(Optional.of(customer));
+        when(organizationRepository.findById(distributorId)).thenReturn(Optional.of(distributor));
+        when(stockItemRepository.findByIdForUpdate(stockItemId)).thenReturn(Optional.of(offer));
+        when(orderRepository.getNextOrderSequence()).thenReturn(43L);
+        when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        OrderRequest request = new OrderRequest(
+                null, "1 Main Street", null, null,
+                List.of(new OrderItemRequest(stockItemId, 2)), customerId);
+
+        var response = orderService.createOrderForDistributor(actor, request);
+
+        assertThat(response.customerId()).isEqualTo(customerId);
+        assertThat(response.organizationId()).isEqualTo(distributorId);
+        assertThat(offer.getReservedQuantity()).isEqualTo(2);
+    }
+
+    @Test
     void insufficientStockRejectsOrderAndNotifiesDistributor() {
         when(userRepository.findByIdForUpdate(customerId)).thenReturn(Optional.of(customer));
         when(organizationRepository.findById(distributorId)).thenReturn(Optional.of(distributor));
@@ -132,6 +186,155 @@ class OrderServiceTest {
                 eq("CUSTOMER_ORDER_ATTEMPT"),
                 isNull());
         verify(orderRepository, never()).save(any(Order.class));
+    }
+
+    @Test
+    void paymentConfirmationKeepsStockReservedUntilTripDispatch() {
+        Order order = new Order();
+        order.setId(UUID.randomUUID());
+        order.setStatus(com.example.distrobackend.Domain.enums.OrderStatus.PENDING);
+        OrderItem line = new OrderItem();
+        line.setStockItem(offer);
+        line.setQuantity(3);
+        line.setStockCheckStatus("RESERVED");
+        order.addOrderItem(line);
+        offer.setReservedQuantity(3);
+        when(orderRepository.findByIdWithItemsForUpdate(order.getId())).thenReturn(Optional.of(order));
+        when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        orderService.confirmPaidOrder(order.getId());
+
+        assertThat(order.getStatus()).isEqualTo(com.example.distrobackend.Domain.enums.OrderStatus.CONFIRMED);
+        assertThat(offer.getQuantityOnHand()).isEqualTo(10);
+        assertThat(offer.getReservedQuantity()).isEqualTo(3);
+        assertThat(line.getStockCheckStatus()).isEqualTo("RESERVED");
+        verify(stockMovementRepository, never()).save(any());
+    }
+
+    @Test
+    void tripDispatchDeductsReservedStockAndRecordsOneSaleMovement() {
+        UUID orderId = UUID.randomUUID();
+        Order order = new Order();
+        order.setId(orderId);
+        order.setStatus(com.example.distrobackend.Domain.enums.OrderStatus.AWAITING_DISPATCH);
+        order.setOrganization(distributor);
+        order.setCustomer(customer);
+        order.setOrderNumber("ORD-TEST");
+        order.setSubtotalAmount(BigDecimal.ZERO);
+        order.setDeliveryFee(BigDecimal.ZERO);
+        order.setTotalAmount(BigDecimal.ZERO);
+        order.setPlacedAt(OffsetDateTime.now());
+        OrderItem line = new OrderItem();
+        line.setStockItem(offer);
+        line.setQuantity(3);
+        line.setUnitPrice(BigDecimal.ONE);
+        line.setStockCheckStatus("RESERVED");
+        order.addOrderItem(line);
+        offer.setReservedQuantity(3);
+        User staff = new User();
+        staff.setId(UUID.randomUUID());
+        AuthenticatedUser actor = new AuthenticatedUser(staff.getId(), UserRole.DISTRIBUTOR_ADMIN,
+                distributorId, Organizationtype.DISTRIBUTOR, Instant.now().plusSeconds(300));
+        when(orderRepository.findByIdWithItemsForUpdate(orderId)).thenReturn(Optional.of(order));
+        when(userRepository.findById(staff.getId())).thenReturn(Optional.of(staff));
+        when(stockItemRepository.findByIdForUpdate(stockItemId)).thenReturn(Optional.of(offer));
+        when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        orderService.dispatchFromTrip(actor, orderId);
+
+        assertThat(order.getStatus()).isEqualTo(com.example.distrobackend.Domain.enums.OrderStatus.IN_TRANSIT);
+        assertThat(offer.getQuantityOnHand()).isEqualTo(7);
+        assertThat(offer.getReservedQuantity()).isZero();
+        assertThat(line.getStockCheckStatus()).isEqualTo("COMMITTED");
+        org.mockito.ArgumentCaptor<StockMovement> movement =
+                org.mockito.ArgumentCaptor.forClass(StockMovement.class);
+        verify(stockMovementRepository).save(movement.capture());
+        assertThat(movement.getValue().getQuantityDelta()).isEqualTo(-3);
+        assertThat(movement.getValue().getReferenceId()).isEqualTo(orderId);
+        assertThat(movement.getValue().getMovementType()).isEqualTo(
+                com.example.distrobackend.Domain.enums.StockMovementType.SALE_OUT);
+    }
+
+    @Test
+    void genericStatusUpdateCannotBypassTripDispatch() {
+        Order order = new Order();
+        order.setId(UUID.randomUUID());
+        order.setStatus(com.example.distrobackend.Domain.enums.OrderStatus.AWAITING_DISPATCH);
+        when(orderRepository.findByIdWithItemsForUpdate(order.getId())).thenReturn(Optional.of(order));
+
+        assertThatThrownBy(() -> orderService.updateOrderStatus(order.getId(), customerId,
+                new com.example.distrobackend.dto.OrderStatusUpdate(
+                        com.example.distrobackend.Domain.enums.OrderStatus.IN_TRANSIT, "skip dispatch")))
+                .isInstanceOf(com.example.distrobackend.Exception.ApiException.class)
+                .hasMessageContaining("assigned delivery trip");
+        verify(stockItemRepository, never()).findByIdForUpdate(any());
+    }
+
+    @Test
+    void pickingAndPackingPersistProgressBeforeDispatch() {
+        UUID orderId = UUID.randomUUID();
+        UUID itemId = UUID.randomUUID();
+        Order order = new Order();
+        order.setId(orderId);
+        order.setStatus(com.example.distrobackend.Domain.enums.OrderStatus.CONFIRMED);
+        order.setOrganization(distributor);
+        order.setCustomer(customer);
+        order.setOrderNumber("ORD-WH-1");
+        order.setSubtotalAmount(BigDecimal.ZERO);
+        order.setDeliveryFee(BigDecimal.ZERO);
+        order.setTotalAmount(BigDecimal.ZERO);
+        order.setPlacedAt(OffsetDateTime.now());
+        OrderItem line = new OrderItem();
+        line.setId(itemId);
+        line.setStockItem(offer);
+        line.setQuantity(2);
+        line.setUnitPrice(BigDecimal.ONE);
+        line.setStockCheckStatus("RESERVED");
+        order.addOrderItem(line);
+        User staff = new User();
+        staff.setId(UUID.randomUUID());
+        AuthenticatedUser actor = new AuthenticatedUser(staff.getId(), UserRole.DISTRIBUTOR_ADMIN,
+                distributorId, Organizationtype.DISTRIBUTOR, Instant.now().plusSeconds(300));
+        when(orderRepository.findByIdWithItemsForUpdate(orderId)).thenReturn(Optional.of(order));
+        when(userRepository.findById(staff.getId())).thenReturn(Optional.of(staff));
+        when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        var picked = orderService.pickOrderItem(actor, orderId,
+                new com.example.distrobackend.dto.PickOrderItemRequest(itemId, 2));
+        assertThat(picked.status()).isEqualTo(com.example.distrobackend.Domain.enums.OrderStatus.READY_TO_PACK);
+        assertThat(line.getPickedQuantity()).isEqualTo(2);
+        assertThat(offer.getQuantityOnHand()).isEqualTo(10);
+
+        var packed = orderService.packOrder(actor, orderId,
+                new com.example.distrobackend.dto.PackOrderRequest(1));
+        assertThat(packed.status()).isEqualTo(com.example.distrobackend.Domain.enums.OrderStatus.AWAITING_DISPATCH);
+        assertThat(packed.packageCount()).isEqualTo(1);
+        assertThat(line.getPackedQuantity()).isEqualTo(2);
+        assertThat(offer.getReservedQuantity()).isZero();
+    }
+
+    @Test
+    void pickingCannotExceedRequestedQuantity() {
+        UUID orderId = UUID.randomUUID();
+        UUID itemId = UUID.randomUUID();
+        Order order = new Order();
+        order.setId(orderId);
+        order.setStatus(com.example.distrobackend.Domain.enums.OrderStatus.PROCESSING);
+        order.setOrganization(distributor);
+        OrderItem line = new OrderItem();
+        line.setId(itemId);
+        line.setStockItem(offer);
+        line.setQuantity(2);
+        order.addOrderItem(line);
+        AuthenticatedUser actor = new AuthenticatedUser(UUID.randomUUID(), UserRole.DISTRIBUTOR_STAFF,
+                distributorId, Organizationtype.DISTRIBUTOR, Instant.now().plusSeconds(300));
+        when(orderRepository.findByIdWithItemsForUpdate(orderId)).thenReturn(Optional.of(order));
+
+        assertThatThrownBy(() -> orderService.pickOrderItem(actor, orderId,
+                new com.example.distrobackend.dto.PickOrderItemRequest(itemId, 3)))
+                .isInstanceOf(com.example.distrobackend.Exception.ApiException.class)
+                .hasMessageContaining("already picked and requested");
+        assertThat(line.getPickedQuantity()).isZero();
     }
 
     @Test

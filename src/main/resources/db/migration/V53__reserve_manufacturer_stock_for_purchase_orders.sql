@@ -1,0 +1,2 @@
+ALTER TABLE purchase_orders
+    ADD COLUMN IF NOT EXISTS stock_reserved BOOLEAN NOT NULL DEFAULT FALSE;

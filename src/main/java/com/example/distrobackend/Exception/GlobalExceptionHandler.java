@@ -35,6 +35,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ApiException.class)
     public ResponseEntity<ApiError> handleApi(ApiException ex, HttpServletRequest request) {
         ErrorCode code = ex.getCode();
+        log.warn("API error on {} {}: [{}] {}", request.getMethod(), request.getRequestURI(), code, ex.getMessage());
         return build(code, ex.getMessage(), request);
     }
 
@@ -43,6 +44,7 @@ public class GlobalExceptionHandler {
         List<ApiError.FieldViolation> violations = ex.getBindingResult().getFieldErrors().stream()
                 .map(f -> new ApiError.FieldViolation(f.getField(), f.getDefaultMessage()))
                 .toList();
+        log.warn("Validation failed on {} {}: {}", request.getMethod(), request.getRequestURI(), violations);
         ApiError body = ApiError.of(ErrorCode.VALIDATION_FAILED, ErrorCode.VALIDATION_FAILED.defaultMessage(),
                 request.getRequestURI(), violations);
         return ResponseEntity.status(ErrorCode.VALIDATION_FAILED.status()).body(body);
@@ -51,6 +53,7 @@ public class GlobalExceptionHandler {
     // Malformed JSON, or an unknown enum value such as "role": "WIZARD"
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ApiError> handleUnreadable(HttpMessageNotReadableException ex, HttpServletRequest request) {
+        log.warn("Unreadable request body on {} {}: {}", request.getMethod(), request.getRequestURI(), ex.getMessage());
         return build(ErrorCode.BAD_REQUEST, "Malformed request body or invalid field value", request);
     }
 
@@ -152,6 +155,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(NoResourceFoundException.class)
     public ResponseEntity<ApiError> handleMissingResource(
             NoResourceFoundException ex, HttpServletRequest request) {
+        log.warn("Resource/Route not found: {} {}", request.getMethod(), request.getRequestURI());
         return build(ErrorCode.NOT_FOUND, ErrorCode.NOT_FOUND.defaultMessage(), request);
     }
 

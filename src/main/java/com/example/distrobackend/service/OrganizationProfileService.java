@@ -13,6 +13,8 @@ import com.example.distrobackend.security.AuthenticatedUser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 
 import java.util.Locale;
 import java.util.UUID;
@@ -20,6 +22,9 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 public class OrganizationProfileService {
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     private final OrganizationRepository organizationRepository;
 
@@ -31,20 +36,20 @@ public class OrganizationProfileService {
     @Transactional
     public OrganizationResponse update(AuthenticatedUser actor, UpdateOrganizationProfileRequest request) {
         Organization organization = loadAuthorizedOrganization(actor, true);
-        if (request.version() == null) {
-            throw new ApiException(ErrorCode.BAD_REQUEST, "version is required for organization updates");
-        }
-        if (request.version() != organization.getVersion()) {
+        if (request.version() != null && request.version() != organization.getVersion()) {
             throw new ApiException(ErrorCode.CONFLICT,
                     "The organization was changed by another request. Refresh and retry");
         }
-        if (request.name() == null && request.email() == null) {
+        if (request.name() == null && request.registeredName() == null && request.email() == null
+                && request.taxRegistrationId() == null && request.timezone() == null
+                && request.defaultWarehouseId() == null) {
             throw new ApiException(ErrorCode.BAD_REQUEST,
                     "At least one organization profile field is required");
         }
 
-        if (request.name() != null) {
-            String name = request.name().trim();
+        String requestedName = request.registeredName() != null ? request.registeredName() : request.name();
+        if (requestedName != null) {
+            String name = requestedName.trim();
             if (name.isEmpty()) {
                 throw new ApiException(ErrorCode.BAD_REQUEST, "Organization name cannot be blank");
             }
@@ -52,11 +57,30 @@ public class OrganizationProfileService {
         }
         if (request.email() != null) {
             String email = trimToNull(request.email());
+            if (email != null) email = email.toLowerCase(Locale.ROOT);
             if (email != null && organizationRepository
                     .findByEmailIgnoreCaseAndIdNot(email, organization.getId()).isPresent()) {
                 throw new ApiException(ErrorCode.CONFLICT, "An organization with this email already exists");
             }
-            organization.setEmail(email == null ? null : email.toLowerCase(Locale.ROOT));
+            organization.setEmail(email);
+        }
+        if (request.taxRegistrationId() != null) {
+            organization.setTaxRegistrationId(trimToNull(request.taxRegistrationId()));
+        }
+        if (request.timezone() != null) {
+            organization.setTimezone(trimToNull(request.timezone()));
+        }
+        if (request.defaultWarehouseId() != null) {
+            long ownedWarehouseCount = entityManager.createQuery(
+                            "select count(w) from Warehouse w where w.id = :warehouseId and w.organization.id = :organizationId",
+                            Long.class)
+                    .setParameter("warehouseId", request.defaultWarehouseId())
+                    .setParameter("organizationId", organization.getId())
+                    .getSingleResult();
+            if (ownedWarehouseCount == 0) {
+                throw new ApiException(ErrorCode.NOT_FOUND, "Warehouse not found in this organization");
+            }
+            organization.setDefaultWarehouseId(request.defaultWarehouseId());
         }
         return OrganizationResponse.from(organizationRepository.saveAndFlush(organization));
     }

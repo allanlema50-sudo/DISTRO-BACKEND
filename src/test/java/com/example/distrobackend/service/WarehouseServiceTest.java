@@ -9,6 +9,7 @@ import com.example.distrobackend.dto.UpdateWarehouseStatusRequest;
 import com.example.distrobackend.repository.OrganizationRepository;
 import com.example.distrobackend.repository.StockItemRepository;
 import com.example.distrobackend.repository.WarehouseRepository;
+import com.example.distrobackend.repository.UserRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -35,6 +36,9 @@ class WarehouseServiceTest {
 
     @Mock
     private StockItemRepository stockItemRepository;
+
+    @Mock
+    private UserRepository userRepository;
 
     @Test
     void organizationCannotUpdateAnotherOrganizationsWarehouse() {
@@ -79,7 +83,7 @@ class WarehouseServiceTest {
     }
 
     private WarehouseService service() {
-        return new WarehouseService(warehouseRepository, organizationRepository, stockItemRepository);
+        return new WarehouseService(warehouseRepository, organizationRepository, stockItemRepository, userRepository);
     }
 
     private static Warehouse warehouse(UUID warehouseId, UUID organizationId) {

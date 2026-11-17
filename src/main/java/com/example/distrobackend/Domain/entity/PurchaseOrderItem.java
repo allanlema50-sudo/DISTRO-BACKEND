@@ -34,6 +34,11 @@ public class PurchaseOrderItem {
     @JoinColumn(name = "stock_item_id", nullable = false)
     private StockItem stockItem;
 
+    /** Optional distributor offer selected for receipt into a warehouse. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "distributor_offer_id")
+    private StockItem distributorOffer;
+
     @Column(name = "quantity", nullable = false)
     private int quantity;
 

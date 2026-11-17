@@ -154,12 +154,50 @@ public class TripController {
         return tripService.updateStatus(me, tripId, request.status(), request.note());
     }
 
+    @PostMapping("/{tripId}/dispatch")
+    public TripResponse dispatch(@AuthenticationPrincipal AuthenticatedUser me,
+                                 @PathVariable UUID tripId) {
+        if (me.role() == UserRole.CUSTOMER || me.role() == UserRole.DRIVER) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED,
+                    "Only organization staff may dispatch a trip");
+        }
+        return tripService.dispatch(me, tripId);
+    }
+
     @PostMapping("/{tripId}/actions")
     public TripOperationalActionResponse operationalAction(
             @AuthenticationPrincipal AuthenticatedUser me,
             @PathVariable UUID tripId,
             @Valid @RequestBody TripOperationalActionRequest request) {
         return tripService.operationalAction(me, tripId, request);
+    }
+
+    @PostMapping("/{tripId}/driver-ping")
+    public TripOperationalActionResponse requestDriverUpdate(
+            @AuthenticationPrincipal AuthenticatedUser me,
+            @PathVariable UUID tripId) {
+        if (me.role() != UserRole.MANUFACTURER_ADMIN
+                && me.role() != UserRole.MANUFACTURER_STAFF) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED,
+                    "Only manufacturer staff may request a driver update");
+        }
+        return tripService.operationalAction(me, tripId, new TripOperationalActionRequest(
+                com.example.distrobackend.Domain.enums.TripOperationalActionType.REQUEST_DRIVER_UPDATE,
+                "Driver update requested by manufacturer"));
+    }
+
+    @PostMapping("/{tripId}/reroute-proposals")
+    public TripOperationalActionResponse proposeReroute(
+            @AuthenticationPrincipal AuthenticatedUser me,
+            @PathVariable UUID tripId) {
+        if (me.role() != UserRole.MANUFACTURER_ADMIN
+                && me.role() != UserRole.MANUFACTURER_STAFF) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED,
+                    "Only manufacturer staff may propose a reroute");
+        }
+        return tripService.operationalAction(me, tripId, new TripOperationalActionRequest(
+                com.example.distrobackend.Domain.enums.TripOperationalActionType.REROUTE,
+                "Reroute proposal created by manufacturer"));
     }
 
     @GetMapping("/{tripId}/actions")

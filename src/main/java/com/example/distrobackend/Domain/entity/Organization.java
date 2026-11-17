@@ -36,6 +36,16 @@ public class Organization {
     @Column(name = "email", length = 150)
     private String email;
 
+    @Column(name = "tax_registration_id", length = 100)
+    private String taxRegistrationId;
+
+    @Column(name = "timezone", length = 80)
+    private String timezone;
+
+    @Column(name = "default_warehouse_id")
+    @JdbcTypeCode(SqlTypes.UUID)
+    private UUID defaultWarehouseId;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "type", nullable = false)
     private Organizationtype type;

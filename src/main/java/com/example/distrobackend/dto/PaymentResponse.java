@@ -16,18 +16,13 @@ public record PaymentResponse(
         PaymentStatus status,
         String mpesaReceiptNumber,
         OffsetDateTime initiatedAt,
-        OffsetDateTime confirmedAt
+        OffsetDateTime confirmedAt,
+        String orderType,
+        String provider,
+        String currency,
+        String failureReason
 ) {
     public static PaymentResponse from(Payment payment) {
-        return new PaymentResponse(
-                payment.getId(),
-                payment.getOrder() != null ? payment.getOrder().getId() : null,
-                payment.getAmount(),
-                payment.getMethod(),
-                payment.getStatus(),
-                payment.getMpesaReceiptNumber(),
-                payment.getInitiatedAt(),
-                payment.getConfirmedAt()
-        );
+        return com.example.distrobackend.mapper.PaymentMapper.toResponse(payment);
     }
 }

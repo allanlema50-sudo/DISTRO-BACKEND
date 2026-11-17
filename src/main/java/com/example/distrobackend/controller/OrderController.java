@@ -23,7 +23,7 @@ import java.util.List;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/v1/orders")
+@RequestMapping({"/api/v1/orders", "/api/orders"})
 @RequiredArgsConstructor
 public class OrderController {
 
@@ -36,8 +36,14 @@ public class OrderController {
         return orderService.stats(me);
     }
 
+    @GetMapping("/customers")
+    public List<OrganizationCustomerResponse> customers(
+            @AuthenticationPrincipal AuthenticatedUser me) {
+        return orderService.customersForDistributor(me);
+    }
+
     // -----------------------------------------------------------------------
-    // GET /api/v1/orders
+    // GET /api/v1/orders (and /api/orders)
     // - CUSTOMER           → their own orders only
     // - DISTRIBUTOR_ADMIN,
     //   DISTRIBUTOR_STAFF  → orders belonging to their organisation
@@ -61,9 +67,10 @@ public class OrderController {
     }
 
     // -----------------------------------------------------------------------
-    // POST /api/v1/orders
-    // - Only CUSTOMER may place an order; customer identity comes from the
-    //   JWT principal, never from the request body.
+    // POST /api/v1/orders (and /api/orders)
+    // - CUSTOMER identity comes from the JWT principal.
+    // - Distributor staff may create an order for a customer account linked
+    //   to their organization through previous orders.
     // -----------------------------------------------------------------------
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
@@ -71,15 +78,19 @@ public class OrderController {
             @AuthenticationPrincipal AuthenticatedUser me,
             @Valid @RequestBody OrderRequest request) {
 
-        if (me.role() != UserRole.CUSTOMER) {
-            throw new ApiException(ErrorCode.ACCESS_DENIED,
-                    "Only customers may place orders");
+        if (me.role() == UserRole.CUSTOMER) {
+            return orderService.createOrder(me.userId(), request);
         }
-        return orderService.createOrder(me.userId(), request);
+        if (me.role() == UserRole.DISTRIBUTOR_ADMIN
+                || me.role() == UserRole.DISTRIBUTOR_STAFF) {
+            return orderService.createOrderForDistributor(me, request);
+        }
+        throw new ApiException(ErrorCode.ACCESS_DENIED,
+                "This endpoint is not available for your role");
     }
 
     // -----------------------------------------------------------------------
-    // GET /api/v1/orders/{orderId}
+    // GET /api/v1/orders/{orderId} (and /api/orders/{orderId})
     // - CUSTOMER           → only if order.customerId == me.userId()
     // - DISTRIBUTOR_ADMIN,
     //   DISTRIBUTOR_STAFF  → only if order.organizationId == me.organizationId()
@@ -114,6 +125,22 @@ public class OrderController {
             @AuthenticationPrincipal AuthenticatedUser me,
             @PathVariable UUID orderId) {
         return paymentAdministrationService.getForOrder(me, orderId);
+    }
+
+    @PostMapping("/{orderId}/warehouse/pick")
+    public OrderResponse pickOrderItem(
+            @AuthenticationPrincipal AuthenticatedUser me,
+            @PathVariable UUID orderId,
+            @Valid @RequestBody PickOrderItemRequest request) {
+        return orderService.pickOrderItem(me, orderId, request);
+    }
+
+    @PostMapping("/{orderId}/warehouse/pack")
+    public OrderResponse packOrder(
+            @AuthenticationPrincipal AuthenticatedUser me,
+            @PathVariable UUID orderId,
+            @Valid @RequestBody PackOrderRequest request) {
+        return orderService.packOrder(me, orderId, request);
     }
 
     // -----------------------------------------------------------------------

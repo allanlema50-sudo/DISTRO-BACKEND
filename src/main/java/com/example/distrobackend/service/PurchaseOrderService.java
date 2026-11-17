@@ -7,8 +7,11 @@ import com.example.distrobackend.Domain.entity.PurchaseOrderSettlement;
 import com.example.distrobackend.Domain.entity.StockItem;
 import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.PurchaseOrderStatus;
+import com.example.distrobackend.Domain.enums.ProductPublicationStatus;
 import com.example.distrobackend.Domain.enums.SettlementStatus;
 import com.example.distrobackend.Domain.enums.UserRole;
+import com.example.distrobackend.Domain.enums.NotificationPriority;
+import com.example.distrobackend.Domain.enums.NotificationType;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.dto.CreatePurchaseOrderRequest;
@@ -21,6 +24,7 @@ import com.example.distrobackend.repository.PurchaseOrderRepository;
 import com.example.distrobackend.repository.PurchaseOrderSettlementRepository;
 import com.example.distrobackend.repository.StockItemRepository;
 import com.example.distrobackend.repository.UserRepository;
+import com.example.distrobackend.repository.DistributorProductAuthorizationRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -43,6 +47,9 @@ public class PurchaseOrderService {
     private final OrganizationRepository organizationRepository;
     private final StockItemRepository stockItemRepository;
     private final UserRepository userRepository;
+    private final NotificationService notificationService;
+    private final ProductAuthorizationService productAuthorizationService;
+    private final DistributorProductAuthorizationRepository authorizationRepository;
 
     @Transactional
     public PurchaseOrderResponse create(AuthenticatedUser actor, CreatePurchaseOrderRequest request) {
@@ -76,22 +83,56 @@ public class PurchaseOrderService {
                     .findByIdAndOrganizationIdForUpdate(requestItem.stockItemId(), supplier.getId())
                     .orElseThrow(() -> new ApiException(ErrorCode.STOCK_NOT_FOUND,
                             "Supplier stock item not found: " + requestItem.stockItemId()));
-            if (!stockItem.isActive()) {
+            if (!stockItem.isActive()
+                    || stockItem.getPublicationStatus() != ProductPublicationStatus.PUBLISHED) {
                 throw new ApiException(ErrorCode.BAD_REQUEST, "Supplier stock item is inactive: " + stockItem.getSku());
+            }
+            if (!productAuthorizationService.isApproved(stockItem.getId(), buyer.getId())) {
+                throw new ApiException(ErrorCode.ACCESS_DENIED,
+                        "The distributor is not authorized to purchase this manufacturer product");
+            }
+
+            var authorization = authorizationRepository
+                    .findByProduct_IdAndDistributorOrganization_Id(stockItem.getId(), buyer.getId())
+                    .orElseThrow(() -> new ApiException(ErrorCode.ACCESS_DENIED));
+            if (authorization.getMinimumOrderQuantity() != null
+                    && requestItem.quantity() < authorization.getMinimumOrderQuantity()) {
+                throw new ApiException(ErrorCode.BAD_REQUEST,
+                        "Quantity is below the agreed minimum order quantity for " + stockItem.getSku());
+            }
+
+            if (requestItem.quantity() > stockItem.getAvailableQuantity()) {
+                throw new ApiException(ErrorCode.CONFLICT, "Insufficient available manufacturer stock for " + stockItem.getSku());
+            }
+            try {
+                stockItem.setReservedQuantity(Math.addExact(stockItem.getReservedQuantity(), requestItem.quantity()));
+            } catch (ArithmeticException ex) {
+                throw new ApiException(ErrorCode.CONFLICT, "Requested stock quantity exceeds supported limits");
             }
 
             PurchaseOrderItem item = new PurchaseOrderItem();
             item.setStockItem(stockItem);
+            if (requestItem.distributorOfferId() != null) {
+                StockItem offer = stockItemRepository.findByIdAndOrganizationIdForUpdate(
+                                requestItem.distributorOfferId(), buyer.getId())
+                        .orElseThrow(() -> new ApiException(ErrorCode.STOCK_ITEM_NOT_FOUND,
+                                "Distributor offer not found: " + requestItem.distributorOfferId()));
+                validateOfferForSource(offer, stockItem, buyer);
+                item.setDistributorOffer(offer);
+            }
             item.setQuantity(requestItem.quantity());
-            item.setUnitPrice(stockItem.getUnitPrice());
+            BigDecimal unitPrice = authorization.getAgreedWholesalePrice() != null
+                    ? authorization.getAgreedWholesalePrice() : stockItem.getUnitPrice();
+            item.setUnitPrice(unitPrice);
             purchaseOrder.addItem(item);
-            total = total.add(stockItem.getUnitPrice().multiply(BigDecimal.valueOf(requestItem.quantity())));
+            total = total.add(unitPrice.multiply(BigDecimal.valueOf(requestItem.quantity())));
         }
 
         if (total.compareTo(BigDecimal.ZERO) <= 0) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Purchase order total must be positive");
         }
         purchaseOrder.setTotalAmount(total);
+        purchaseOrder.setStockReserved(true);
         PurchaseOrder saved = purchaseOrderRepository.save(purchaseOrder);
 
         PurchaseOrderSettlement settlement = new PurchaseOrderSettlement();
@@ -146,10 +187,15 @@ public class PurchaseOrderService {
             throw new ApiException(ErrorCode.BAD_REQUEST, "A rejection reason is required");
         }
         purchaseOrder.setStatus(request.status());
+        if (request.status() == PurchaseOrderStatus.REJECTED) {
+            releaseStockReservation(purchaseOrder);
+        }
         purchaseOrder.setRejectionReason(request.status() == PurchaseOrderStatus.REJECTED ? note : null);
         purchaseOrder.setReviewedBy(userRepository.getReferenceById(actor.userId()));
         purchaseOrder.setReviewedAt(OffsetDateTime.now());
-        return toResponse(purchaseOrderRepository.save(purchaseOrder));
+        PurchaseOrder saved = purchaseOrderRepository.save(purchaseOrder);
+        notifyDistributorAdministrators(saved, request.status());
+        return toResponse(saved);
     }
 
     @Transactional(readOnly = true)
@@ -210,6 +256,19 @@ public class PurchaseOrderService {
         }
     }
 
+    private void releaseStockReservation(PurchaseOrder purchaseOrder) {
+        if (!purchaseOrder.isStockReserved()) return;
+        for (PurchaseOrderItem item : purchaseOrder.getItems()) {
+            StockItem stockItem = stockItemRepository.findByIdAndOrganizationIdForUpdate(
+                            item.getStockItem().getId(), purchaseOrder.getSupplierOrganization().getId())
+                    .orElseThrow(() -> new ApiException(ErrorCode.STOCK_NOT_FOUND));
+            if (stockItem.getReservedQuantity() < item.getQuantity()) {
+                throw new ApiException(ErrorCode.CONFLICT, "Purchase-order stock reservation is inconsistent");
+            }
+            stockItem.setReservedQuantity(stockItem.getReservedQuantity() - item.getQuantity());
+        }
+        purchaseOrder.setStockReserved(false);
+    }
     private PurchaseOrderResponse toResponse(PurchaseOrder purchaseOrder) {
         return new PurchaseOrderResponse(
                 purchaseOrder.getId(), purchaseOrder.getPurchaseOrderNumber(),
@@ -218,12 +277,46 @@ public class PurchaseOrderService {
                 purchaseOrder.getRejectionReason(), purchaseOrder.getSubmittedAt(),
                 purchaseOrder.getReviewedAt(), purchaseOrder.getFulfilledAt(),
                 purchaseOrder.getItems().stream().map(item -> new PurchaseOrderItemResponse(
-                        item.getId(), item.getStockItem().getId(), item.getStockItem().getSku(),
+                        item.getId(), item.getStockItem().getId(),
+                        item.getDistributorOffer() == null ? null : item.getDistributorOffer().getId(),
+                        item.getStockItem().getSku(),
                         item.getStockItem().getName(), item.getQuantity(), item.getUnitPrice(),
                         item.getLineTotal() != null ? item.getLineTotal() : item.getUnitPrice()
                                 .multiply(BigDecimal.valueOf(item.getQuantity())))).toList(),
                 settlementRepository.findByPurchaseOrderIdOrderByCreatedAtDesc(purchaseOrder.getId())
                         .stream().map(this::toSettlementResponse).toList());
+    }
+
+    private void validateOfferForSource(StockItem offer, StockItem source, Organization buyer) {
+        if (offer.getSourceStockItem() == null
+                || !source.getId().equals(offer.getSourceStockItem().getId())
+                || offer.getOrganization() == null
+                || !buyer.getId().equals(offer.getOrganization().getId())
+                || offer.getWarehouse() == null
+                || offer.getWarehouse().getOrganization() == null
+                || !buyer.getId().equals(offer.getWarehouse().getOrganization().getId())
+                || !offer.isActive()
+                || !offer.getWarehouse().isActive()) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    "The selected distributor offer is not valid for this purchase order");
+        }
+    }
+
+    private void notifyDistributorAdministrators(PurchaseOrder purchaseOrder,
+                                                   PurchaseOrderStatus status) {
+        String title = status == PurchaseOrderStatus.APPROVED
+                ? "Purchase order approved" : "Purchase order rejected";
+        String message = "Purchase order " + purchaseOrder.getPurchaseOrderNumber()
+                + (status == PurchaseOrderStatus.APPROVED
+                ? " was approved. Complete settlement before shipment can be dispatched."
+                : " was rejected. Review the manufacturer's decision note.");
+        NotificationPriority priority = status == PurchaseOrderStatus.APPROVED
+                ? NotificationPriority.HIGH : NotificationPriority.MEDIUM;
+        userRepository.findByOrganization_IdAndRole(
+                        purchaseOrder.getBuyerOrganization().getId(), UserRole.DISTRIBUTOR_ADMIN,
+                        org.springframework.data.domain.Pageable.unpaged())
+                .forEach(user -> notificationService.create(user, title, message,
+                        NotificationType.ORDER, priority, purchaseOrder.getId(), "PURCHASE_ORDER"));
     }
 
     private PurchaseOrderSettlementResponse toSettlementResponse(PurchaseOrderSettlement settlement) {

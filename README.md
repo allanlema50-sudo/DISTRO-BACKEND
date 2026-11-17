@@ -993,6 +993,17 @@ and rely on the verified callback/reconciliation flow.
 | `GET` | `/api/v1/manufacturer/purchase-orders/{purchaseOrderId}` | Manufacturer admin/staff | Get a manufacturer-owned purchase order |
 | `PATCH` | `/api/v1/manufacturer/purchase-orders/{purchaseOrderId}/decision` | Manufacturer admin | Approve or reject a submitted purchase order |
 | `GET` | `/api/v1/manufacturer/purchase-orders/{purchaseOrderId}/settlements` | Authorized manufacturer party | Read settlement ledger entries |
+| `POST` | `/api/v1/manufacturer/shipments` | Manufacturer admin/staff | Create a shipment for an approved, settled purchase order |
+| `GET` | `/api/v1/manufacturer/shipments` | Manufacturer admin/staff | List shipments sent by the manufacturer organization |
+| `GET` | `/api/v1/manufacturer/shipments/{shipmentId}` | Manufacturer admin/staff | Read one outbound shipment |
+| `PATCH` | `/api/v1/manufacturer/shipments/{shipmentId}/status` | Manufacturer admin/staff | Move a shipment to in-transit, delivered, or cancelled; cancellation is admin-only |
+| `GET` | `/api/v1/purchase-order-shipments` | Distributor admin/staff | List inbound purchase-order shipments for the distributor organization |
+| `GET` | `/api/v1/purchase-order-shipments/{shipmentId}` | Distributor admin/staff | Read one inbound purchase-order shipment |
+| `POST` | `/api/v1/purchase-order-shipments/{shipmentId}/receive` | Distributor admin/staff | Confirm delivery and atomically add the received quantities to the linked offers |
+| `POST` | `/api/v1/stock-audits` | Manufacturer/distributor admin/staff | Record a physical count for stock in an owned warehouse |
+| `GET` | `/api/v1/stock-audits` | Manufacturer/distributor admin/staff | List audits for the caller's organization |
+| `GET` | `/api/v1/stock-audits/{auditId}` | Manufacturer/distributor admin/staff | Read one stock audit |
+| `PATCH` | `/api/v1/stock-audits/{auditId}/apply` | Manufacturer/distributor admin | Apply an unapplied variance after a fresh locked stock check |
 | `POST` | `/api/stock/restock-request` | Distributor admin/staff | Create a restock request for a distributor offer |
 | `GET` | `/api/stock/restock-request` | Manufacturer/distributor admin/staff | List organization-visible restock requests |
 | `PATCH` | `/api/stock/restock-request/{id}/status` | Manufacturer/distributor admin/staff | Update a restock request status |
@@ -1006,7 +1017,8 @@ Purchase-order request bodies (JSON):
   "items": [
     {
       "stockItemId": "<manufacturer-product-id>",
-      "quantity": 100
+      "quantity": 100,
+      "distributorOfferId": "<optional-distributor-offer-id>"
     }
   ]
 }
@@ -1018,11 +1030,61 @@ Purchase-order request bodies (JSON):
 }
 ```
 
+Before creating a purchase order, the distributor must have an approved
+product-authorization request for every manufacturer product in the order.
 Purchase-order status values are `SUBMITTED`, `APPROVED`, `REJECTED`,
 `CANCELLED`, and `FULFILLED`. The distributor creates the purchase order;
-only a manufacturer administrator can approve or reject it. Settlement
-endpoints currently return the read-only settlement ledger and do not initiate
-money transfers.
+only a manufacturer administrator can approve or reject it. A distributor may
+include `distributorOfferId` when it has several offers for the same source
+product. If it is omitted, shipment creation requires exactly one matching
+active offer in the selected destination warehouse.
+
+Shipment creation is intentionally gated on both `APPROVED` purchase-order
+status and a `SETTLED` procurement settlement. The current settlement routes
+are read-only and do not initiate money transfers; until settlement processing
+is implemented, an operator or a future payment service must record settlement
+through the controlled procurement payment workflow.
+
+Shipment request bodies (JSON):
+
+```jsonc
+// POST /api/v1/manufacturer/shipments
+{
+  "purchaseOrderId": "<approved-purchase-order-id>",
+  "destinationWarehouseId": "<distributor-warehouse-id>",
+  "trackingNumber": "KE-TRACK-123",
+  "carrier": "LogiFlow Transport"
+}
+
+// PATCH /api/v1/manufacturer/shipments/{shipmentId}/status
+{ "status": "IN_TRANSIT", "note": "Picked up from Nairobi plant" }
+
+// POST /api/v1/purchase-order-shipments/{shipmentId}/receive
+{ "note": "Counted and received at warehouse bay 2" }
+```
+
+Valid purchase-order shipment statuses are `READY_FOR_DISPATCH`, `IN_TRANSIT`,
+`DELIVERED`, `RECEIVED`, and `CANCELLED`. The manufacturer moves a shipment through
+dispatch and delivery; the distributor confirms receipt. Receipt is idempotent
+and creates one `RESTOCK_IN` movement per purchase-order item while marking the
+purchase order `FULFILLED`.
+
+Stock-audit request bodies (JSON):
+
+```jsonc
+// POST /api/v1/stock-audits
+{
+  "warehouseId": "<owned-warehouse-id>",
+  "stockItemId": "<warehouse-stock-item-id>",
+  "countedQuantity": 97,
+  "note": "Cycle count for aisle B"
+}
+```
+
+An audit records the system quantity and physical count. Staff can record it,
+but only an organization administrator can apply the variance. Applying an
+audit fails if the stock changed since the count or if the result would fall
+below quantities reserved for customer orders.
 
 Purchase-order settlements are currently a read-only `PENDING` ledger. Payment
 reconciliation, refunds, reversals, and platform-level settlement reporting are
@@ -1123,13 +1185,13 @@ fleet.
 
 | Method | Endpoint | Access | Purpose |
 |---|---|---|---|
-| `POST` | `/api/v1/drivers/invitations` | Distributor admin | Create an invited driver and send the email activation link |
-| `POST` | `/api/v1/drivers/{driverId}/invitation` | Distributor admin | Reissue an expired invitation or re-invite a revoked, unaccepted driver |
-| `GET` | `/api/v1/drivers` | Super Admin or distributor staff/admin | List drivers; supports `status=APPROVED` (active), `availability=AVAILABLE|UNAVAILABLE`, and Super Admin `organizationId` filters |
-| `GET` | `/api/v1/drivers/{driverId}` | Super Admin, distributor staff/admin, or that driver | Read one organization driver |
-| `PATCH` | `/api/v1/drivers/{driverId}` | Distributor admin | Update driver profile and license details |
-| `PATCH` | `/api/v1/drivers/{driverId}/status` | Distributor admin | Activate, suspend, or deactivate a driver |
-| `PATCH` | `/api/v1/drivers/{driverId}/availability` | Driver or distributor admin | Set whether an active driver is available |
+| `POST` | `/api/v1/drivers/invitations` | Manufacturer/distributor admin | Create an invited driver and send the email activation link |
+| `POST` | `/api/v1/drivers/{driverId}/invitation` | Manufacturer/distributor admin | Reissue an expired invitation or re-invite a revoked, unaccepted driver |
+| `GET` | `/api/v1/drivers` | Super Admin or organization staff/admin | List drivers within the caller's organization; supports `status=APPROVED` (active) and `availability=AVAILABLE|UNAVAILABLE`; Super Admin may use `organizationId` filters |
+| `GET` | `/api/v1/drivers/{driverId}` | Super Admin, organization staff/admin, or that driver | Read one organization driver within the caller's tenant |
+| `PATCH` | `/api/v1/drivers/{driverId}` | Manufacturer/distributor admin | Update driver profile and license details |
+| `PATCH` | `/api/v1/drivers/{driverId}/status` | Manufacturer/distributor admin | Activate, suspend, or deactivate a driver |
+| `PATCH` | `/api/v1/drivers/{driverId}/availability` | Driver or manufacturer/distributor admin | Set whether an approved active driver is available |
 | `POST` | `/api/v1/drivers/me/location` | Driver | Update the driver's latest profile location |
 | `GET` | `/api/v1/vehicles` | Super Admin or distributor staff/admin | List vehicles; filters include `status`, `organizationId` (Super Admin), and derived `status=AVAILABLE` |
 | `GET` | `/api/v1/vehicles/{vehicleId}` | Super Admin or distributor staff/admin | Read one vehicle |
@@ -1290,6 +1352,7 @@ Known limitations to account for during integration:
   surfaces; audit-log ingestion and settlement automation remain separate
   follow-up capabilities;
 - payment refunds, reversals, reconciliation reports, and settlement processing are not exposed as APIs;
+- procurement shipment and stock-audit APIs are available, but procurement payment initiation and settlement automation remain a follow-up;
 - an M-Pesa callback requires a reachable callback URL, a configured shared secret, and provider verification;
 - the catalog/order model currently represents distributor offers as stock items, so customers order distributor offer IDs.
 

@@ -10,16 +10,21 @@ import java.util.UUID;
 public record OrganizationResponse(
         UUID id,
         String name,
+        String registeredName,
         String email,
         Organizationtype type,
         OrganizationStatus status,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,
-        long version
+        long version,
+        String taxRegistrationId,
+        String timezone,
+        UUID defaultWarehouseId
 ) {
     public static OrganizationResponse from(Organization organization) {
-        return new OrganizationResponse(organization.getId(), organization.getName(),
+        return new OrganizationResponse(organization.getId(), organization.getName(), organization.getName(),
                 organization.getEmail(), organization.getType(), organization.getStatus(), organization.getCreatedAt(),
-                organization.getUpdatedAt(), organization.getVersion());
+                organization.getUpdatedAt(), organization.getVersion(), organization.getTaxRegistrationId(),
+                organization.getTimezone(), organization.getDefaultWarehouseId());
     }
 }

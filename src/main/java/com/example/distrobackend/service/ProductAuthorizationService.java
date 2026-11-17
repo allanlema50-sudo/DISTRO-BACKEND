@@ -4,8 +4,11 @@ import com.example.distrobackend.Domain.entity.DistributorProductAuthorization;
 import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.StockItem;
 import com.example.distrobackend.Domain.enums.Organizationtype;
+import com.example.distrobackend.Domain.enums.NotificationPriority;
+import com.example.distrobackend.Domain.enums.NotificationType;
 import com.example.distrobackend.Domain.enums.ProductAuthorizationStatus;
 import com.example.distrobackend.Domain.enums.ProductPublicationStatus;
+import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.Exception.ResourceNotFoundException;
@@ -24,6 +27,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -36,6 +40,7 @@ public class ProductAuthorizationService {
     private final StockItemRepository stockItemRepository;
     private final OrganizationRepository organizationRepository;
     private final UserRepository userRepository;
+    private final NotificationService notificationService;
 
     @Transactional(readOnly = true)
     public Page<ProductAuthorizationResponse> list(AuthenticatedUser actor, Pageable pageable) {
@@ -67,18 +72,27 @@ public class ProductAuthorizationService {
                     "Authorization requests must target a published manufacturer product");
         }
         Organization manufacturer = product.getOrganization();
-        DistributorProductAuthorization authorization = authorizationRepository
-                .findByProduct_IdAndDistributorOrganization_Id(product.getId(), distributor.getId())
-                .orElseGet(DistributorProductAuthorization::new);
-        if (authorization.getStatus() == ProductAuthorizationStatus.PENDING
-                || authorization.getStatus() == ProductAuthorizationStatus.APPROVED) {
+        Optional<DistributorProductAuthorization> existingAuthorization = authorizationRepository
+                .findByProduct_IdAndDistributorOrganization_Id(product.getId(), distributor.getId());
+        if (existingAuthorization.isPresent()
+                && (existingAuthorization.get().getStatus() == ProductAuthorizationStatus.PENDING
+                || existingAuthorization.get().getStatus() == ProductAuthorizationStatus.APPROVED)) {
             throw new ApiException(ErrorCode.CONFLICT,
                     "An active authorization request already exists for this product");
         }
+        DistributorProductAuthorization authorization = existingAuthorization.orElseGet(
+                DistributorProductAuthorization::new);
         authorization.setProduct(product);
         authorization.setManufacturerOrganization(manufacturer);
         authorization.setDistributorOrganization(distributor);
         authorization.setStatus(ProductAuthorizationStatus.PENDING);
+        authorization.setRequestNote(request.requestNote() == null ? null : request.requestNote().trim());
+        authorization.setTargetMarket(trim(request.targetMarket()));
+        authorization.setSalesChannels(trim(request.salesChannels()));
+        authorization.setGeographicalCoverage(trim(request.geographicalCoverage()));
+        authorization.setDistributionStrategy(trim(request.distributionStrategy()));
+        authorization.setAgreedWholesalePrice(null);
+        authorization.setMinimumOrderQuantity(null);
         authorization.setDecisionNote(null);
         authorization.setDecidedBy(null);
         authorization.setDecidedAt(null);
@@ -97,6 +111,11 @@ public class ProductAuthorizationService {
             throw new ApiException(ErrorCode.INVALID_STATE_TRANSITION,
                     "Decision must be APPROVED, REJECTED, or REVOKED");
         }
+        if (request.status() == ProductAuthorizationStatus.APPROVED
+                && ((request.agreedWholesalePrice() == null) != (request.minimumOrderQuantity() == null))) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    "Wholesale price and minimum order quantity must be supplied together");
+        }
         DistributorProductAuthorization authorization = authorizationRepository
                 .findByIdAndManufacturerOrganizationForUpdate(authorizationId, manufacturerId)
                 .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.NOT_FOUND,
@@ -113,9 +132,26 @@ public class ProductAuthorizationService {
         }
         authorization.setStatus(request.status());
         authorization.setDecisionNote(request.note() == null ? null : request.note().trim());
+        if (request.status() == ProductAuthorizationStatus.APPROVED) {
+            authorization.setAgreedWholesalePrice(request.agreedWholesalePrice());
+            authorization.setMinimumOrderQuantity(request.minimumOrderQuantity());
+        }
         authorization.setDecidedBy(userRepository.getReferenceById(actor.userId()));
         authorization.setDecidedAt(OffsetDateTime.now());
-        return ProductAuthorizationResponse.from(authorizationRepository.save(authorization));
+        authorizationRepository.save(authorization);
+        String title = request.status() == ProductAuthorizationStatus.APPROVED
+                ? "Product authorization approved" : "Product authorization updated";
+        String message = request.status() == ProductAuthorizationStatus.APPROVED
+                ? "The manufacturer approved your product authorization request. You may now create a distributor offer and purchase order."
+                : "The manufacturer changed your product authorization request to " + request.status() + ".";
+        userRepository.findByOrganization_IdAndRole(
+                        authorization.getDistributorOrganization().getId(),
+                        UserRole.DISTRIBUTOR_ADMIN,
+                        org.springframework.data.domain.Pageable.unpaged())
+                .forEach(user -> notificationService.create(user, title, message,
+                        NotificationType.ORDER, NotificationPriority.HIGH,
+                        authorization.getId(), "PRODUCT_AUTHORIZATION"));
+        return ProductAuthorizationResponse.from(authorization);
     }
 
     public boolean isApproved(UUID productId, UUID distributorId) {
@@ -129,6 +165,8 @@ public class ProductAuthorizationService {
                     "Authorization decision note must not exceed " + MAX_DECISION_NOTE_LENGTH + " characters");
         }
     }
+
+    private static String trim(String value) { return value == null ? null : value.trim(); }
 
     private Organization organization(AuthenticatedUser actor, Organizationtype type) {
         UUID id = requireOrganization(actor, type);

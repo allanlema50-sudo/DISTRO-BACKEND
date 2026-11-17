@@ -5,6 +5,8 @@ import com.example.distrobackend.dto.PurchaseOrderResponse;
 import com.example.distrobackend.dto.PurchaseOrderSettlementResponse;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.service.PurchaseOrderService;
+import com.example.distrobackend.service.CentralizedCheckoutService;
+import com.example.distrobackend.dto.SupplierFinancialStatusResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -29,6 +31,7 @@ import java.util.UUID;
 public class ManufacturerPurchaseOrderController {
 
     private final PurchaseOrderService purchaseOrderService;
+    private final CentralizedCheckoutService centralizedCheckoutService;
 
     @GetMapping
     public Page<PurchaseOrderResponse> list(
@@ -51,6 +54,11 @@ public class ManufacturerPurchaseOrderController {
         return purchaseOrderService.decide(actor, purchaseOrderId, request);
     }
 
+    @GetMapping("/{purchaseOrderId}/financial-status")
+    public SupplierFinancialStatusResponse financialStatus(@AuthenticationPrincipal AuthenticatedUser actor,
+                                                            @PathVariable UUID purchaseOrderId) {
+        return centralizedCheckoutService.supplierFinancialStatus(actor, purchaseOrderId);
+    }
     @GetMapping("/{purchaseOrderId}/settlements")
     public List<PurchaseOrderSettlementResponse> settlements(
             @AuthenticationPrincipal AuthenticatedUser actor,

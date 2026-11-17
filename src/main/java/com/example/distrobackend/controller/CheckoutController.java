@@ -1,0 +1,29 @@
+package com.example.distrobackend.controller;
+import com.example.distrobackend.dto.*;
+import com.example.distrobackend.security.AuthenticatedUser;
+import com.example.distrobackend.service.CentralizedCheckoutService;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.*;
+import java.util.List;
+import java.util.UUID;
+@RestController @RequestMapping("/api/v1/checkouts")
+@PreAuthorize("hasAnyRole('DISTRIBUTOR_ADMIN','DISTRIBUTOR_STAFF')") @RequiredArgsConstructor
+public class CheckoutController {
+ private final CentralizedCheckoutService checkoutService;
+ @PostMapping @ResponseStatus(HttpStatus.CREATED)
+ public CheckoutResponse create(@AuthenticationPrincipal AuthenticatedUser actor,@RequestHeader(value="Idempotency-Key",required=true) String key,@Valid @RequestBody CreateCheckoutRequest request){return checkoutService.create(actor,request,key);}
+ @GetMapping public Page<CheckoutResponse> history(@AuthenticationPrincipal AuthenticatedUser actor,@PageableDefault(size=20) Pageable pageable){return checkoutService.history(actor,pageable);}
+ @GetMapping("/{checkoutId}") public CheckoutResponse get(@AuthenticationPrincipal AuthenticatedUser actor,@PathVariable UUID checkoutId){return checkoutService.get(actor,checkoutId);}
+ @GetMapping("/{checkoutId}/orders") public List<CheckoutResponse.SupplierOrder> orders(@AuthenticationPrincipal AuthenticatedUser actor,@PathVariable UUID checkoutId){return checkoutService.get(actor,checkoutId).supplierOrders();}
+ @PostMapping("/{checkoutId}/payment") public CheckoutResponse initiatePayment(@AuthenticationPrincipal AuthenticatedUser actor,@PathVariable UUID checkoutId,@RequestHeader(value="Idempotency-Key",required=false) String key,@Valid @RequestBody InitiateCheckoutPaymentRequest request){return checkoutService.initiatePayment(actor,checkoutId,request,key);}
+ @PostMapping("/{checkoutId}/cancel")
+ public CheckoutResponse cancel(@AuthenticationPrincipal AuthenticatedUser actor,@PathVariable UUID checkoutId){return checkoutService.cancel(actor,checkoutId);} @GetMapping("/{checkoutId}/payment") public CheckoutResponse.Payment paymentStatus(@AuthenticationPrincipal AuthenticatedUser actor,@PathVariable UUID checkoutId){return checkoutService.get(actor,checkoutId).payment();}
+ @GetMapping("/{checkoutId}/allocations") public List<CheckoutResponse.Allocation> allocations(@AuthenticationPrincipal AuthenticatedUser actor,@PathVariable UUID checkoutId){return checkoutService.allocations(actor,checkoutId);}
+}

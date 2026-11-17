@@ -22,5 +22,11 @@ public record PurchaseOrderResponse(
         OffsetDateTime reviewedAt,
         OffsetDateTime fulfilledAt,
         List<PurchaseOrderItemResponse> items,
-        List<PurchaseOrderSettlementResponse> settlements
+        List<PurchaseOrderSettlementResponse> settlements,
+        UUID checkoutId,
+        String checkoutReference,
+        UUID destinationWarehouseId,
+        String checkoutPaymentStatus,
+        boolean checkoutPaymentDemo,
+        String checkoutPaymentReference
 ) {}

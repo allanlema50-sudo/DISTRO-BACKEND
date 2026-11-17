@@ -1,4 +1,4 @@
-# LogiFlow Manufacturer and Distributor API Integration Guide
+﻿# LogiFlow Manufacturer and Distributor API Integration Guide
 
 This guide describes the backend routes and DTOs present in this repository. Base paths are relative to the deployed API origin. UUIDs are strings. Timestamps are ISO-8601 offset date-time values. Examples omit server-generated fields where noted.
 
@@ -14,13 +14,13 @@ Manufacturer product discovery is available to authenticated callers at `/api/v1
 
 ### Distributor catalog
 
-`GET /api/v1/products?search=soap&category=Personal%20Care&manufacturerId=<uuid>&page=0&size=20&sort=name,asc` � authenticated; discovery of published, active manufacturer master products. Response is a Spring `Page<ProductResponse>`. The catalog repository filters master products (manufacturer-owned, no source product, active, `PUBLISHED`). `GET /api/v1/products/{productId}` returns an accessible product detail. `GET /api/v1/products/categories` returns category strings. `GET /api/v1/products/manufacturers` and `GET /api/v1/distributor/catalog/manufacturers` return `[{"id":"<uuid>","name":"Acme"}]` to distributor roles.
+`GET /api/v1/products?search=soap&category=Personal%20Care&manufacturerId=<uuid>&page=0&size=20&sort=name,asc` — authenticated; discovery of published, active manufacturer master products. Response is a Spring `Page<ProductResponse>`. The catalog repository filters master products (manufacturer-owned, no source product, active, `PUBLISHED`). `GET /api/v1/products/{productId}` returns an accessible product detail. `GET /api/v1/products/categories` returns category strings. `GET /api/v1/products/manufacturers` and `GET /api/v1/distributor/catalog/manufacturers` return `[{"id":"<uuid>","name":"Acme"}]` to distributor roles.
 
 Manufacturer catalog management: `POST /api/v1/products` (JSON `CreateStockItemRequest`) or multipart `POST /api/v1/products` (form data) creates a product; `PUT /api/v1/products/{productId}` or multipart `PATCH` updates it; `PATCH /api/v1/products/{productId}/status` body `{"active":true}` toggles active state; manufacturer admin `PATCH /api/v1/products/{productId}/publication` body `ProductPublicationRequest` controls publication. Only active and published manufacturer products appear in distributor discovery. Exact create/update field validation is defined in `CreateStockItemRequest`, `UpdateStockItemRequest`, and the multipart DTOs; use OpenAPI at `/swagger-ui/index.html` for the complete product schema.
 
 ## 3. Distribution authorization and commercial terms
 
-`POST /api/v1/products/{productId}/authorization-requests` � distributor admin/staff. Example:
+`POST /api/v1/products/{productId}/authorization-requests` — distributor admin/staff. Example:
 
 ```json
 {"requestNote":"We can support a launch this quarter","targetMarket":"Independent pharmacies and mini-markets","salesChannels":"Field sales, wholesalers, online B2B","geographicalCoverage":"Nairobi, Kiambu and Machakos","distributionStrategy":"Monthly route visits, launch sampling, and reseller training"}
@@ -132,3 +132,9 @@ All DTO and enum contracts are defined by the records and enums named above; `/v
 The backend already contained persistent product publication/discovery, authorization relationships, PO creation/review and stock reservation, Daraja STK initiation and callback reconciliation, payment-gated shipment creation, separate trip/vehicle/driver APIs, discrepancy-aware warehouse receipt, stock movements, and linked distributor offers. This implementation adds proposal fields (target market, sales channels, geography, strategy) and optional manufacturer-approved wholesale price/MOQ to product authorization. POs now apply the approved authorization price and minimum quantity; client prices remain ignored. Migration `V54__distribution_proposal_and_terms.sql` adds the fields. No new endpoint was needed.
 
 Verification: `.\mvnw.cmd -Dtest=!DistroBackendApplicationTests test` passed: 125 tests, zero failures/errors/skips. The application-context test was excluded by the configured test command, so full application startup against the deployment database was not established in this run. Live Safaricom behavior requires the environment configuration above and an externally reachable callback URL; it cannot be claimed verified from this local test run.
+
+## Centralized marketplace checkout status
+
+The distributor DEMO centralized checkout API is now wired at `/api/v1/checkouts`. It creates one checkout with one purchase order per supplier and starts one backend-simulated payment. See the [centralized checkout frontend integration guide](../LOGIFLOW_CENTRALIZED_CHECKOUT_FRONTEND_INTEGRATION_GUIDE.md) for requests, response contracts, states, and configuration. The feature is disabled by default and must be allowlisted. DEMO outcomes are backend-configured and every payment is labelled `DEMO — NO MONEY TRANSFERRED`.
+
+This implementation is not a live marketplace payment integration. Existing Daraja initiation and callback continue to handle one PO settlement at a time with one global shortcode. The repository still has no marketplace split-settlement provider, card processor, supplier payout, or payout confirmation. On successful DEMO payment, accounting allocations are recorded while supplier settlements remain `PENDING`; shipment eligibility is tied to the buyer's successful centralized checkout payment and the matching PO allocation. Do not represent a demo allocation as a supplier payout or reuse per-PO Daraja calls as one multi-supplier checkout.

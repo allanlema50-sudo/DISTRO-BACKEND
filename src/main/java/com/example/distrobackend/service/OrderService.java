@@ -671,36 +671,5 @@ public class OrderService {
 
     private OrderResponse mapToResponse(Order order) {
         return com.example.distrobackend.mapper.OrderMapper.toResponse(order);
-        List<OrderItemResponse> items = order.getOrderItems().stream().map(i -> new OrderItemResponse(
-                i.getId(),
-                i.getStockItem().getId(),
-                i.getQuantity(),
-                i.getPickedQuantity(),
-                i.getPackedQuantity(),
-                i.getUnitPrice(),
-                i.getLineTotal() != null ? i.getLineTotal() : i.getUnitPrice().multiply(BigDecimal.valueOf(i.getQuantity()))
-        )).collect(Collectors.toList());
-
-        return new OrderResponse(
-                order.getId(),
-                order.getOrderNumber(),
-                order.getCustomer().getId(),
-                order.getOrganization().getId(),
-                order.getStatus(),
-                order.getDeliveryAddress(),
-                order.getDeliveryLat(),
-                order.getDeliveryLng(),
-                order.getSubtotalAmount(),
-                order.getDeliveryFee(),
-                order.getTotalAmount(),
-                order.getPackageCount(),
-                order.getCancellationReason(),
-                order.getPlacedAt(),
-                order.getReservationExpiresAt(),
-                order.getConfirmedAt(),
-                order.getDeliveredAt(),
-                order.getCancelledAt(),
-                items
-            );
     }
 }

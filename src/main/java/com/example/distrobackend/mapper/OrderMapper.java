@@ -18,7 +18,7 @@ public class OrderMapper {
                 order.getOrganization() == null ? null : order.getOrganization().getId(), order.getStatus(),
                 order.getDeliveryAddress(), order.getDeliveryLat(), order.getDeliveryLng(),
                 order.getSubtotalAmount(), order.getDeliveryFee(), order.getTotalAmount(),
-                order.getCancellationReason(), order.getPlacedAt(), order.getReservationExpiresAt(),
+                order.getPackageCount(), order.getCancellationReason(), order.getPlacedAt(), order.getReservationExpiresAt(),
                 order.getConfirmedAt(), order.getDeliveredAt(), order.getCancelledAt(),
                 order.getOrderItems().stream().map(OrderMapper::toItemResponse).toList());
     }
@@ -28,6 +28,6 @@ public class OrderMapper {
         BigDecimal lineTotal = item.getLineTotal() != null ? item.getLineTotal()
                 : item.getUnitPrice().multiply(BigDecimal.valueOf(item.getQuantity()));
         return new OrderItemResponse(item.getId(), item.getStockItem() == null ? null : item.getStockItem().getId(),
-                item.getQuantity(), item.getUnitPrice(), lineTotal);
+                item.getQuantity(), item.getPickedQuantity(), item.getPackedQuantity(), item.getUnitPrice(), lineTotal);
     }
 }

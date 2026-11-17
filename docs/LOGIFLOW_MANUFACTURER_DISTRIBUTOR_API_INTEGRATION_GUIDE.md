@@ -1,4 +1,4 @@
-ï»¿# LogiFlow Manufacturer and Distributor API Integration Guide
+# LogiFlow Manufacturer and Distributor API Integration Guide
 
 This guide describes the backend routes and DTOs present in this repository. Base paths are relative to the deployed API origin. UUIDs are strings. Timestamps are ISO-8601 offset date-time values. Examples omit server-generated fields where noted.
 
@@ -14,13 +14,13 @@ Manufacturer product discovery is available to authenticated callers at `/api/v1
 
 ### Distributor catalog
 
-`GET /api/v1/products?search=soap&category=Personal%20Care&manufacturerId=<uuid>&page=0&size=20&sort=name,asc` â€” authenticated; discovery of published, active manufacturer master products. Response is a Spring `Page<ProductResponse>`. The catalog repository filters master products (manufacturer-owned, no source product, active, `PUBLISHED`). `GET /api/v1/products/{productId}` returns an accessible product detail. `GET /api/v1/products/categories` returns category strings. `GET /api/v1/products/manufacturers` and `GET /api/v1/distributor/catalog/manufacturers` return `[{"id":"<uuid>","name":"Acme"}]` to distributor roles.
+`GET /api/v1/products?search=soap&category=Personal%20Care&manufacturerId=<uuid>&page=0&size=20&sort=name,asc` — authenticated; discovery of published, active manufacturer master products. Response is a Spring `Page<ProductResponse>`. The catalog repository filters master products (manufacturer-owned, no source product, active, `PUBLISHED`). `GET /api/v1/products/{productId}` returns an accessible product detail. `GET /api/v1/products/categories` returns category strings. `GET /api/v1/products/manufacturers` and `GET /api/v1/distributor/catalog/manufacturers` return `[{"id":"<uuid>","name":"Acme"}]` to distributor roles.
 
 Manufacturer catalog management: `POST /api/v1/products` (JSON `CreateStockItemRequest`) or multipart `POST /api/v1/products` (form data) creates a product; `PUT /api/v1/products/{productId}` or multipart `PATCH` updates it; `PATCH /api/v1/products/{productId}/status` body `{"active":true}` toggles active state; manufacturer admin `PATCH /api/v1/products/{productId}/publication` body `ProductPublicationRequest` controls publication. Only active and published manufacturer products appear in distributor discovery. Exact create/update field validation is defined in `CreateStockItemRequest`, `UpdateStockItemRequest`, and the multipart DTOs; use OpenAPI at `/swagger-ui/index.html` for the complete product schema.
 
 ## 3. Distribution authorization and commercial terms
 
-`POST /api/v1/products/{productId}/authorization-requests` â€” distributor admin/staff. Example:
+`POST /api/v1/products/{productId}/authorization-requests` — distributor admin/staff. Example:
 
 ```json
 {"requestNote":"We can support a launch this quarter","targetMarket":"Independent pharmacies and mini-markets","salesChannels":"Field sales, wholesalers, online B2B","geographicalCoverage":"Nairobi, Kiambu and Machakos","distributionStrategy":"Monthly route visits, launch sampling, and reseller training"}
@@ -44,17 +44,17 @@ Distributor create: `POST /api/v1/purchase-orders` (distributor admin/staff):
 {"supplierOrganizationId":"<manufacturer-uuid>","items":[{"stockItemId":"<manufacturer-product-uuid>","quantity":24,"distributorOfferId":"<optional-existing-offer-uuid>"}]}
 ```
 
-The server checks product ownership/publication, approved authorization, MOQ, manufacturer available stock, unique line products, and (if provided) offer ownership/source validity. It reserves manufacturer stock and snapshots agreed wholesale price into each line; client-supplied price is not accepted. Current request DTO does not accept a destination warehouse; the manufacturer later supplies distributor destination warehouse when creating the shipment. Initial PO status is `SUBMITTED`, with a pending settlement.
+The server checks product ownership/publication, approved authorization, MOQ, manufacturer available stock, unique line products, and (if provided) offer ownership/source validity. It reserves manufacturer stock and snapshots agreed wholesale price into each line; client-supplied price is not accepted. Current request DTO does not accept a destination warehouse; the manufacturer later supplies distributor destination warehouse when creating the shipment. Initial PO status is `APPROVED`, with a pending settlement. The approved product distribution authorization is the sole manufacturer approval required; no PO decision is required before payment.
 
-Distributor routes: `GET /api/v1/purchase-orders`, `GET /api/v1/purchase-orders/{purchaseOrderId}`, `GET /api/v1/purchase-orders/{purchaseOrderId}/settlements`. Manufacturer routes: `GET /api/v1/manufacturer/purchase-orders`, `GET /api/v1/manufacturer/purchase-orders/{purchaseOrderId}`, `GET /api/v1/manufacturer/purchase-orders/{purchaseOrderId}/settlements`. Both list endpoints are paginated and tenant-scoped. Manufacturer admin reviews using `PATCH /api/v1/manufacturer/purchase-orders/{purchaseOrderId}/decision`:
+Distributor routes: `GET /api/v1/purchase-orders`, `GET /api/v1/purchase-orders/{purchaseOrderId}`, `GET /api/v1/purchase-orders/{purchaseOrderId}/settlements`. Manufacturer routes: `GET /api/v1/manufacturer/purchase-orders`, `GET /api/v1/manufacturer/purchase-orders/{purchaseOrderId}`, `GET /api/v1/manufacturer/purchase-orders/{purchaseOrderId}/settlements`. Both list endpoints are paginated and tenant-scoped. The legacy manufacturer decision route `PATCH /api/v1/manufacturer/purchase-orders/{purchaseOrderId}/decision` remains for compatibility with older `SUBMITTED` records; it is not part of the direct purchase flow.
 
 ```json
 {"status":"APPROVED","note":""}
 ```
 
-Only `APPROVED` and `REJECTED` are accepted. Rejection requires a reason and releases reserved manufacturer stock. Approval is the single manufacturer order confirmation required before payment; do not add another confirmation screen/API.
+Only `APPROVED` and `REJECTED` are accepted. Rejection requires a reason and releases reserved manufacturer stock. No routine second approval is used.
 
-PO status enum: `SUBMITTED`, `APPROVED`, `REJECTED`, `CANCELLED`, `FULFILLED`. `PurchaseOrderResponse` fields are `id`, `purchaseOrderNumber`, `buyerOrganizationId`, `supplierOrganizationId`, `status`, `totalAmount`, `currency`, `rejectionReason`, `submittedAt`, `reviewedAt`, `fulfilledAt`, `items`, `settlements`. Each item has `id`, `stockItemId`, nullable `distributorOfferId`, `sku`, `name`, `quantity`, `unitPrice`, `lineTotal`. Do not PATCH line items after submission; no such endpoint exists.
+PO status enum: `SUBMITTED`, `APPROVED`, `REJECTED`, `CANCELLED`, `FULFILLED`. `PurchaseOrderResponse` fields are `id`, `purchaseOrderNumber`, `buyerOrganizationId`, `supplierOrganizationId`, `buyerOrganizationName`, `supplierOrganizationName`, `status`, `totalAmount`, `currency`, `rejectionReason`, `submittedAt`, `reviewedAt`, `fulfilledAt`, `items`, `settlements`. Each item has `id`, `stockItemId`, nullable `distributorOfferId`, `sku`, `name`, `quantity`, `unitPrice`, `lineTotal`. Do not PATCH line items after submission; no such endpoint exists.
 
 ## 5. M-Pesa payment and reconciliation
 

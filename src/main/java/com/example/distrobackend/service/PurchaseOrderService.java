@@ -50,6 +50,7 @@ public class PurchaseOrderService {
     private final NotificationService notificationService;
     private final ProductAuthorizationService productAuthorizationService;
     private final DistributorProductAuthorizationRepository authorizationRepository;
+    private final com.example.distrobackend.repository.CheckoutPaymentRepository checkoutPaymentRepository;
 
     @Transactional
     public PurchaseOrderResponse create(AuthenticatedUser actor, CreatePurchaseOrderRequest request) {
@@ -272,6 +273,8 @@ public class PurchaseOrderService {
         purchaseOrder.setStockReserved(false);
     }
     private PurchaseOrderResponse toResponse(PurchaseOrder purchaseOrder) {
+        com.example.distrobackend.Domain.entity.CheckoutPayment checkoutPayment = purchaseOrder.getCheckout() == null ? null
+                : purchaseOrder.getCheckout().getPayment();
         return new PurchaseOrderResponse(
                 purchaseOrder.getId(), purchaseOrder.getPurchaseOrderNumber(),
                 purchaseOrder.getBuyerOrganization().getId(), purchaseOrder.getSupplierOrganization().getId(),
@@ -287,7 +290,13 @@ public class PurchaseOrderService {
                         item.getLineTotal() != null ? item.getLineTotal() : item.getUnitPrice()
                                 .multiply(BigDecimal.valueOf(item.getQuantity())))).toList(),
                 settlementRepository.findByPurchaseOrderIdOrderByCreatedAtDesc(purchaseOrder.getId())
-                        .stream().map(this::toSettlementResponse).toList());
+                        .stream().map(this::toSettlementResponse).toList(),
+                purchaseOrder.getCheckout() == null ? null : purchaseOrder.getCheckout().getId(),
+                purchaseOrder.getCheckout() == null ? null : purchaseOrder.getCheckout().getCheckoutReference(),
+                purchaseOrder.getDestinationWarehouse() == null ? null : purchaseOrder.getDestinationWarehouse().getId(),
+                checkoutPayment == null ? "PENDING" : checkoutPayment.getStatus().name(),
+                checkoutPayment != null && checkoutPayment.isDemo(),
+                checkoutPayment == null ? null : checkoutPayment.getProviderReference());
     }
 
     private String displayName(Organization organization) {

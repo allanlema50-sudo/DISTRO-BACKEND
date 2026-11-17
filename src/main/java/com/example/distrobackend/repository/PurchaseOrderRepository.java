@@ -14,8 +14,10 @@ import java.util.UUID;
 
 public interface PurchaseOrderRepository extends JpaRepository<PurchaseOrder, UUID> {
 
+    @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {"buyerOrganization", "supplierOrganization", "checkout", "checkout.payment", "destinationWarehouse"})
     Page<PurchaseOrder> findByBuyerOrganizationId(UUID organizationId, Pageable pageable);
 
+    @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {"buyerOrganization", "supplierOrganization", "checkout", "checkout.payment", "destinationWarehouse"})
     Page<PurchaseOrder> findBySupplierOrganizationId(UUID organizationId, Pageable pageable);
 
     @Query("select p from PurchaseOrder p "
@@ -25,6 +27,8 @@ public interface PurchaseOrderRepository extends JpaRepository<PurchaseOrder, UU
             + "left join fetch p.reviewedBy reviewer "
             + "left join fetch p.items i "
             + "left join fetch i.stockItem "
+            + "left join fetch p.checkout checkout "
+            + "left join fetch checkout.payment checkoutPayment "
             + "where p.id = :id")
     Optional<PurchaseOrder> findByIdWithItems(@Param("id") UUID id);
 
@@ -36,6 +40,8 @@ public interface PurchaseOrderRepository extends JpaRepository<PurchaseOrder, UU
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select p from PurchaseOrder p where p.id = :id")
     Optional<PurchaseOrder> findByIdForUpdate(@Param("id") UUID id);
+
+    java.util.List<PurchaseOrder> findByCheckout_Id(UUID checkoutId);
 
     @Query(value = "select nextval('purchase_order_number_seq')", nativeQuery = true)
     Long getNextPurchaseOrderSequence();

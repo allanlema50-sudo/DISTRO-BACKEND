@@ -42,6 +42,14 @@ public class PurchaseOrder {
     @JoinColumn(name = "supplier_organization_id", nullable = false)
     private Organization supplierOrganization;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "checkout_id")
+    private Checkout checkout;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "destination_warehouse_id")
+    private Warehouse destinationWarehouse;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)
     private PurchaseOrderStatus status = PurchaseOrderStatus.SUBMITTED;

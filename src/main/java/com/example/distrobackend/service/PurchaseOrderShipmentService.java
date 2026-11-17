@@ -1,6 +1,7 @@
 package com.example.distrobackend.service;
 
 import com.example.distrobackend.Domain.entity.Organization;
+import com.example.distrobackend.Domain.entity.CheckoutItem;
 import com.example.distrobackend.Domain.entity.PurchaseOrder;
 import com.example.distrobackend.Domain.entity.PurchaseOrderItem;
 import com.example.distrobackend.Domain.entity.PurchaseOrderShipment;
@@ -55,6 +56,9 @@ public class PurchaseOrderShipmentService {
     private final PurchaseOrderShipmentRepository shipmentRepository;
     private final PurchaseOrderRepository purchaseOrderRepository;
     private final PurchaseOrderSettlementRepository settlementRepository;
+    private final com.example.distrobackend.repository.CheckoutPaymentRepository checkoutPaymentRepository;
+    private final com.example.distrobackend.repository.PaymentAllocationRepository paymentAllocationRepository;
+    private final com.example.distrobackend.repository.CheckoutItemRepository checkoutItemRepository;
     private final WarehouseRepository warehouseRepository;
     private final StockItemRepository stockItemRepository;
     private final StockMovementRepository stockMovementRepository;
@@ -72,22 +76,41 @@ public class PurchaseOrderShipmentService {
             throw new ApiException(ErrorCode.CONFLICT,
                     "A shipment can only be created for an approved purchase order");
         }
-        PurchaseOrderSettlement settlement = settlementRepository
-                .findByPurchaseOrderIdOrderByCreatedAtDesc(purchaseOrder.getId()).stream()
-                .findFirst()
-                .orElseThrow(() -> new ApiException(ErrorCode.CONFLICT,
-                        "The purchase order has no settlement record"));
-        if (settlement.getStatus() != SettlementStatus.SETTLED) {
-            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
-                    "The purchase order must be settled before dispatch");
-        }
-        if (settlement.getAmount() == null
-                || settlement.getAmount().compareTo(purchaseOrder.getTotalAmount()) != 0
-                || !purchaseOrder.getCurrency().equalsIgnoreCase(settlement.getCurrency())) {
-            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
-                    "The settled amount does not match the purchase order");
-        }
-        PurchaseOrderShipment shipment = shipmentRepository.findByPurchaseOrderId(purchaseOrder.getId())
+        if (purchaseOrder.getCheckout() == null) {
+            PurchaseOrderSettlement settlement = settlementRepository
+                    .findByPurchaseOrderIdOrderByCreatedAtDesc(purchaseOrder.getId()).stream()
+                    .findFirst().orElseThrow(() -> new ApiException(ErrorCode.CONFLICT,
+                            "The purchase order has no settlement record"));
+            if (settlement.getStatus() != SettlementStatus.SETTLED || settlement.getAmount() == null
+                    || settlement.getAmount().compareTo(purchaseOrder.getTotalAmount()) != 0
+                    || !purchaseOrder.getCurrency().equalsIgnoreCase(settlement.getCurrency())) {
+                throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                        "The purchase order must be settled for the exact amount before dispatch");
+            }
+        } else {
+            var payment = checkoutPaymentRepository.findByCheckout_Id(purchaseOrder.getCheckout().getId())
+                    .orElseThrow(() -> new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT, "Checkout payment is not confirmed"));
+            if (payment.getStatus() != com.example.distrobackend.Domain.enums.CheckoutPaymentStatus.SUCCESS
+                    || payment.getAmount().compareTo(purchaseOrder.getCheckout().getTotalAmount()) != 0
+                    || !payment.getCurrency().equalsIgnoreCase(purchaseOrder.getCheckout().getCurrency())) {
+                throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT, "Checkout payment is not confirmed for the full amount");
+            }
+            var allocation = paymentAllocationRepository.findByPurchaseOrder_Id(purchaseOrder.getId()).stream()
+                    .filter(candidate -> candidate.getPayment().getId().equals(payment.getId())).findFirst()
+                    .orElseThrow(() -> new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT, "Supplier order has no checkout allocation"));
+            if (allocation.getGrossAmount().compareTo(purchaseOrder.getTotalAmount()) != 0
+                    || !allocation.getCurrency().equalsIgnoreCase(purchaseOrder.getCurrency())) {
+                throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT, "Supplier allocation does not match this purchase order");
+            }
+            UUID capturedWarehouse = checkoutItemRepository.findByPurchaseOrder_Id(purchaseOrder.getId()).stream()
+                    .map(CheckoutItem::getDestinationWarehouse).filter(java.util.Objects::nonNull)
+                    .map(Warehouse::getId).findFirst().orElse(null);
+            if (capturedWarehouse == null || !capturedWarehouse.equals(request.destinationWarehouseId())
+                    || purchaseOrder.getDestinationWarehouse() == null
+                    || !capturedWarehouse.equals(purchaseOrder.getDestinationWarehouse().getId())) {
+                throw new ApiException(ErrorCode.BAD_REQUEST, "Shipment destination must match the warehouse selected at checkout");
+            }
+        }        PurchaseOrderShipment shipment = shipmentRepository.findByPurchaseOrderId(purchaseOrder.getId())
                 .orElse(null);
         if (shipment != null && shipment.getStatus() != PurchaseOrderShipmentStatus.CANCELLED) {
             throw new ApiException(ErrorCode.CONFLICT,

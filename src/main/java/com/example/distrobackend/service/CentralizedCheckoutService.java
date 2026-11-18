@@ -166,12 +166,16 @@ public class CentralizedCheckoutService {
         Checkout checkout = checkoutRepository.findByIdAndBuyerOrganization_Id(checkoutId, actor.organizationId())
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Checkout not found"));
         String method = request.method().trim().toUpperCase(Locale.ROOT);
-        boolean demo = method.equals("DEMO");
+        // Older/current distributor clients distinguish demo payment choices
+        // by channel. They all represent a simulated payment and must retain
+        // the same organization allowlist and non-production restrictions.
+        boolean demo = Set.of("DEMO", "DEMO_MPESA", "DEMO_CARD").contains(method);
         if (demo) ensureDemoAuthorized(actor);
         PaymentMethod paymentMethod = switch (method) {
-            case "DEMO" -> PaymentMethod.OTHER;
+            case "DEMO", "DEMO_MPESA", "DEMO_CARD" -> PaymentMethod.OTHER;
             case "MPESA_SANDBOX", "MPESA" -> PaymentMethod.MPESA;
-            default -> throw new ApiException(ErrorCode.BAD_REQUEST, "method must be MPESA_SANDBOX or DEMO");
+            default -> throw new ApiException(ErrorCode.BAD_REQUEST,
+                    "method must be MPESA_SANDBOX, MPESA, DEMO, DEMO_MPESA, or DEMO_CARD");
         };
         CheckoutPayment existing = checkoutPaymentRepository.findByCheckout_Id(checkoutId).orElse(null);
         if (existing != null) {

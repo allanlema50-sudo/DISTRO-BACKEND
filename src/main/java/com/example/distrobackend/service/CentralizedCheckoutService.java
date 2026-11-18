@@ -52,11 +52,14 @@ public class CentralizedCheckoutService {
     @Value("${logiflow.demo-payments.confirmation-delay-seconds:3}") private long confirmationDelaySeconds;
     @Value("${spring.profiles.active:local}") private String activeProfiles;
     @Value("${mpesa.base-url:https://sandbox.safaricom.co.ke}") private String mpesaBaseUrl;
+    @Value("${mpesa.auth-url}") private String mpesaAuthUrl;
+    @Value("${mpesa.stk-push-url}") private String mpesaStkPushUrl;
+    @Value("${mpesa.stk-query-url}") private String mpesaStkQueryUrl;
     @Value("${mpesa.consumer-key:}") private String mpesaConsumerKey;
     @Value("${mpesa.consumer-secret:}") private String mpesaConsumerSecret;
     @Value("${mpesa.shortcode:}") private String mpesaShortcode;
     @Value("${mpesa.passkey:}") private String mpesaPasskey;
-    @Value("${mpesa.callback-url:}") private String mpesaCallbackUrl;
+    @Value("${mpesa.checkout-callback-url:${mpesa.callback-url:}}") private String mpesaCheckoutCallbackUrl;
     @Value("${mpesa.callback-secret:}") private String mpesaCallbackSecret;
 
     @PostConstruct
@@ -206,20 +209,21 @@ public class CentralizedCheckoutService {
     }
 
     private void initiateDaraja(CheckoutPayment payment, String phone) {
-        if (phone == null || phone.isBlank()) throw new ApiException(ErrorCode.BAD_REQUEST, "phoneNumber is required for M-Pesa Sandbox");
-        if (mpesaBaseUrl == null || !mpesaBaseUrl.startsWith("https://sandbox.safaricom.co.ke") || mpesaConsumerKey.isBlank() || mpesaConsumerSecret.isBlank() || mpesaShortcode.isBlank() || mpesaPasskey.isBlank() || mpesaCallbackUrl.isBlank() || mpesaCallbackSecret.isBlank())
-            throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "M-Pesa sandbox is not fully configured");
-        String tokenUrl = "https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials";
+        if (phone == null || phone.isBlank()) throw new ApiException(ErrorCode.BAD_REQUEST, "phoneNumber is required for M-Pesa STK Push");
+        if (!Set.of("https://sandbox.safaricom.co.ke", "https://api.safaricom.co.ke").contains(mpesaBaseUrl)
+                || mpesaConsumerKey.isBlank() || mpesaConsumerSecret.isBlank() || mpesaShortcode.isBlank()
+                || mpesaPasskey.isBlank() || mpesaCheckoutCallbackUrl.isBlank())
+            throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "M-Pesa is not fully configured for a supported Daraja environment");
         HttpHeaders authHeaders = new HttpHeaders();
         authHeaders.setBasicAuth(mpesaConsumerKey, mpesaConsumerSecret);
-        ResponseEntity<Map> tokenResult = darajaRestTemplate.exchange(tokenUrl, HttpMethod.GET, new HttpEntity<>(authHeaders), Map.class);
+        ResponseEntity<Map> tokenResult = darajaRestTemplate.exchange(mpesaAuthUrl, HttpMethod.GET, new HttpEntity<>(authHeaders), Map.class);
         Object accessToken = tokenResult.getBody() == null ? null : tokenResult.getBody().get("access_token");
         if (accessToken == null) throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "Daraja sandbox authentication failed");
         String timestamp = java.time.LocalDateTime.now(ZoneId.of("Africa/Nairobi")).format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
         String password = Base64.getEncoder().encodeToString((mpesaShortcode + mpesaPasskey + timestamp).getBytes(StandardCharsets.UTF_8));
-        Map<String,Object> body = Map.of("BusinessShortCode",mpesaShortcode,"Password",password,"Timestamp",timestamp,"TransactionType","CustomerPayBillOnline","Amount",payment.getAmount().setScale(0,java.math.RoundingMode.CEILING).intValueExact(),"PartyA",phone,"PartyB",mpesaShortcode,"PhoneNumber",phone,"CallBackURL",mpesaCallbackUrl,"AccountReference",payment.getCheckout().getCheckoutReference(),"TransactionDesc","LogiFlow checkout");
+        Map<String,Object> body = Map.of("BusinessShortCode",mpesaShortcode,"Password",password,"Timestamp",timestamp,"TransactionType","CustomerPayBillOnline","Amount",payment.getAmount().setScale(0,java.math.RoundingMode.CEILING).intValueExact(),"PartyA",phone,"PartyB",mpesaShortcode,"PhoneNumber",phone,"CallBackURL",mpesaCheckoutCallbackUrl,"AccountReference",payment.getCheckout().getCheckoutReference(),"TransactionDesc","LogiFlow checkout");
         HttpHeaders headers = new HttpHeaders(); headers.setBearerAuth(String.valueOf(accessToken)); headers.setContentType(MediaType.APPLICATION_JSON);
-        ResponseEntity<Map> result = darajaRestTemplate.postForEntity("https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest", new HttpEntity<>(body,headers), Map.class);
+        ResponseEntity<Map> result = darajaRestTemplate.postForEntity(mpesaStkPushUrl, new HttpEntity<>(body,headers), Map.class);
         Map data=result.getBody();
         if (data == null || data.get("CheckoutRequestID") == null || data.get("MerchantRequestID") == null || !"0".equals(String.valueOf(data.get("ResponseCode")))) throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "Daraja sandbox did not accept STK request");
         payment.setMpesaCheckoutRequestId(String.valueOf(data.get("CheckoutRequestID")));
@@ -255,7 +259,14 @@ public class CentralizedCheckoutService {
 
     @Transactional
     public void processMpesaCallback(String suppliedSecret, com.example.distrobackend.dto.mpesa.MpesaCallbackRequest request) {
-        if (mpesaCallbackSecret.isBlank() || suppliedSecret == null || !java.security.MessageDigest.isEqual(mpesaCallbackSecret.getBytes(StandardCharsets.UTF_8), suppliedSecret.getBytes(StandardCharsets.UTF_8))) throw new ApiException(ErrorCode.UNAUTHENTICATED, "Invalid M-Pesa callback credentials");
+        // Daraja callbacks do not provide a configurable custom header. If a
+        // shared-secret header is supplied, validate it; otherwise authenticate
+        // the callback below by querying Daraja and matching its result.
+        if (suppliedSecret != null && !suppliedSecret.isBlank()
+                && (mpesaCallbackSecret.isBlank() || !java.security.MessageDigest.isEqual(
+                mpesaCallbackSecret.getBytes(StandardCharsets.UTF_8), suppliedSecret.getBytes(StandardCharsets.UTF_8)))) {
+            throw new ApiException(ErrorCode.UNAUTHENTICATED, "Invalid M-Pesa callback credentials");
+        }
         var callback = request == null || request.getBody() == null ? null : request.getBody().getStkCallback();
         if (callback == null || callback.getCheckoutRequestId() == null || callback.getResultCode() == null) throw new ApiException(ErrorCode.BAD_REQUEST, "Invalid M-Pesa callback");
         CheckoutPayment payment = checkoutPaymentRepository.findByMpesaCheckoutRequestId(callback.getCheckoutRequestId()).orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Checkout payment not found"));
@@ -265,9 +276,9 @@ public class CentralizedCheckoutService {
             String password=Base64.getEncoder().encodeToString((mpesaShortcode+mpesaPasskey+timestamp).getBytes(StandardCharsets.UTF_8));
             Map<String,String> query=Map.of("BusinessShortCode",mpesaShortcode,"Password",password,"Timestamp",timestamp,"CheckoutRequestID",callback.getCheckoutRequestId());
             HttpHeaders headers=new HttpHeaders(); headers.setBasicAuth(mpesaConsumerKey,mpesaConsumerSecret);
-            ResponseEntity<Map> token=darajaRestTemplate.exchange("https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials",HttpMethod.GET,new HttpEntity<>(headers),Map.class);
+            ResponseEntity<Map> token=darajaRestTemplate.exchange(mpesaAuthUrl,HttpMethod.GET,new HttpEntity<>(headers),Map.class);
             HttpHeaders queryHeaders=new HttpHeaders(); queryHeaders.setBearerAuth(String.valueOf(token.getBody().get("access_token"))); queryHeaders.setContentType(MediaType.APPLICATION_JSON);
-            ResponseEntity<Map> verified=darajaRestTemplate.postForEntity("https://sandbox.safaricom.co.ke/mpesa/stkpushquery/v1/query",new HttpEntity<>(query,queryHeaders),Map.class);
+            ResponseEntity<Map> verified=darajaRestTemplate.postForEntity(mpesaStkQueryUrl,new HttpEntity<>(query,queryHeaders),Map.class);
             if(verified.getBody()==null || !String.valueOf(callback.getResultCode()).equals(String.valueOf(verified.getBody().get("ResultCode")))) throw new ApiException(ErrorCode.BAD_REQUEST,"M-Pesa callback could not be reconciled");
         } catch (ApiException e) { throw e; } catch (Exception e) { throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED,"M-Pesa payment verification failed"); }
         payment.setMpesaMerchantRequestId(callback.getMerchantRequestId());

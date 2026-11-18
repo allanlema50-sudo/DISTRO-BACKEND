@@ -7,13 +7,19 @@ import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.dto.*;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.service.TripService;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Valid;
+import jakarta.validation.Validator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -24,6 +30,8 @@ import org.springframework.data.domain.Pageable;
 public class TripController {
 
     private final TripService tripService;
+    private final ObjectMapper objectMapper;
+    private final Validator validator;
 
     @GetMapping
     public Page<TripResponse> list(@AuthenticationPrincipal AuthenticatedUser me,
@@ -56,13 +64,33 @@ public class TripController {
     @ResponseStatus(HttpStatus.CREATED)
     public TripResponse createTrip(
             @AuthenticationPrincipal AuthenticatedUser me,
-            @Valid @RequestBody TripRequest request) {
+            @RequestBody JsonNode body) {
 
-        if (me.role() == UserRole.CUSTOMER || me.role() == UserRole.DRIVER) {
+        if (me == null || me.role() == UserRole.CUSTOMER || me.role() == UserRole.DRIVER) {
             throw new ApiException(ErrorCode.ACCESS_DENIED, "Role not authorized to create trips");
         }
 
-        return tripService.createTrip(me, request);
+        if (body.hasNonNull("vehicleId") && body.has("shipmentIds")) {
+            return tripService.createFreightTrip(me, read(body, FreightTripRequest.class));
+        }
+
+        return tripService.createTrip(me, read(body, TripRequest.class));
+    }
+
+    private <T> T read(JsonNode body, Class<T> type) {
+        final T value;
+        try {
+            value = objectMapper.treeToValue(body, type);
+        } catch (JsonProcessingException ex) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Malformed request body or invalid field value");
+        }
+        Set<ConstraintViolation<T>> violations = validator.validate(value);
+        if (!violations.isEmpty()) {
+            ConstraintViolation<T> violation = violations.iterator().next();
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    violation.getPropertyPath() + " " + violation.getMessage());
+        }
+        return value;
     }
 
     @GetMapping("/active")

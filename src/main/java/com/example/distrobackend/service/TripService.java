@@ -32,6 +32,7 @@ public class TripService {
     private final TripOperationalActionRepository tripOperationalActionRepository;
     private final RiderProfileRepository riderProfileRepository;
     private final VehicleRepository vehicleRepository;
+    private final ShipmentRepository shipmentRepository;
     private final TripAccessService tripAccessService;
     private final OtpService otpService;
     private final OrderService orderService;
@@ -101,6 +102,89 @@ public class TripService {
 
         Trip saved = tripRepository.save(trip);
         recordStatus(saved, null, TripStatus.SCHEDULED, actor, "Trip created");
+        return TripResponse.from(saved, aggregateItems(saved));
+    }
+
+    @Transactional
+    public TripResponse createFreightTrip(AuthenticatedUser actor, FreightTripRequest request) {
+        if (actor == null || actor.role() == UserRole.CUSTOMER || actor.role() == UserRole.DRIVER) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED, "Role not authorized to create trips");
+        }
+        Vehicle vehicle = vehicleRepository.findByIdForUpdate(request.vehicleId())
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Vehicle not found"));
+        if (actor.role() != UserRole.SUPER_ADMIN
+                && !requireOrganization(actor).equals(vehicle.getOrganization().getId())) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        User driver = userRepository.findByIdForUpdate(request.driverId())
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Driver not found"));
+        if (driver.getRole() != UserRole.DRIVER) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Driver not found");
+        }
+        if (driver.getStatus() != UserStatus.ACTIVE
+                || driver.getDriverApprovalStatus() != DriverApprovalStatus.APPROVED) {
+            throw new ApiException(ErrorCode.CONFLICT, "Only an approved active driver can be assigned");
+        }
+        List<TripStatus> activeStatuses = List.of(TripStatus.SCHEDULED, TripStatus.ONGOING, TripStatus.DELAYED);
+        if (tripRepository.existsByRider_IdAndStatusInAndIdNot(driver.getId(), activeStatuses, UUID.randomUUID())) {
+            throw new ApiException(ErrorCode.CONFLICT, "The driver is already assigned to another active trip");
+        }
+        if (tripRepository.existsByVehicle_IdAndStatusIn(vehicle.getId(), activeStatuses)) {
+            throw new ApiException(ErrorCode.CONFLICT, "The vehicle is already assigned to another active trip");
+        }
+
+        List<Shipment> shipments = new ArrayList<>();
+        Set<UUID> seen = new HashSet<>();
+        for (UUID shipmentId : request.shipmentIds()) {
+            if (!seen.add(shipmentId)) {
+                throw new ApiException(ErrorCode.BAD_REQUEST, "Each shipment can only be added once");
+            }
+            Shipment shipment = shipmentRepository.findByIdForUpdate(shipmentId)
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Shipment not found"));
+            if (shipment.getStatus() != ShipmentStatus.READY || shipment.getTrip() != null) {
+                throw new ApiException(ErrorCode.CONFLICT, "Shipment is not available for a trip");
+            }
+            shipments.add(shipment);
+        }
+
+        Shipment first = shipments.get(0);
+        Trip trip = new Trip();
+        trip.setOrganization(vehicle.getOrganization());
+        trip.setTripType(TripType.DELIVERY);
+        trip.setTripNumber("TRIP-" + UUID.randomUUID().toString().replace("-", "").substring(0, 20));
+        trip.setStatus(TripStatus.SCHEDULED);
+        trip.setRider(driver);
+        trip.setVehicle(vehicle);
+        trip.setOriginName(first.getCargoDescription());
+        trip.setOriginAddress(first.getDeliveryLocation());
+        trip.setOriginLat(0.0);
+        trip.setOriginLng(0.0);
+        trip.setScheduledStartLabel(request.plannedStart());
+        trip.setTotalDistanceKm(request.distanceKm());
+        int sequence = 1;
+        for (Shipment shipment : shipments) {
+            TripStop stop = new TripStop();
+            stop.setSequence(sequence++);
+            stop.setStatus(StopStatus.PENDING);
+            stop.setLocationName(shipment.getCargoDescription());
+            stop.setLocationAddress(shipment.getDeliveryLocation());
+            stop.setLocationLat(0.0);
+            stop.setLocationLng(0.0);
+            if (shipment.getDeliveryWindowStart() != null) {
+                stop.setEtaLabel(shipment.getDeliveryWindowStart().toString());
+            }
+            trip.addStop(stop);
+        }
+
+        Trip saved = tripRepository.save(trip);
+        for (Shipment shipment : shipments) {
+            shipment.setTrip(saved);
+            shipment.setStatus(ShipmentStatus.ASSIGNED);
+            shipmentRepository.save(shipment);
+        }
+        String note = request.notes() == null || request.notes().isBlank()
+                ? "Trip created" : request.notes().trim();
+        recordStatus(saved, null, TripStatus.SCHEDULED, actor, note);
         return TripResponse.from(saved, aggregateItems(saved));
     }
 

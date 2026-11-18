@@ -33,6 +33,7 @@ public class CorsConfig {
                 "Authorization",
                 "Content-Type",
                 "Accept",
+                "Idempotency-Key",
                 "X-Requested-With",
                 "X-Platform",
                 "ngrok-skip-browser-warning"

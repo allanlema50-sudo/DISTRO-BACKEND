@@ -7,13 +7,13 @@ import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.dto.*;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.service.TripService;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Valid;
 import jakarta.validation.Validator;
 import lombok.RequiredArgsConstructor;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -30,7 +30,7 @@ import org.springframework.data.domain.Pageable;
 public class TripController {
 
     private final TripService tripService;
-    private final ObjectMapper objectMapper;
+    private final JsonMapper jsonMapper;
     private final Validator validator;
 
     @GetMapping
@@ -80,8 +80,8 @@ public class TripController {
     private <T> T read(JsonNode body, Class<T> type) {
         final T value;
         try {
-            value = objectMapper.treeToValue(body, type);
-        } catch (JsonProcessingException ex) {
+            value = jsonMapper.treeToValue(body, type);
+        } catch (JacksonException ex) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Malformed request body or invalid field value");
         }
         Set<ConstraintViolation<T>> violations = validator.validate(value);

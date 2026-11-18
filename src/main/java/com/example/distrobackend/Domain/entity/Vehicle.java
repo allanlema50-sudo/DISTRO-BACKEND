@@ -21,6 +21,7 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.type.SqlTypes;
 
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
@@ -56,6 +57,9 @@ public class Vehicle {
 
     @Column(name = "capacity_kg")
     private Integer capacityKg;
+
+    @Column(name = "capacity_m3", precision = 10, scale = 2)
+    private BigDecimal capacityM3;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "assigned_driver_id")

@@ -1,7 +1,7 @@
 package com.example.distrobackend.service;
 
 import com.example.distrobackend.event.OnboardingEmailRequested;
-import com.example.distrobackend.integration.notification.MailgunEmailClient;
+import com.example.distrobackend.integration.notification.EmailProviderClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
@@ -14,14 +14,15 @@ import org.springframework.transaction.event.TransactionalEventListener;
 
 /**
  * Delivers onboarding email only after the transaction that created the token
- * commits. Tokens are never written to application logs.
+ * commits. Tokens are not written to logs except when EMAIL_PROVIDER=log, which
+ * the application accepts only on the local profile.
  */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class OnboardingEmailService {
     private final ObjectProvider<JavaMailSender> mailSender;
-    private final MailgunEmailClient mailgunEmailClient;
+    private final EmailProviderClient emailProviderClient;
 
     @Value("${app.mail.enabled:false}")
     private boolean enabled;
@@ -35,13 +36,18 @@ public class OnboardingEmailService {
             log.debug("Onboarding email delivery is disabled");
             return;
         }
-        if (mailgunEmailClient.isConfigured()) {
+        if (emailProviderClient.isConfigured()) {
             try {
-                mailgunEmailClient.send(event.recipient(), event.subject(), event.body());
+                emailProviderClient.send(event.recipient(), event.subject(), event.body());
             } catch (RuntimeException ex) {
                 // The onboarding record and token remain the source of truth.
-                log.error("Onboarding email delivery failed for recipient domain", ex);
+                // Provider clients log HTTP status and body without the API key.
+                log.error("Onboarding email delivery failed for recipient domain: {}", ex.getMessage());
             }
+            return;
+        }
+        if (!emailProviderClient.allowsSmtpFallback()) {
+            log.error("Onboarding email is enabled but the selected email provider is not configured");
             return;
         }
         JavaMailSender sender = mailSender.getIfAvailable();

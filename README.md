@@ -613,13 +613,19 @@ JWT contains the new role. Do not expose a public endpoint for assigning
 production deployment.
 
 For production, set `SPRING_PROFILES_ACTIVE=prod` and configure the real OTP
-provider variables. `OTP_PROVIDER=mailgun` sends OTPs through Mailgun's HTTPS
-API and works with the sandbox domain for up to five individually verified
-recipient addresses. Set `MAILGUN_API_KEY` and `MAILGUN_DOMAIN` in Render; use
+provider variables. `EMAIL_PROVIDER` selects the HTTPS transport for OTP mail
+and onboarding mail: `mailgun`, `brevo`, or `log`. `log` prints the email and
+OTP to the console and the application refuses to start with it unless the
+`local` profile is active. `OTP_PROVIDER=mailgun` sends OTPs through Mailgun's
+HTTPS API and works with the sandbox domain for up to five individually verified
+recipient addresses. Set `MAILGUN_API_KEY` and `MAILGUN_DOMAIN`; use
 `MAILGUN_API_BASE_URL=https://api.mailgun.net` for the US region or
-`https://api.eu.mailgun.net` for the EU region. Set `MAIL_ENABLED=true` to send
-post-approval activation links and invitations through the same Mailgun HTTPS
-API. The local profile logs OTP codes for development and must not be used for
+`https://api.eu.mailgun.net` for the EU region. `OTP_PROVIDER=brevo` with
+`EMAIL_PROVIDER=brevo` sends the same mail through Brevo's HTTP API
+(`BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, `BREVO_SENDER_NAME`). That path does
+not use SMTP, which Render's free tier blocks. Set `MAIL_ENABLED=true` to send
+post-approval activation links and invitations through the selected provider.
+The local profile logs OTP codes for development and must not be used for
 a live deployment.
 
 ### Platform administration API
@@ -1186,6 +1192,7 @@ fleet.
 | `PATCH` | `/api/v1/drivers/{driverId}` | Manufacturer/distributor admin | Update driver profile and license details |
 | `PATCH` | `/api/v1/drivers/{driverId}/status` | Manufacturer/distributor admin | Activate, suspend, or deactivate a driver |
 | `PATCH` | `/api/v1/drivers/{driverId}/availability` | Driver or manufacturer/distributor admin | Set whether an approved active driver is available |
+| `PATCH` | `/api/v1/admin/drivers/{driverId}/approval` | Super Admin | Approve or reject a driver application; organization roles cannot perform this platform workflow |
 | `POST` | `/api/v1/drivers/me/location` | Driver | Update the driver's latest profile location |
 | `GET` | `/api/v1/vehicles` | Super Admin or distributor staff/admin | List vehicles; filters include `status`, `organizationId` (Super Admin), and derived `status=AVAILABLE` |
 | `GET` | `/api/v1/vehicles/{vehicleId}` | Super Admin or distributor staff/admin | Read one vehicle |
@@ -1198,6 +1205,22 @@ fleet.
 | `GET` | `/api/v1/trips` | Authorized trip viewer | Filter trips with `status`, for example `status=SCHEDULED` |
 | `GET` | `/api/v1/trips/{tripId}/stops` | Authorized trip viewer | List the trip's visible pickup and delivery stops |
 | `PATCH` | `/api/v1/trips/{tripId}/stops/{stopId}/status` | Assigned driver or trip organization staff | Move a pending stop to `IN_PROGRESS`; completion uses the OTP workflow |
+
+Driver approval is a platform workflow and accepts only `APPROVED` or
+`REJECTED`. The endpoint and service both enforce the Super Admin role.
+
+```http
+PATCH /api/v1/admin/drivers/{driverId}/approval
+Authorization: Bearer <super-admin-access-token>
+Content-Type: application/json
+```
+
+```json
+{ "status": "APPROVED" }
+```
+
+Use `{ "status": "REJECTED" }` to reject an application. Invited drivers
+must accept their invitation before this approval workflow can be applied.
 
 Driver invitation payload:
 

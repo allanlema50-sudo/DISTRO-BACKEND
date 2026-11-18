@@ -62,7 +62,8 @@ public class OtpService {
         OtpVerification otp = new OtpVerification();
         otp.setUser(user);
         boolean emailDelivery = "resend".equalsIgnoreCase(otpProvider)
-                || "mailgun".equalsIgnoreCase(otpProvider);
+                || "mailgun".equalsIgnoreCase(otpProvider)
+                || "brevo".equalsIgnoreCase(otpProvider);
         otp.setDestination(emailDelivery ? user.getEmail() : user.getPhoneNumber());
         otp.setCodeHash(passwordEncoder.encode(code));
         otp.setPurpose(purpose);

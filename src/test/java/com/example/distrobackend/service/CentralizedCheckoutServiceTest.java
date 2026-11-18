@@ -33,6 +33,7 @@ class CentralizedCheckoutServiceTest {
  @Mock OrganizationRepository organizationRepository;
  @Mock UserRepository userRepository;
  @Mock PurchaseOrderService purchaseOrderService;
+ @Mock CheckoutPaymentAttemptStore paymentAttemptStore;
  @InjectMocks CentralizedCheckoutService service;
 
  @Test void successfulDemoAllocatesFiveMillionAcrossThreeIndependentOrdersWithoutMarkingPayoutsSettled() {
@@ -80,7 +81,14 @@ class CentralizedCheckoutServiceTest {
   ReflectionTestUtils.setField(service,"activeProfiles","staging");
   Checkout checkout=new Checkout(); checkout.setId(UUID.randomUUID()); checkout.setBuyerOrganization(new Organization()); checkout.getBuyerOrganization().setId(buyerId); checkout.getBuyerOrganization().setName("Buyer Ltd"); checkout.setTotalAmount(new BigDecimal("5000000.00")); checkout.setCurrency("KES"); checkout.setStatus(CheckoutStatus.PAYMENT_PENDING);
   when(checkoutRepository.findByIdAndBuyerOrganization_Id(checkout.getId(),buyerId)).thenReturn(java.util.Optional.of(checkout));
-  when(checkoutPaymentRepository.findByCheckout_Id(checkout.getId())).thenReturn(java.util.Optional.empty());
+  UUID paymentId=UUID.randomUUID();
+  CheckoutPayment payment=new CheckoutPayment(); payment.setId(paymentId); payment.setCheckout(checkout);
+  payment.setAmount(checkout.getTotalAmount()); payment.setCurrency("KES"); payment.setStatus(CheckoutPaymentStatus.PENDING);
+  payment.setDemo(true); payment.setDemoLabel("DEMO \u2014 NO MONEY TRANSFERRED");
+  payment.setProviderReference("DEMO-PENDING-test");
+  when(paymentAttemptStore.start(eq(checkout.getId()),eq(buyerId),eq(PaymentMethod.OTHER),eq(checkout.getTotalAmount()),eq("KES"),eq(true),eq("DEMO \u2014 NO MONEY TRANSFERRED"),eq("payment-key-1")))
+    .thenReturn(new CheckoutPaymentAttemptStore.StartResult(paymentId,true));
+  when(checkoutPaymentRepository.findById(paymentId)).thenReturn(java.util.Optional.of(payment));
   when(purchaseOrderRepository.findByCheckout_Id(checkout.getId())).thenReturn(List.of());
   var actor=new com.example.distrobackend.security.AuthenticatedUser(UUID.randomUUID(),UserRole.DISTRIBUTOR_ADMIN,buyerId,Organizationtype.DISTRIBUTOR,java.time.Instant.now().plusSeconds(60));
   CheckoutResponse result=service.initiatePayment(actor,checkout.getId(),new com.example.distrobackend.dto.InitiateCheckoutPaymentRequest("DEMO","payment-key"),"payment-key-1");

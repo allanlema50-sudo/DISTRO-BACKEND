@@ -20,7 +20,7 @@ public class CheckoutController {
  @org.springframework.web.bind.annotation.PostMapping("/mpesa/callback")
  @PreAuthorize("permitAll()")
  @io.swagger.v3.oas.annotations.security.SecurityRequirements
- public org.springframework.http.ResponseEntity<String> mpesaCallback(@RequestHeader(value="X-Mpesa-Callback-Secret",required=false) String secret,@RequestBody com.example.distrobackend.dto.mpesa.MpesaCallbackRequest callback){checkoutService.processMpesaCallback(secret,callback);return org.springframework.http.ResponseEntity.ok("{\"ResultCode\":0,\"ResultDesc\":\"Accepted\"}");}
+ public org.springframework.http.ResponseEntity<String> mpesaCallback(@RequestParam UUID paymentId,@RequestHeader(value="X-Mpesa-Callback-Secret",required=false) String secret,@RequestBody com.example.distrobackend.dto.mpesa.MpesaCallbackRequest callback){checkoutService.processMpesaCallback(paymentId,secret,callback);return org.springframework.http.ResponseEntity.ok("{\"ResultCode\":0,\"ResultDesc\":\"Accepted\"}");}
  @PostMapping @ResponseStatus(HttpStatus.CREATED)
  public CheckoutResponse create(@AuthenticationPrincipal AuthenticatedUser actor,@RequestHeader(value="Idempotency-Key",required=true) String key,@Valid @RequestBody CreateCheckoutRequest request){return checkoutService.create(actor,request,key);}
  @GetMapping public Page<CheckoutResponse> history(@AuthenticationPrincipal AuthenticatedUser actor,@PageableDefault(size=20) Pageable pageable){return checkoutService.history(actor,pageable);}

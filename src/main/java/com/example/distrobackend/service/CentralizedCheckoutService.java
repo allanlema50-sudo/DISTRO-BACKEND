@@ -20,6 +20,7 @@ import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
+import java.net.URI;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.http.*;
@@ -43,6 +44,7 @@ public class CentralizedCheckoutService {
     private final OrganizationRepository organizationRepository;
     private final UserRepository userRepository;
     private final PurchaseOrderService purchaseOrderService;
+    private final CheckoutPaymentAttemptStore paymentAttemptStore;
     @Qualifier("darajaRestTemplate") private final RestTemplate darajaRestTemplate;
 
     @Value("${logiflow.marketplace-checkout.enabled:false}") private boolean marketplaceCheckoutEnabled;
@@ -59,7 +61,7 @@ public class CentralizedCheckoutService {
     @Value("${mpesa.consumer-secret:}") private String mpesaConsumerSecret;
     @Value("${mpesa.shortcode:}") private String mpesaShortcode;
     @Value("${mpesa.passkey:}") private String mpesaPasskey;
-    @Value("${mpesa.checkout-callback-url:${mpesa.callback-url:}}") private String mpesaCheckoutCallbackUrl;
+    @Value("${mpesa.checkout-callback-url:}") private String mpesaCheckoutCallbackUrl;
     @Value("${mpesa.callback-secret:}") private String mpesaCallbackSecret;
 
     @PostConstruct
@@ -180,57 +182,137 @@ public class CentralizedCheckoutService {
             default -> throw new ApiException(ErrorCode.BAD_REQUEST,
                     "method must be MPESA_SANDBOX, MPESA, DEMO, DEMO_MPESA, or DEMO_CARD");
         };
-        CheckoutPayment existing = checkoutPaymentRepository.findByCheckout_Id(checkoutId).orElse(null);
-        if (existing != null) {
-            if (existing.getStatus() == CheckoutPaymentStatus.PENDING || existing.getStatus() == CheckoutPaymentStatus.SUCCESS) {
-                return response(checkout);
-            }
-            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT, "Checkout already has a terminal payment attempt");
-        }
-        if (checkout.getStatus() != CheckoutStatus.PAYMENT_PENDING) {
-            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT, "Checkout is not payable");
-        }
+        int mpesaAmount = demo ? 0 : requireWholeKes(checkout.getTotalAmount(), checkout.getCurrency());
         String idempotencyKey = clean(idempotencyHeader) != null ? clean(idempotencyHeader) : clean(request.idempotencyKey());
-        CheckoutPayment payment = new CheckoutPayment();
-        payment.setCheckout(checkout);
-        payment.setMethod(paymentMethod);
-        payment.setStatus(CheckoutPaymentStatus.PENDING);
-        payment.setAmount(checkout.getTotalAmount());
-        payment.setCurrency(checkout.getCurrency());
-        payment.setDemo(demo);
-        payment.setDemoLabel(demo ? DEMO_LABEL : null);
-        payment.setIdempotencyKey(idempotencyKey);
-        payment.setProviderReference(demo ? "DEMO-PENDING-" + UUID.randomUUID() : null);
-        payment.setInitiatedAt(OffsetDateTime.now());
-        checkoutPaymentRepository.save(payment);
-        if (!demo) initiateDaraja(payment, request.phoneNumber());
+        CheckoutPaymentAttemptStore.StartResult attempt = paymentAttemptStore.start(checkoutId,
+                actor.organizationId(), paymentMethod, checkout.getTotalAmount(), checkout.getCurrency(),
+                demo, demo ? DEMO_LABEL : null, idempotencyKey);
+        if (!attempt.created()) {
+            CheckoutPayment existing = checkoutPaymentRepository.findById(attempt.paymentId())
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Checkout payment not found"));
+            checkout.setPayment(existing);
+            return response(checkout);
+        }
+        if (!demo) {
+            DarajaStkResult result;
+            try {
+                result = initiateDaraja(attempt.paymentId(), checkout.getCheckoutReference(),
+                        request.phoneNumber(), mpesaAmount);
+            } catch (StkPushOutcomeUnknownException ex) {
+                paymentAttemptStore.markOutcomeUnknown(attempt.paymentId());
+                result = null;
+            } catch (RuntimeException ex) {
+                paymentAttemptStore.markFailed(attempt.paymentId(),
+                        ex instanceof ApiException ? ex.getMessage() : "Daraja request failed before acceptance could be confirmed");
+                throw ex;
+            }
+            if (result != null) {
+                // If this DB write fails after Daraja accepted the request, the
+                // durable PENDING attempt and callback paymentId still allow
+                // callback reconciliation without a second STK push.
+                paymentAttemptStore.markAccepted(attempt.paymentId(), result.checkoutRequestId(),
+                        result.merchantRequestId(), result.responseDescription());
+            }
+        }
+        CheckoutPayment payment = checkoutPaymentRepository.findById(attempt.paymentId())
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Checkout payment not found"));
         checkout.setPayment(payment);
         return response(checkout);
     }
 
-    private void initiateDaraja(CheckoutPayment payment, String phone) {
+    private DarajaStkResult initiateDaraja(UUID paymentId, String checkoutReference, String phone, int amount) {
         if (phone == null || phone.isBlank()) throw new ApiException(ErrorCode.BAD_REQUEST, "phoneNumber is required for M-Pesa STK Push");
-        if (!Set.of("https://sandbox.safaricom.co.ke", "https://api.safaricom.co.ke").contains(mpesaBaseUrl)
-                || mpesaConsumerKey.isBlank() || mpesaConsumerSecret.isBlank() || mpesaShortcode.isBlank()
-                || mpesaPasskey.isBlank() || mpesaCheckoutCallbackUrl.isBlank())
-            throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "M-Pesa is not fully configured for a supported Daraja environment");
+        validateDarajaConfiguration();
         HttpHeaders authHeaders = new HttpHeaders();
         authHeaders.setBasicAuth(mpesaConsumerKey, mpesaConsumerSecret);
         ResponseEntity<Map> tokenResult = darajaRestTemplate.exchange(mpesaAuthUrl, HttpMethod.GET, new HttpEntity<>(authHeaders), Map.class);
         Object accessToken = tokenResult.getBody() == null ? null : tokenResult.getBody().get("access_token");
-        if (accessToken == null) throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "Daraja sandbox authentication failed");
+        if (accessToken == null) throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "Daraja authentication failed");
         String timestamp = java.time.LocalDateTime.now(ZoneId.of("Africa/Nairobi")).format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
         String password = Base64.getEncoder().encodeToString((mpesaShortcode + mpesaPasskey + timestamp).getBytes(StandardCharsets.UTF_8));
-        Map<String,Object> body = Map.of("BusinessShortCode",mpesaShortcode,"Password",password,"Timestamp",timestamp,"TransactionType","CustomerPayBillOnline","Amount",payment.getAmount().setScale(0,java.math.RoundingMode.CEILING).intValueExact(),"PartyA",phone,"PartyB",mpesaShortcode,"PhoneNumber",phone,"CallBackURL",mpesaCheckoutCallbackUrl,"AccountReference",payment.getCheckout().getCheckoutReference(),"TransactionDesc","LogiFlow checkout");
+        String callbackUrl = org.springframework.web.util.UriComponentsBuilder.fromUriString(mpesaCheckoutCallbackUrl)
+                .queryParam("paymentId", paymentId).build().encode().toUriString();
+        Map<String,Object> body = Map.ofEntries(
+                Map.entry("BusinessShortCode", mpesaShortcode), Map.entry("Password", password),
+                Map.entry("Timestamp", timestamp), Map.entry("TransactionType", "CustomerPayBillOnline"),
+                Map.entry("Amount", amount), Map.entry("PartyA", phone), Map.entry("PartyB", mpesaShortcode),
+                Map.entry("PhoneNumber", phone), Map.entry("CallBackURL", callbackUrl),
+                Map.entry("AccountReference", checkoutReference),
+                Map.entry("TransactionDesc", "LogiFlow checkout"));
         HttpHeaders headers = new HttpHeaders(); headers.setBearerAuth(String.valueOf(accessToken)); headers.setContentType(MediaType.APPLICATION_JSON);
-        ResponseEntity<Map> result = darajaRestTemplate.postForEntity(mpesaStkPushUrl, new HttpEntity<>(body,headers), Map.class);
+        ResponseEntity<Map> result;
+        try {
+            result = darajaRestTemplate.postForEntity(mpesaStkPushUrl, new HttpEntity<>(body,headers), Map.class);
+        } catch (org.springframework.web.client.RestClientException ex) {
+            throw new StkPushOutcomeUnknownException(ex);
+        }
         Map data=result.getBody();
-        if (data == null || data.get("CheckoutRequestID") == null || data.get("MerchantRequestID") == null || !"0".equals(String.valueOf(data.get("ResponseCode")))) throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "Daraja sandbox did not accept STK request");
-        payment.setMpesaCheckoutRequestId(String.valueOf(data.get("CheckoutRequestID")));
-        payment.setMpesaMerchantRequestId(String.valueOf(data.get("MerchantRequestID")));
-        payment.setProviderReference(String.valueOf(data.get("CheckoutRequestID")));
-        payment.setProviderPayload(Map.of("responseDescription", String.valueOf(data.getOrDefault("ResponseDescription", "Accepted"))));
-        checkoutPaymentRepository.save(payment);
+        if (data == null || !"0".equals(String.valueOf(data.get("ResponseCode")))) {
+            throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "Daraja did not accept the STK request");
+        }
+        if (data.get("CheckoutRequestID") == null || data.get("MerchantRequestID") == null) {
+            throw new StkPushOutcomeUnknownException(null);
+        }
+        return new DarajaStkResult(String.valueOf(data.get("CheckoutRequestID")),
+                String.valueOf(data.get("MerchantRequestID")),
+                String.valueOf(data.getOrDefault("ResponseDescription", "Accepted")));
+    }
+
+    private record DarajaStkResult(String checkoutRequestId, String merchantRequestId, String responseDescription) {}
+
+    private static final class StkPushOutcomeUnknownException extends RuntimeException {
+        private StkPushOutcomeUnknownException(Throwable cause) { super(cause); }
+    }
+
+    private static int requireWholeKes(BigDecimal amount, String currency) {
+        if (!"KES".equalsIgnoreCase(currency) || amount == null || amount.signum() <= 0) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "M-Pesa checkout total must be a positive KES amount");
+        }
+        try {
+            return amount.setScale(0, java.math.RoundingMode.UNNECESSARY).intValueExact();
+        } catch (ArithmeticException ex) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "M-Pesa checkout total must be a whole KES amount");
+        }
+    }
+
+    private void validateDarajaConfiguration() {
+        String expectedHost = switch (mpesaBaseUrl) {
+            case "https://sandbox.safaricom.co.ke" -> "sandbox.safaricom.co.ke";
+            case "https://api.safaricom.co.ke" -> "api.safaricom.co.ke";
+            default -> null;
+        };
+        if (expectedHost == null || mpesaConsumerKey.isBlank() || mpesaConsumerSecret.isBlank()
+                || mpesaShortcode.isBlank() || mpesaPasskey.isBlank()) {
+            throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "M-Pesa is not configured for a supported Daraja environment");
+        }
+        requireDarajaEndpoint(mpesaAuthUrl, expectedHost, "MPESA_AUTH_URL");
+        requireDarajaEndpoint(mpesaStkPushUrl, expectedHost, "MPESA_STK_PUSH_URL");
+        requireDarajaEndpoint(mpesaStkQueryUrl, expectedHost, "MPESA_STK_QUERY_URL");
+        try {
+            URI callback = URI.create(mpesaCheckoutCallbackUrl);
+            if (!"https".equalsIgnoreCase(callback.getScheme()) || callback.getHost() == null
+                    || callback.getUserInfo() != null || callback.getFragment() != null
+                    || !"/api/v1/checkouts/mpesa/callback".equals(callback.getPath())) {
+                throw new IllegalArgumentException();
+            }
+        } catch (RuntimeException ex) {
+            throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED,
+                    "Set MPESA_CHECKOUT_CALLBACK_URL to the public HTTPS /api/v1/checkouts/mpesa/callback endpoint");
+        }
+    }
+
+    private static void requireDarajaEndpoint(String value, String expectedHost, String propertyName) {
+        try {
+            URI endpoint = URI.create(value);
+            if (!"https".equalsIgnoreCase(endpoint.getScheme()) || !expectedHost.equalsIgnoreCase(endpoint.getHost())
+                    || endpoint.getUserInfo() != null || endpoint.getFragment() != null
+                    || (endpoint.getPort() != -1 && endpoint.getPort() != 443)) {
+                throw new IllegalArgumentException();
+            }
+        } catch (RuntimeException ex) {
+            throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED,
+                    propertyName + " must use the selected Daraja environment host " + expectedHost);
+        }
     }
 
     
@@ -243,9 +325,13 @@ public class CentralizedCheckoutService {
             throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT, "Only an unpaid checkout can be cancelled");
         CheckoutPayment payment = checkoutPaymentRepository.findByCheckout_Id(checkoutId).orElse(null);
         if (payment != null) checkout.setPayment(payment);
-        if (payment != null && payment.getStatus() != CheckoutPaymentStatus.PENDING)
+        if (payment != null && payment.getStatus() == CheckoutPaymentStatus.SUCCESS)
             throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT, "Checkout payment is no longer pending");
-        if (payment != null) {
+        if (payment != null && payment.getStatus() == CheckoutPaymentStatus.PENDING && !payment.isDemo()) {
+            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                    "An M-Pesa request may already be processing; wait for provider confirmation before cancelling");
+        }
+        if (payment != null && payment.getStatus() == CheckoutPaymentStatus.PENDING) {
             payment.setStatus(CheckoutPaymentStatus.CANCELLED);
             payment.setConfirmedAt(OffsetDateTime.now());
             payment.setFailureReason("Cancelled by buyer");
@@ -258,19 +344,34 @@ public class CentralizedCheckoutService {
     }
 
     @Transactional
-    public void processMpesaCallback(String suppliedSecret, com.example.distrobackend.dto.mpesa.MpesaCallbackRequest request) {
+    public void processMpesaCallback(UUID paymentId, String suppliedSecret,
+                                     com.example.distrobackend.dto.mpesa.MpesaCallbackRequest request) {
         // Daraja callbacks do not provide a configurable custom header. If a
         // shared-secret header is supplied, validate it; otherwise authenticate
-        // the callback below by querying Daraja and matching its result.
+        // the provider request and outcome through Daraja's STK query API.
         if (suppliedSecret != null && !suppliedSecret.isBlank()
                 && (mpesaCallbackSecret.isBlank() || !java.security.MessageDigest.isEqual(
                 mpesaCallbackSecret.getBytes(StandardCharsets.UTF_8), suppliedSecret.getBytes(StandardCharsets.UTF_8)))) {
             throw new ApiException(ErrorCode.UNAUTHENTICATED, "Invalid M-Pesa callback credentials");
         }
         var callback = request == null || request.getBody() == null ? null : request.getBody().getStkCallback();
-        if (callback == null || callback.getCheckoutRequestId() == null || callback.getResultCode() == null) throw new ApiException(ErrorCode.BAD_REQUEST, "Invalid M-Pesa callback");
-        CheckoutPayment payment = checkoutPaymentRepository.findByMpesaCheckoutRequestId(callback.getCheckoutRequestId()).orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Checkout payment not found"));
+        if (paymentId == null || callback == null || callback.getCheckoutRequestId() == null
+                || callback.getMerchantRequestId() == null || callback.getResultCode() == null) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Invalid M-Pesa checkout callback");
+        }
+        CheckoutPayment payment = checkoutPaymentRepository.findById(paymentId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Checkout payment not found"));
         if (payment.getStatus() != CheckoutPaymentStatus.PENDING) return;
+        if (payment.getMpesaCheckoutRequestId() != null
+                && !payment.getMpesaCheckoutRequestId().equals(callback.getCheckoutRequestId())) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "M-Pesa checkout request correlation failed");
+        }
+        if (payment.getMpesaMerchantRequestId() != null
+                && !payment.getMpesaMerchantRequestId().equals(callback.getMerchantRequestId())) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "M-Pesa merchant request correlation failed");
+        }
+        validateDarajaConfiguration();
+        Map verifiedBody;
         try {
             String timestamp=java.time.LocalDateTime.now(ZoneId.of("Africa/Nairobi")).format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
             String password=Base64.getEncoder().encodeToString((mpesaShortcode+mpesaPasskey+timestamp).getBytes(StandardCharsets.UTF_8));
@@ -279,16 +380,35 @@ public class CentralizedCheckoutService {
             ResponseEntity<Map> token=darajaRestTemplate.exchange(mpesaAuthUrl,HttpMethod.GET,new HttpEntity<>(headers),Map.class);
             HttpHeaders queryHeaders=new HttpHeaders(); queryHeaders.setBearerAuth(String.valueOf(token.getBody().get("access_token"))); queryHeaders.setContentType(MediaType.APPLICATION_JSON);
             ResponseEntity<Map> verified=darajaRestTemplate.postForEntity(mpesaStkQueryUrl,new HttpEntity<>(query,queryHeaders),Map.class);
-            if(verified.getBody()==null || !String.valueOf(callback.getResultCode()).equals(String.valueOf(verified.getBody().get("ResultCode")))) throw new ApiException(ErrorCode.BAD_REQUEST,"M-Pesa callback could not be reconciled");
+            verifiedBody = verified.getBody();
+            if (verifiedBody == null
+                    || !String.valueOf(callback.getResultCode()).equals(String.valueOf(verifiedBody.get("ResultCode")))
+                    || !callback.getCheckoutRequestId().equals(String.valueOf(verifiedBody.get("CheckoutRequestID")))
+                    || !callback.getMerchantRequestId().equals(String.valueOf(verifiedBody.get("MerchantRequestID")))) {
+                throw new ApiException(ErrorCode.BAD_REQUEST, "M-Pesa callback could not be reconciled");
+            }
         } catch (ApiException e) { throw e; } catch (Exception e) { throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED,"M-Pesa payment verification failed"); }
+        // A request accepted by Daraja whose HTTP response timed out can still
+        // be correlated safely from the paymentId embedded in its callback URL
+        // and the IDs returned by the independent Daraja query.
+        payment.setMpesaCheckoutRequestId(callback.getCheckoutRequestId());
         payment.setMpesaMerchantRequestId(callback.getMerchantRequestId());
         payment.setConfirmedAt(OffsetDateTime.now());
         Checkout checkout=payment.getCheckout();
         if(callback.getResultCode()==0) {
             String amount=null, receipt=null;
             if(callback.getCallbackMetadata()!=null && callback.getCallbackMetadata().getItem()!=null) for(var item:callback.getCallbackMetadata().getItem()) { if("Amount".equals(item.getName())) amount=String.valueOf(item.getValue()); if("MpesaReceiptNumber".equals(item.getName())) receipt=String.valueOf(item.getValue()); }
-            if(amount==null || new BigDecimal(amount).compareTo(payment.getAmount().setScale(0,java.math.RoundingMode.CEILING))!=0 || receipt==null) throw new ApiException(ErrorCode.BAD_REQUEST,"M-Pesa success details do not match checkout");
-            payment.setStatus(CheckoutPaymentStatus.SUCCESS); payment.setProviderReference(receipt); checkout.setStatus(CheckoutStatus.PAID); recordAllocations(payment);
+            int expectedAmount = requireWholeKes(payment.getAmount(), payment.getCurrency());
+            if (amount == null || new BigDecimal(amount).compareTo(BigDecimal.valueOf(expectedAmount)) != 0) {
+                throw new ApiException(ErrorCode.BAD_REQUEST, "M-Pesa success amount does not match checkout");
+            }
+            payment.setStatus(CheckoutPaymentStatus.SUCCESS);
+            // Only trust receipt metadata when the optional shared-secret header
+            // was actually presented and validated. Daraja query IDs remain the
+            // source of truth for normal headerless callbacks.
+            if (receipt != null && suppliedSecret != null && !suppliedSecret.isBlank()) payment.setProviderReference(receipt);
+            else payment.setProviderReference(callback.getCheckoutRequestId());
+            checkout.setStatus(CheckoutStatus.PAID); recordAllocations(payment);
         } else { payment.setStatus(callback.getResultCode()==1032 ? CheckoutPaymentStatus.CANCELLED : CheckoutPaymentStatus.FAILED); payment.setFailureReason(callback.getResultDesc()); checkout.setStatus(payment.getStatus()==CheckoutPaymentStatus.CANCELLED?CheckoutStatus.CANCELLED:CheckoutStatus.PAYMENT_FAILED); cancelAndRelease(checkout); }
         checkoutPaymentRepository.save(payment); checkoutRepository.save(checkout);
     }
@@ -368,7 +488,7 @@ public class CentralizedCheckoutService {
             allocation.setCommission(BigDecimal.ZERO);
             allocation.setSupplierAmount(order.getTotalAmount());
             allocation.setCurrency(order.getCurrency());
-            allocation.setDemo(true);
+            allocation.setDemo(payment.isDemo());
             allocation = allocationRepository.save(allocation);
             SupplierSettlement settlement = new SupplierSettlement();
             settlement.setAllocation(allocation);
@@ -376,8 +496,10 @@ public class CentralizedCheckoutService {
             settlement.setAmount(allocation.getSupplierAmount());
             settlement.setCurrency(allocation.getCurrency());
             settlement.setStatus(SupplierSettlementStatus.PENDING);
-            settlement.setDemo(true);
-            settlement.setNote("DEMO allocation only; no supplier payout was made");
+            settlement.setDemo(payment.isDemo());
+            settlement.setNote(payment.isDemo()
+                    ? "DEMO allocation only; no supplier payout was made"
+                    : "Checkout allocation recorded; supplier payout has not been confirmed");
             supplierSettlementRepository.save(settlement);
         }
     }

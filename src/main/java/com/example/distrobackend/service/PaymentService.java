@@ -417,6 +417,10 @@ public class PaymentService {
         if (!actor.organizationId().equals(order.getBuyerOrganization().getId())) {
             throw new ApiException(ErrorCode.ACCESS_DENIED);
         }
+        if (order.getCheckout() != null) {
+            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                    "Purchase orders in a marketplace checkout must be paid through the checkout payment");
+        }
         if (order.getStatus() != PurchaseOrderStatus.APPROVED) {
             throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
                     "Only approved purchase orders can be paid");

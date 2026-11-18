@@ -18,11 +18,11 @@ import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/admin/drivers")
-@PreAuthorize("hasRole('SUPER_ADMIN')")
 @RequiredArgsConstructor
 public class AdminDriverController {
     private final DriverService driverService;
 
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     @PatchMapping("/{driverId}/approval")
     public DriverResponse updateApproval(@AuthenticationPrincipal AuthenticatedUser actor,
                                          @PathVariable UUID driverId,

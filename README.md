@@ -1192,6 +1192,7 @@ fleet.
 | `PATCH` | `/api/v1/drivers/{driverId}` | Manufacturer/distributor admin | Update driver profile and license details |
 | `PATCH` | `/api/v1/drivers/{driverId}/status` | Manufacturer/distributor admin | Activate, suspend, or deactivate a driver |
 | `PATCH` | `/api/v1/drivers/{driverId}/availability` | Driver or manufacturer/distributor admin | Set whether an approved active driver is available |
+| `PATCH` | `/api/v1/admin/drivers/{driverId}/approval` | Super Admin | Approve or reject a driver application; organization roles cannot perform this platform workflow |
 | `POST` | `/api/v1/drivers/me/location` | Driver | Update the driver's latest profile location |
 | `GET` | `/api/v1/vehicles` | Super Admin or distributor staff/admin | List vehicles; filters include `status`, `organizationId` (Super Admin), and derived `status=AVAILABLE` |
 | `GET` | `/api/v1/vehicles/{vehicleId}` | Super Admin or distributor staff/admin | Read one vehicle |
@@ -1204,6 +1205,22 @@ fleet.
 | `GET` | `/api/v1/trips` | Authorized trip viewer | Filter trips with `status`, for example `status=SCHEDULED` |
 | `GET` | `/api/v1/trips/{tripId}/stops` | Authorized trip viewer | List the trip's visible pickup and delivery stops |
 | `PATCH` | `/api/v1/trips/{tripId}/stops/{stopId}/status` | Assigned driver or trip organization staff | Move a pending stop to `IN_PROGRESS`; completion uses the OTP workflow |
+
+Driver approval is a platform workflow and accepts only `APPROVED` or
+`REJECTED`. The endpoint and service both enforce the Super Admin role.
+
+```http
+PATCH /api/v1/admin/drivers/{driverId}/approval
+Authorization: Bearer <super-admin-access-token>
+Content-Type: application/json
+```
+
+```json
+{ "status": "APPROVED" }
+```
+
+Use `{ "status": "REJECTED" }` to reject an application. Invited drivers
+must accept their invitation before this approval workflow can be applied.
 
 Driver invitation payload:
 

@@ -201,7 +201,13 @@ public class DriverService {
 
     @Transactional
     public DriverResponse update(AuthenticatedUser actor, UUID driverId, UpdateDriverRequest request) {
-        requireOrganizationAdmin(actor);
+        if (actor != null && actor.role() == UserRole.DRIVER) {
+            if (!actor.userId().equals(driverId)) {
+                throw new ApiException(ErrorCode.ACCESS_DENIED);
+            }
+        } else {
+            requireOrganizationAdmin(actor);
+        }
         User driver = findDriverForUpdate(actor, driverId);
         if (request.fullName() != null) {
             if (request.fullName().isBlank()) {

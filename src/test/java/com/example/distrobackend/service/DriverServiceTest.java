@@ -9,6 +9,7 @@ import com.example.distrobackend.Domain.enums.DriverApprovalStatus;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.dto.DriverLocationRequest;
 import com.example.distrobackend.dto.UpdateDriverAvailabilityRequest;
+import com.example.distrobackend.dto.UpdateDriverRequest;
 import com.example.distrobackend.dto.UpdateUserStatusRequest;
 import com.example.distrobackend.repository.InvitationRepository;
 import com.example.distrobackend.repository.RiderProfileRepository;
@@ -98,6 +99,17 @@ class DriverServiceTest {
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("invited driver");
         verify(refreshTokenService, never()).revokeAll(any());
+    }
+
+    @Test
+    void driverCannotUpdateAnotherDriversProfile() {
+        AuthenticatedUser actor = principal(UUID.randomUUID(), UserRole.DRIVER);
+
+        assertThatThrownBy(() -> driverService.update(actor, driver.getId(),
+                new UpdateDriverRequest("New Name", null, null, null)))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("permission");
+        verifyNoInteractions(userRepository);
     }
 
     @Test

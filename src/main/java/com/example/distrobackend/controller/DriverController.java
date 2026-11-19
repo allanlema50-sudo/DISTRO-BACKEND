@@ -118,7 +118,14 @@ public class DriverController {
             @AuthenticationPrincipal AuthenticatedUser actor,
             @PathVariable UUID driverId,
             @Valid @RequestBody UpdateDriverRequest request) {
-        requireOrganizationAdmin(actor);
+        if (actor != null && actor.role() == UserRole.DRIVER && !actor.userId().equals(driverId)) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        if (actor == null || (actor.role() != UserRole.DRIVER
+                && actor.role() != UserRole.MANUFACTURER_ADMIN
+                && actor.role() != UserRole.DISTRIBUTOR_ADMIN)) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
         return driverService.update(actor, driverId, request);
     }
 

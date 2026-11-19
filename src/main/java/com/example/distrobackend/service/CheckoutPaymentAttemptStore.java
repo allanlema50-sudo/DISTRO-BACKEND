@@ -32,16 +32,26 @@ public class CheckoutPaymentAttemptStore {
                              String idempotencyKey) {
         Checkout checkout = checkoutRepository.findByIdAndBuyerOrganization_IdForUpdate(checkoutId, buyerOrganizationId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Checkout not found"));
-        CheckoutPayment existing = checkoutPaymentRepository.findByCheckout_Id(checkoutId).orElse(null);
+        if (idempotencyKey != null) {
+            CheckoutPayment keyed = checkoutPaymentRepository.findByIdempotencyKey(idempotencyKey).orElse(null);
+            if (keyed != null) {
+                if (!keyed.getCheckout().getId().equals(checkoutId)) throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT, "Idempotency-Key was already used for another payment attempt");
+                return new StartResult(keyed.getId(), false);
+            }
+        }
+        CheckoutPayment existing = checkoutPaymentRepository.findFirstByCheckout_IdOrderByInitiatedAtDesc(checkoutId).orElse(null);
         if (existing != null) {
-            if (existing.getStatus() == CheckoutPaymentStatus.PENDING
+            if (existing.getStatus() == CheckoutPaymentStatus.PENDING || existing.getStatus() == CheckoutPaymentStatus.UNKNOWN
                     || existing.getStatus() == CheckoutPaymentStatus.SUCCESS) {
                 return new StartResult(existing.getId(), false);
             }
-            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
-                    "Checkout already has a terminal payment attempt");
+            if (!java.util.Set.of(CheckoutPaymentStatus.FAILED, CheckoutPaymentStatus.CANCELLED,
+                    CheckoutPaymentStatus.TIMED_OUT).contains(existing.getStatus())) {
+                throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT, "Previous payment attempt is unresolved");
+            }
         }
-        if (checkout.getStatus() != CheckoutStatus.PAYMENT_PENDING) {
+        if (!java.util.Set.of(CheckoutStatus.PAYMENT_PENDING, CheckoutStatus.PAYMENT_FAILED,
+                CheckoutStatus.UNKNOWN).contains(checkout.getStatus())) {
             throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT, "Checkout is not payable");
         }
 
@@ -57,6 +67,9 @@ public class CheckoutPaymentAttemptStore {
         payment.setProviderReference(demo ? "DEMO-PENDING-" + UUID.randomUUID() : null);
         payment.setInitiatedAt(OffsetDateTime.now());
         payment = checkoutPaymentRepository.saveAndFlush(payment);
+        checkout.setStatus(CheckoutStatus.PAYMENT_PENDING);
+        checkout.setPayment(payment);
+        checkoutRepository.save(checkout);
         return new StartResult(payment.getId(), true);
     }
 

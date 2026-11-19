@@ -21,7 +21,7 @@ public class Checkout {
  @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="buyer_organization_id") private Organization buyerOrganization;
  @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="buyer_user_id") private User buyerUser;
  @Column(name="buyer_type", nullable=false, length=32) private String buyerType;
- @OneToOne(mappedBy="checkout", fetch=FetchType.LAZY) private CheckoutPayment payment;
+ @OneToMany(mappedBy="checkout", fetch=FetchType.LAZY) private java.util.List<CheckoutPayment> payments = new java.util.ArrayList<>();
  @ManyToOne(fetch=FetchType.LAZY, optional=false) @JoinColumn(name="created_by", nullable=false) private User createdBy;
  @Enumerated(EnumType.STRING) @Column(name="status", nullable=false, length=24) private CheckoutStatus status=CheckoutStatus.PAYMENT_PENDING;
  @Column(name="total_amount", nullable=false, precision=14, scale=2) private BigDecimal totalAmount;
@@ -29,4 +29,10 @@ public class Checkout {
  @CreationTimestamp @Column(name="created_at", nullable=false, updatable=false) private OffsetDateTime createdAt;
  @UpdateTimestamp @Column(name="updated_at", nullable=false) private OffsetDateTime updatedAt;
  @Version @Column(name="version", nullable=false) private long version;
+ public CheckoutPayment getPayment() { return payments == null ? null : payments.stream().max(java.util.Comparator.comparing(CheckoutPayment::getInitiatedAt)).orElse(null); }
+ public void setPayment(CheckoutPayment payment) {
+  if (payment == null) return;
+  if (payments == null) payments = new java.util.ArrayList<>();
+  if (payments.stream().noneMatch(existing -> existing.getId() != null && existing.getId().equals(payment.getId()))) payments.add(payment);
+ }
 }

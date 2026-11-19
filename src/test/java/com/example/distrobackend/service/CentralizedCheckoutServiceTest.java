@@ -102,10 +102,30 @@ class CentralizedCheckoutServiceTest {
  @Test void demoConfigurationFailsClosedForProductionProfile() {
   ReflectionTestUtils.setField(service,"demoEnabled",true);
   ReflectionTestUtils.setField(service,"activeProfiles","production");
+  ReflectionTestUtils.setField(service,"demoOrganizationIds",UUID.randomUUID().toString());
   ReflectionTestUtils.setField(service,"demoOutcome","SUCCESS");
   ReflectionTestUtils.setField(service,"confirmationDelaySeconds",3L);
   assertThatThrownBy(service::validateDemoConfiguration).isInstanceOf(IllegalStateException.class)
     .hasMessageContaining("only run in local");
+ }
+
+ @Test void enabledDemoRequiresAnExplicitOrganizationUuidAllowlist() {
+  ReflectionTestUtils.setField(service,"demoEnabled",true);
+  ReflectionTestUtils.setField(service,"activeProfiles","staging");
+  ReflectionTestUtils.setField(service,"demoOrganizationIds"," ");
+  ReflectionTestUtils.setField(service,"demoOutcome","SUCCESS");
+  ReflectionTestUtils.setField(service,"confirmationDelaySeconds",3L);
+  assertThatThrownBy(service::validateDemoConfiguration).isInstanceOf(IllegalStateException.class)
+    .hasMessageContaining("LOGIFLOW_DEMO_ORGANIZATION_IDS");
+ }
+
+ @Test void disabledDemoDoesNotRequireAnAllowlistEvenInProduction() {
+  ReflectionTestUtils.setField(service,"demoEnabled",false);
+  ReflectionTestUtils.setField(service,"activeProfiles","production");
+  ReflectionTestUtils.setField(service,"demoOrganizationIds","");
+  ReflectionTestUtils.setField(service,"demoOutcome","SUCCESS");
+  ReflectionTestUtils.setField(service,"confirmationDelaySeconds",3L);
+  service.validateDemoConfiguration();
  }
 
  private PurchaseOrder order(Checkout checkout,String amount) {

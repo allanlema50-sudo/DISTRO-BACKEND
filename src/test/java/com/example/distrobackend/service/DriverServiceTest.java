@@ -43,6 +43,7 @@ class DriverServiceTest {
     @Mock private RefreshTokenService refreshTokenService;
     @Mock private TripRepository tripRepository;
     @Mock private PasswordEncoder passwordEncoder;
+    @Mock private DriverLoginEmailService driverLoginEmailService;
 
     private DriverService driverService;
     private UUID organizationId;
@@ -52,7 +53,7 @@ class DriverServiceTest {
     void setUp() {
         driverService = new DriverService(userRepository, riderProfileRepository,
                 invitationRepository, invitationService, refreshTokenService, tripRepository,
-                passwordEncoder);
+                passwordEncoder, driverLoginEmailService);
         organizationId = UUID.randomUUID();
         Organization organization = new Organization();
         organization.setId(organizationId);
@@ -160,6 +161,30 @@ class DriverServiceTest {
 
         assertThat(driver.getFullName()).isEqualTo("Alex Updated");
         assertThat(profile.getPendingFullName()).isNull();
+    }
+
+    @Test
+    void approvalEmailsATemporaryPasswordWithoutChangingItAgainOnResend() {
+        driver.setDriverApprovalStatus(DriverApprovalStatus.PENDING_REVIEW);
+        driver.setEmail("driver@example.com");
+        driver.setPhoneVerified(false);
+        when(userRepository.findByIdForUpdate(driver.getId())).thenReturn(Optional.of(driver));
+        when(passwordEncoder.encode(anyString())).thenReturn("encoded");
+        when(riderProfileRepository.findById(driver.getId())).thenReturn(Optional.of(new RiderProfile()));
+        AuthenticatedUser admin = principal(UUID.randomUUID(), UserRole.SUPER_ADMIN);
+
+        driverService.approve(admin, driver.getId(), DriverApprovalStatus.APPROVED);
+
+        assertThat(driver.isPhoneVerified()).isTrue();
+        assertThat(driver.getDriverApprovalStatus()).isEqualTo(DriverApprovalStatus.APPROVED);
+        verify(driverLoginEmailService).sendTemporaryPassword(eq("driver@example.com"),
+                argThat(password -> password != null && password.length() >= 8));
+
+        driverService.sendLoginEmail(admin, driver.getId());
+
+        assertThat(driver.getDriverApprovalStatus()).isEqualTo(DriverApprovalStatus.APPROVED);
+        verify(refreshTokenService).revokeAll(driver.getId());
+        verify(driverLoginEmailService, times(2)).sendTemporaryPassword(eq("driver@example.com"), anyString());
     }
 
     @Test

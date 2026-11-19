@@ -71,6 +71,21 @@ public class Shipment {
     @Column(name = "handling_requirements", nullable = false, columnDefinition = "jsonb")
     private List<String> handlingRequirements = new ArrayList<>();
 
+    @Column(name = "pickup_location", length = 300)
+    private String pickupLocation;
+
+    @Column(name = "pickup_window_start")
+    private LocalDateTime pickupWindowStart;
+
+    @Column(name = "pickup_window_end")
+    private LocalDateTime pickupWindowEnd;
+
+    @Column(name = "pickup_lat")
+    private Double pickupLat;
+
+    @Column(name = "pickup_lng")
+    private Double pickupLng;
+
     @Column(name = "delivery_location", nullable = false, length = 300)
     private String deliveryLocation;
 
@@ -79,6 +94,12 @@ public class Shipment {
 
     @Column(name = "delivery_window_end", nullable = false)
     private LocalDateTime deliveryWindowEnd;
+
+    @Column(name = "delivery_lat")
+    private Double deliveryLat;
+
+    @Column(name = "delivery_lng")
+    private Double deliveryLng;
 
     @Column(name = "allow_shared_loads", nullable = false)
     private boolean allowSharedLoads;

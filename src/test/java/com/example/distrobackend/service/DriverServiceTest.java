@@ -1,6 +1,7 @@
 package com.example.distrobackend.service;
 
 import com.example.distrobackend.Domain.entity.Organization;
+import com.example.distrobackend.Domain.entity.RiderProfile;
 import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.UserRole;
@@ -28,6 +29,7 @@ import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.*;
 
@@ -108,8 +110,56 @@ class DriverServiceTest {
         assertThatThrownBy(() -> driverService.update(actor, driver.getId(),
                 new UpdateDriverRequest("New Name", null, null, null)))
                 .isInstanceOf(ApiException.class)
-                .hasMessageContaining("permission");
+                .hasMessageContaining("another driver");
         verifyNoInteractions(userRepository);
+    }
+
+    @Test
+    void driverOwnProfileEditWaitsForSuperAdminApproval() {
+        driver.setFullName("Alex Mutua");
+        RiderProfile profile = new RiderProfile();
+        profile.setUser(driver);
+        when(userRepository.findByIdForUpdate(driver.getId())).thenReturn(Optional.of(driver));
+        when(riderProfileRepository.findById(driver.getId())).thenReturn(Optional.of(profile));
+
+        driverService.update(principal(driver.getId(), UserRole.DRIVER), driver.getId(),
+                new UpdateDriverRequest("Alex Updated", null, null, null));
+
+        assertThat(driver.getFullName()).isEqualTo("Alex Mutua");
+        assertThat(profile.getPendingFullName()).isEqualTo("Alex Updated");
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void superAdminAppliesADriverProfileChangeImmediately() {
+        driver.setFullName("Alex Mutua");
+        RiderProfile profile = new RiderProfile();
+        profile.setUser(driver);
+        profile.setPendingFullName("Old request");
+        when(userRepository.findByIdForUpdate(driver.getId())).thenReturn(Optional.of(driver));
+        when(riderProfileRepository.findById(driver.getId())).thenReturn(Optional.of(profile));
+
+        driverService.update(principal(UUID.randomUUID(), UserRole.SUPER_ADMIN), driver.getId(),
+                new UpdateDriverRequest("Set By Admin", null, null, null));
+
+        assertThat(driver.getFullName()).isEqualTo("Set By Admin");
+        assertThat(profile.getPendingFullName()).isNull();
+    }
+
+    @Test
+    void superAdminApprovalAppliesTheDriversPendingName() {
+        driver.setFullName("Alex Mutua");
+        RiderProfile profile = new RiderProfile();
+        profile.setUser(driver);
+        profile.setPendingFullName("Alex Updated");
+        when(userRepository.findByIdForUpdate(driver.getId())).thenReturn(Optional.of(driver));
+        when(riderProfileRepository.findById(driver.getId())).thenReturn(Optional.of(profile));
+
+        driverService.reviewProfileChange(
+                principal(UUID.randomUUID(), UserRole.SUPER_ADMIN), driver.getId(), "APPROVED");
+
+        assertThat(driver.getFullName()).isEqualTo("Alex Updated");
+        assertThat(profile.getPendingFullName()).isNull();
     }
 
     @Test

@@ -15,6 +15,7 @@ import com.example.distrobackend.dto.CreateDriverInvitationRequest;
 import com.example.distrobackend.dto.DriverRegistrationRequest;
 import com.example.distrobackend.dto.DriverLocationRequest;
 import com.example.distrobackend.dto.DriverResponse;
+import com.example.distrobackend.dto.DriverSelfProfileResponse;
 import com.example.distrobackend.dto.UpdateDriverAvailabilityRequest;
 import com.example.distrobackend.dto.UpdateDriverRequest;
 import com.example.distrobackend.dto.UpdateUserStatusRequest;
@@ -184,6 +185,18 @@ public class DriverService {
         }
         User driver = findDriver(actor, driverId);
         return DriverResponse.from(driver, ensureProfile(driver), actor.role() != UserRole.DRIVER);
+    }
+
+    @Transactional(readOnly = true)
+    public DriverSelfProfileResponse getMyProfile(AuthenticatedUser actor) {
+        if (actor == null || actor.role() != UserRole.DRIVER) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        User driver = userRepository.findById(actor.userId())
+                .filter(user -> user.getRole() == UserRole.DRIVER)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Driver not found"));
+        RiderProfile profile = riderProfileRepository.findById(actor.userId()).orElse(null);
+        return DriverSelfProfileResponse.from(driver, profile);
     }
 
     @Transactional

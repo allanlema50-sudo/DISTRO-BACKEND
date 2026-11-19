@@ -95,6 +95,7 @@ public class VehicleService {
         vehicle.setMake(trimToNull(request.make()));
         vehicle.setModel(trimToNull(request.model()));
         vehicle.setCapacityKg(request.capacityKg());
+        vehicle.setCapacityM3(request.capacityM3());
         vehicle.setStatus(VehicleStatus.ACTIVE);
         return VehicleResponse.from(vehicleRepository.save(vehicle));
     }
@@ -126,6 +127,7 @@ public class VehicleService {
         if (request.make() != null) vehicle.setMake(trimToNull(request.make()));
         if (request.model() != null) vehicle.setModel(trimToNull(request.model()));
         if (request.capacityKg() != null) vehicle.setCapacityKg(request.capacityKg());
+        if (request.capacityM3() != null) vehicle.setCapacityM3(request.capacityM3());
         return VehicleResponse.from(vehicleRepository.save(vehicle));
     }
 

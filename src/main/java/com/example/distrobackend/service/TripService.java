@@ -583,7 +583,14 @@ public class TripService {
     }
 
     private Trip getOrganizationTripForUpdate(AuthenticatedUser actor, UUID tripId) {
-        if (actor == null || actor.organizationId() == null) {
+        if (actor == null) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        if (actor.role() == UserRole.SUPER_ADMIN) {
+            return tripRepository.findByIdForUpdate(tripId)
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Trip not found"));
+        }
+        if (actor.organizationId() == null) {
             throw new ApiException(ErrorCode.ACCESS_DENIED);
         }
         return tripRepository.findByIdAndOrganizationForUpdate(tripId, actor.organizationId())

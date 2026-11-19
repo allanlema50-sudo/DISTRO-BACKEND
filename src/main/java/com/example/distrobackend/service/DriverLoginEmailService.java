@@ -7,8 +7,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 /**
- * Sends the temporary driver password through the same email provider used for
- * verification codes. Onboarding mail is a separate switch and is not required.
+ * Sends the temporary driver password through {@link EmailProviderClient}.
+ * With EMAIL_PROVIDER=brevo, or OTP_PROVIDER=brevo when the email provider is
+ * unset, that client is Brevo. This path does not call the Resend API.
  */
 @Service
 @RequiredArgsConstructor
@@ -37,7 +38,7 @@ public class DriverLoginEmailService {
             emailProviderClient.send(recipient.trim(), "Your MyDistro driver sign-in", body);
         } catch (RuntimeException ex) {
             throw new ApiException(ErrorCode.INTERNAL_ERROR,
-                    "The sign-in email could not be sent. Use resend from the driver profile.");
+                    "The sign-in email could not be sent. Send the login email again from the driver profile.");
         }
     }
 }

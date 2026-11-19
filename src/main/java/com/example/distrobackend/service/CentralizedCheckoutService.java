@@ -66,9 +66,12 @@ public class CentralizedCheckoutService {
 
     @PostConstruct
     void validateDemoConfiguration() {
-        if (demoEnabled && Arrays.stream(activeProfiles.split(",")).map(String::trim)
-                .anyMatch(p -> !Set.of("local", "dev", "development", "staging", "test").contains(p.toLowerCase(Locale.ROOT)))) {
-            throw new IllegalStateException("DEMO payments may only run in local, development, staging, or test profiles");
+        if (demoEnabled) {
+            if (Arrays.stream(activeProfiles.split(",")).map(String::trim)
+                    .anyMatch(p -> !Set.of("local", "dev", "development", "staging", "test").contains(p.toLowerCase(Locale.ROOT)))) {
+                throw new IllegalStateException("DEMO payments may only run in local, development, staging, or test profiles");
+            }
+            allowedDemoOrganizationIds();
         }
         if (!Set.of("SUCCESS", "FAILED", "CANCELLED", "TIMED_OUT").contains(demoOutcome.toUpperCase(Locale.ROOT))) {
             throw new IllegalStateException("logiflow.demo-payments.outcome must be SUCCESS, FAILED, CANCELLED, or TIMED_OUT");
@@ -323,7 +326,7 @@ public class CentralizedCheckoutService {
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Checkout not found"));
         if (checkout.getStatus() != CheckoutStatus.PAYMENT_PENDING)
             throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT, "Only an unpaid checkout can be cancelled");
-        CheckoutPayment payment = checkoutPaymentRepository.findByCheckout_Id(checkoutId).orElse(null);
+        CheckoutPayment payment = checkoutPaymentRepository.findFirstByCheckout_IdOrderByInitiatedAtDesc(checkoutId).orElse(null);
         if (payment != null) checkout.setPayment(payment);
         if (payment != null && payment.getStatus() == CheckoutPaymentStatus.SUCCESS)
             throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT, "Checkout payment is no longer pending");
@@ -409,7 +412,7 @@ public class CentralizedCheckoutService {
             if (receipt != null && suppliedSecret != null && !suppliedSecret.isBlank()) payment.setProviderReference(receipt);
             else payment.setProviderReference(callback.getCheckoutRequestId());
             checkout.setStatus(CheckoutStatus.PAID); recordAllocations(payment);
-        } else { payment.setStatus(callback.getResultCode()==1032 ? CheckoutPaymentStatus.CANCELLED : CheckoutPaymentStatus.FAILED); payment.setFailureReason(callback.getResultDesc()); checkout.setStatus(payment.getStatus()==CheckoutPaymentStatus.CANCELLED?CheckoutStatus.CANCELLED:CheckoutStatus.PAYMENT_FAILED); cancelAndRelease(checkout); }
+        } else { payment.setStatus(callback.getResultCode()==1032 ? CheckoutPaymentStatus.CANCELLED : CheckoutPaymentStatus.FAILED); payment.setFailureReason(callback.getResultDesc()); checkout.setStatus(CheckoutStatus.PAYMENT_FAILED); }
         checkoutPaymentRepository.save(payment); checkoutRepository.save(checkout);
     }
     public SupplierFinancialStatusResponse supplierFinancialStatus(AuthenticatedUser actor, UUID purchaseOrderId) {
@@ -466,9 +469,9 @@ public class CentralizedCheckoutService {
                     recordAllocations(payment);
                     checkoutStatus = CheckoutStatus.PAID;
                 }
-                case "FAILED" -> { payment.setStatus(CheckoutPaymentStatus.FAILED); checkoutStatus = CheckoutStatus.PAYMENT_FAILED; cancelAndRelease(checkout); }
-                case "CANCELLED" -> { payment.setStatus(CheckoutPaymentStatus.CANCELLED); checkoutStatus = CheckoutStatus.CANCELLED; cancelAndRelease(checkout); }
-                default -> { payment.setStatus(CheckoutPaymentStatus.TIMED_OUT); checkoutStatus = CheckoutStatus.UNKNOWN; cancelAndRelease(checkout); }
+                case "FAILED" -> { payment.setStatus(CheckoutPaymentStatus.FAILED); checkoutStatus = CheckoutStatus.PAYMENT_FAILED; }
+                case "CANCELLED" -> { payment.setStatus(CheckoutPaymentStatus.CANCELLED); checkoutStatus = CheckoutStatus.PAYMENT_FAILED; }
+                default -> { payment.setStatus(CheckoutPaymentStatus.TIMED_OUT); checkoutStatus = CheckoutStatus.PAYMENT_FAILED; }
             }
             checkout.setStatus(checkoutStatus);
             checkoutPaymentRepository.save(payment);
@@ -523,9 +526,7 @@ public class CentralizedCheckoutService {
 
     private CheckoutResponse response(Checkout checkout) {
         CheckoutPayment payment = checkout.getPayment();
-        CheckoutResponse.Payment paymentResponse = payment == null ? null : new CheckoutResponse.Payment(
-                payment.getId(), payment.isDemo() ? "DEMO" : payment.getMethod().name(),
-                payment.getStatus().name(), payment.getProviderReference(), payment.isDemo(), payment.getDemoLabel(), payment.getInitiatedAt(), payment.getConfirmedAt());
+        CheckoutResponse.Payment paymentResponse = payment == null ? null : paymentResponse(checkout, payment);
         List<CheckoutResponse.SupplierOrder> orderResponses = purchaseOrderRepository.findByCheckout_Id(checkout.getId()).stream().map(this::supplierOrder).toList();
         List<CheckoutResponse.Allocation> allocations = payment == null ? List.of()
                 : allocationRepository.findByPayment_IdOrderByCreatedAtAsc(payment.getId()).stream().map(this::allocationResponse).toList();
@@ -533,6 +534,26 @@ public class CentralizedCheckoutService {
                 checkout.getTotalAmount(), checkout.getCurrency(), checkout.getBuyerOrganization().getId(),
                 safeName(checkout.getBuyerOrganization().getName()), payment != null && payment.isDemo(),
                 payment == null ? null : payment.getDemoLabel(), paymentResponse, orderResponses, allocations);
+    }
+
+    private CheckoutResponse.Payment paymentResponse(Checkout checkout, CheckoutPayment payment) {
+        CheckoutPaymentStatus status = payment.getStatus();
+        boolean terminal = status == CheckoutPaymentStatus.SUCCESS || status == CheckoutPaymentStatus.FAILED
+                || status == CheckoutPaymentStatus.CANCELLED || status == CheckoutPaymentStatus.TIMED_OUT;
+        boolean retryAllowed = status == CheckoutPaymentStatus.FAILED || status == CheckoutPaymentStatus.CANCELLED
+                || status == CheckoutPaymentStatus.TIMED_OUT;
+        String message = switch (status) {
+            case PENDING -> "Payment is awaiting provider confirmation.";
+            case SUCCESS -> "Payment confirmed.";
+            case FAILED -> "Payment failed. You can try another payment method.";
+            case CANCELLED -> "Payment was cancelled. You can try another payment method.";
+            case TIMED_OUT -> "Payment attempt timed out. Retry is available after the provider confirmed the outcome.";
+            case UNKNOWN -> "Payment status cannot currently be established. Do not retry until confirmation is available.";
+        };
+        return new CheckoutResponse.Payment(payment.getId(), checkout.getCheckoutReference(),
+                payment.isDemo() ? "DEMO" : payment.getMethod().name(), status.name(), payment.getProviderReference(),
+                payment.isDemo(), payment.getDemoLabel(), payment.getInitiatedAt(), payment.getConfirmedAt(),
+                payment.getUpdatedAt(), terminal, retryAllowed, message);
     }
 
     private CheckoutResponse.SupplierOrder supplierOrder(PurchaseOrder order) {
@@ -562,11 +583,27 @@ public class CentralizedCheckoutService {
 
     private void ensureDemoAuthorized(AuthenticatedUser actor) {
         if (!demoEnabled) throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "DEMO checkout payment is disabled");
-        Set<String> allowed = Arrays.stream(demoOrganizationIds.split(",")).map(String::trim).filter(v -> !v.isBlank()).collect(Collectors.toSet());
-        if (!allowed.contains(actor.organizationId().toString())) throw new ApiException(ErrorCode.ACCESS_DENIED, "Organization is not enabled for DEMO payments");
+        if (!allowedDemoOrganizationIds().contains(actor.organizationId())) throw new ApiException(ErrorCode.ACCESS_DENIED, "Organization is not enabled for DEMO payments");
         if (Arrays.stream(activeProfiles.split(",")).map(String::trim).anyMatch(p -> p.equalsIgnoreCase("prod") || p.equalsIgnoreCase("production"))) {
             throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "DEMO payments are forbidden in production");
         }
+    }
+
+    private Set<UUID> allowedDemoOrganizationIds() {
+        Set<UUID> allowed = new HashSet<>();
+        for (String value : demoOrganizationIds.split(",")) {
+            String id = value.trim();
+            if (id.isEmpty()) continue;
+            try {
+                allowed.add(UUID.fromString(id));
+            } catch (IllegalArgumentException ex) {
+                throw new IllegalStateException("LOGIFLOW_DEMO_ORGANIZATION_IDS must contain comma-separated organization UUIDs", ex);
+            }
+        }
+        if (allowed.isEmpty()) {
+            throw new IllegalStateException("LOGIFLOW_DEMO_ORGANIZATION_IDS must contain at least one organization UUID when DEMO payments are enabled");
+        }
+        return allowed;
     }
 
     private void requireDistributor(AuthenticatedUser actor) {

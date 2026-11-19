@@ -88,7 +88,7 @@ public class PurchaseOrderShipmentService {
                         "The purchase order must be settled for the exact amount before dispatch");
             }
         } else {
-            var payment = checkoutPaymentRepository.findByCheckout_Id(purchaseOrder.getCheckout().getId())
+            var payment = checkoutPaymentRepository.findFirstByCheckout_IdOrderByInitiatedAtDesc(purchaseOrder.getCheckout().getId())
                     .orElseThrow(() -> new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT, "Checkout payment is not confirmed"));
             if (payment.getStatus() != com.example.distrobackend.Domain.enums.CheckoutPaymentStatus.SUCCESS
                     || payment.getAmount().compareTo(purchaseOrder.getCheckout().getTotalAmount()) != 0

@@ -13,11 +13,11 @@ import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.Map;
 import java.util.UUID;
-@Entity @Table(name="checkout_payments", uniqueConstraints=@UniqueConstraint(name="uk_checkout_payment_checkout", columnNames="checkout_id"))
+@Entity @Table(name="checkout_payments")
 @Getter @Setter @NoArgsConstructor
 public class CheckoutPayment {
  @Id @GeneratedValue @JdbcTypeCode(SqlTypes.UUID) private UUID id;
- @OneToOne(fetch=FetchType.LAZY, optional=false) @JoinColumn(name="checkout_id", nullable=false) private Checkout checkout;
+ @ManyToOne(fetch=FetchType.LAZY, optional=false) @JoinColumn(name="checkout_id", nullable=false) private Checkout checkout;
  @Enumerated(EnumType.STRING) @Column(name="method", nullable=false) private PaymentMethod method;
  @Enumerated(EnumType.STRING) @Column(name="status", nullable=false) private CheckoutPaymentStatus status=CheckoutPaymentStatus.PENDING;
  @Column(name="amount", nullable=false, precision=14, scale=2) private BigDecimal amount;

@@ -25,7 +25,10 @@ public record DriverResponse(
         boolean available,
         Double currentLat,
         Double currentLng,
-        OffsetDateTime lastLocationAt
+        OffsetDateTime lastLocationAt,
+        String pendingFullName,
+        String pendingPhoneNumber,
+        String pendingLicenseNumber
 ) {
     public static DriverResponse from(User user, RiderProfile profile) {
         return from(user, profile, true);
@@ -43,6 +46,9 @@ public record DriverResponse(
                 profile != null && profile.isAvailable(),
                 profile == null ? null : profile.getCurrentLat(),
                 profile == null ? null : profile.getCurrentLng(),
-                profile == null ? null : profile.getLastLocationAt());
+                profile == null ? null : profile.getLastLocationAt(),
+                profile == null ? null : profile.getPendingFullName(),
+                profile == null ? null : profile.getPendingPhoneNumber(),
+                profile == null ? null : profile.getPendingLicenseNumber());
     }
 }

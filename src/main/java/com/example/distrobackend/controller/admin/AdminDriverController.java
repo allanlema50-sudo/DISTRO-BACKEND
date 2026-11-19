@@ -1,6 +1,7 @@
 package com.example.distrobackend.controller.admin;
 
 import com.example.distrobackend.dto.DriverApprovalRequest;
+import com.example.distrobackend.dto.DriverProfileChangeDecisionRequest;
 import com.example.distrobackend.dto.DriverResponse;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.service.DriverService;
@@ -28,5 +29,13 @@ public class AdminDriverController {
                                          @PathVariable UUID driverId,
                                          @Valid @RequestBody DriverApprovalRequest request) {
         return driverService.approve(actor, driverId, request.status());
+    }
+
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    @PatchMapping("/{driverId}/profile-change")
+    public DriverResponse reviewProfileChange(@AuthenticationPrincipal AuthenticatedUser actor,
+                                              @PathVariable UUID driverId,
+                                              @Valid @RequestBody DriverProfileChangeDecisionRequest request) {
+        return driverService.reviewProfileChange(actor, driverId, request.decision());
     }
 }

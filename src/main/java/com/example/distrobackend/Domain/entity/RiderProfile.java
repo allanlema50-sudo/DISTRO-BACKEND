@@ -57,4 +57,13 @@ private UUID userId;
 
     @Column(name = "last_location_at")
     private OffsetDateTime lastLocationAt;
+
+    @Column(name = "pending_full_name", length = 150)
+    private String pendingFullName;
+
+    @Column(name = "pending_phone_number", length = 20)
+    private String pendingPhoneNumber;
+
+    @Column(name = "pending_license_number", length = 50)
+    private String pendingLicenseNumber;
 }

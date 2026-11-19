@@ -155,21 +155,23 @@ public class TripService {
         trip.setStatus(TripStatus.SCHEDULED);
         trip.setRider(driver);
         trip.setVehicle(vehicle);
-        trip.setOriginName(first.getCargoDescription());
-        trip.setOriginAddress(first.getDeliveryLocation());
-        trip.setOriginLat(0.0);
-        trip.setOriginLng(0.0);
+        requireTripPin(first.getPickupLat(), first.getPickupLng(), "Pickup");
+        trip.setOriginName(first.getPickupLocation());
+        trip.setOriginAddress(first.getPickupLocation());
+        trip.setOriginLat(first.getPickupLat());
+        trip.setOriginLng(first.getPickupLng());
         trip.setScheduledStartLabel(request.plannedStart());
         trip.setTotalDistanceKm(request.distanceKm());
         int sequence = 1;
         for (Shipment shipment : shipments) {
+            requireTripPin(shipment.getDeliveryLat(), shipment.getDeliveryLng(), "Drop-off");
             TripStop stop = new TripStop();
             stop.setSequence(sequence++);
             stop.setStatus(StopStatus.PENDING);
-            stop.setLocationName(shipment.getCargoDescription());
+            stop.setLocationName(shipment.getDeliveryLocation());
             stop.setLocationAddress(shipment.getDeliveryLocation());
-            stop.setLocationLat(0.0);
-            stop.setLocationLng(0.0);
+            stop.setLocationLat(shipment.getDeliveryLat());
+            stop.setLocationLng(shipment.getDeliveryLng());
             if (shipment.getDeliveryWindowStart() != null) {
                 stop.setEtaLabel(shipment.getDeliveryWindowStart().toString());
             }
@@ -436,6 +438,15 @@ public class TripService {
         TripStatus previous = trip.getStatus();
         trip.setStatus(requested);
         Trip saved = tripRepository.save(trip);
+        if (requested == TripStatus.CANCELLED) {
+            for (Shipment shipment : shipmentRepository.findByTrip_Id(saved.getId())) {
+                if (shipment.getStatus() == ShipmentStatus.ASSIGNED) {
+                    shipment.setTrip(null);
+                    shipment.setStatus(ShipmentStatus.READY);
+                    shipmentRepository.save(shipment);
+                }
+            }
+        }
         recordStatus(saved, previous, requested, actor,
                 note == null || note.isBlank() ? "Trip status updated" : note.trim());
         return TripResponse.from(saved, aggregateItems(saved));
@@ -612,6 +623,13 @@ public class TripService {
             throw new ApiException(ErrorCode.ACCESS_DENIED, "An organization identity is required");
         }
         return actor.organizationId();
+    }
+
+    private static void requireTripPin(Double latitude, Double longitude, String label) {
+        if (latitude == null || longitude == null || (latitude == 0.0 && longitude == 0.0)) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    label + " needs a map pin before this shipment can go on a trip.");
+        }
     }
 
     private static boolean isAllowedTransition(TripStatus current, TripStatus requested) {

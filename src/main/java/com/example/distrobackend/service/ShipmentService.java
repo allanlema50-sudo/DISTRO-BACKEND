@@ -189,9 +189,18 @@ public class ShipmentService {
         shipment.setWeightKg(request.weightKg());
         shipment.setVolumeM3(request.volumeM3());
         shipment.setHandlingRequirements(request.handlingRequirements());
+        requirePin(request.pickupLat(), request.pickupLng(), "Pickup");
+        requirePin(request.deliveryLat(), request.deliveryLng(), "Drop-off");
+        shipment.setPickupLocation(request.pickupLocation().trim());
+        shipment.setPickupWindowStart(request.pickupWindowStart());
+        shipment.setPickupWindowEnd(request.pickupWindowEnd());
+        shipment.setPickupLat(request.pickupLat());
+        shipment.setPickupLng(request.pickupLng());
         shipment.setDeliveryLocation(request.deliveryLocation().trim());
         shipment.setDeliveryWindowStart(request.deliveryWindowStart());
         shipment.setDeliveryWindowEnd(request.deliveryWindowEnd());
+        shipment.setDeliveryLat(request.deliveryLat());
+        shipment.setDeliveryLng(request.deliveryLng());
         shipment.setAllowSharedLoads(Boolean.TRUE.equals(request.allowSharedLoads()));
         shipment.setSpecialInstructions(trimToNull(request.specialInstructions()));
         shipment.setTrackingReference(trimToNull(request.trackingReference()));
@@ -199,10 +208,25 @@ public class ShipmentService {
     }
 
     private void validateWindow(ShipmentRequest request) {
+        if (request.pickupWindowStart() != null && request.pickupWindowEnd() != null
+                && !request.pickupWindowEnd().isAfter(request.pickupWindowStart())) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    "Pickup window end must be later than its start");
+        }
         if (request.deliveryWindowStart() != null && request.deliveryWindowEnd() != null
                 && !request.deliveryWindowEnd().isAfter(request.deliveryWindowStart())) {
             throw new ApiException(ErrorCode.BAD_REQUEST,
                     "Delivery window end must be later than its start");
+        }
+    }
+
+    private static void requirePin(Double latitude, Double longitude, String label) {
+        if (latitude == null || longitude == null
+                || latitude < -90 || latitude > 90
+                || longitude < -180 || longitude > 180
+                || (latitude == 0.0 && longitude == 0.0)) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    label + " needs a map pin. 0, 0 is not a pickup or drop-off.");
         }
     }
 

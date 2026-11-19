@@ -11,8 +11,11 @@ import java.util.UUID;
 public record ShipmentResponse(UUID id, String shipmentNumber, UUID orderId, String orderNumber,
         UUID organizationId, UUID tripId, ShipmentStatus status, String trackingReference,
         String notes, String cargoDescription, String cargoCategory, BigDecimal weightKg,
-        BigDecimal volumeM3, List<String> handlingRequirements, String deliveryLocation,
+        BigDecimal volumeM3, List<String> handlingRequirements, String pickupLocation,
+        LocalDateTime pickupWindowStart, LocalDateTime pickupWindowEnd,
+        Double pickupLat, Double pickupLng, String deliveryLocation,
         LocalDateTime deliveryWindowStart, LocalDateTime deliveryWindowEnd,
+        Double deliveryLat, Double deliveryLng,
         boolean allowSharedLoads, String specialInstructions,
         OffsetDateTime createdAt, OffsetDateTime updatedAt) {
     public static ShipmentResponse from(Shipment s) {
@@ -21,8 +24,11 @@ public record ShipmentResponse(UUID id, String shipmentNumber, UUID orderId, Str
                 s.getOrder() == null ? null : s.getOrder().getOrderNumber(), s.getOrganization().getId(),
                 s.getTrip() == null ? null : s.getTrip().getId(), s.getStatus(),
                 s.getTrackingReference(), s.getNotes(), s.getCargoDescription(), s.getCargoCategory(),
-                s.getWeightKg(), s.getVolumeM3(), s.getHandlingRequirements(), s.getDeliveryLocation(),
-                s.getDeliveryWindowStart(), s.getDeliveryWindowEnd(), s.isAllowSharedLoads(),
+                s.getWeightKg(), s.getVolumeM3(), s.getHandlingRequirements(),
+                s.getPickupLocation(), s.getPickupWindowStart(), s.getPickupWindowEnd(),
+                s.getPickupLat(), s.getPickupLng(), s.getDeliveryLocation(),
+                s.getDeliveryWindowStart(), s.getDeliveryWindowEnd(),
+                s.getDeliveryLat(), s.getDeliveryLng(), s.isAllowSharedLoads(),
                 s.getSpecialInstructions(), s.getCreatedAt(), s.getUpdatedAt());
     }
 }

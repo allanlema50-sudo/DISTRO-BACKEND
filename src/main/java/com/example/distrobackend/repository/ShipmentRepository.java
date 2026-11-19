@@ -16,6 +16,7 @@ import java.util.UUID;
 
 public interface ShipmentRepository extends JpaRepository<Shipment, UUID> {
     boolean existsByOrder_Id(UUID orderId);
+    java.util.List<Shipment> findByTrip_Id(UUID tripId);
     Optional<Shipment> findByOrder_Id(UUID orderId);
 
     @EntityGraph(attributePaths = {"order", "organization", "trip", "createdBy"})

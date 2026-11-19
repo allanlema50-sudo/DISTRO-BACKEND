@@ -8,7 +8,7 @@
 
 ## Changes
 
-- Changed checkout payments to many-to-one attempt history and added Flyway migration `V56__allow_checkout_payment_attempt_history.sql` to drop the checkout uniqueness constraint and add a lookup index.
+- Changed checkout payments to many-to-one attempt history and added Flyway migration `V58__allow_checkout_payment_attempt_history.sql` to drop the checkout uniqueness constraint and add a lookup index. Versions 56 and 57 are already used by marketplace foundation and vehicle cargo volume migrations.
 - Serialized attempts through the existing checkout row lock; idempotency keys replay the same attempt, unresolved and successful attempts block new attempts, and failed/cancelled/timed out attempts can be retried.
 - Exposed checkout reference, attempt UUID, update timestamp, terminal/retry flags, and a safe user message in payment status responses.
 - Updated dispatch validation to check the latest attempt and its matching allocation.
@@ -16,7 +16,7 @@
 
 ## Migration and deployment
 
-Deploy with Flyway enabled so V56 applies before application traffic. Existing V55 data remains unchanged. No new environment variables were introduced. Daraja callback URL and credentials plus the existing STK query URL must be configured as documented in `application.properties`.
+Deploy with Flyway enabled so V58 applies after V56 and V57. Existing payment data remains unchanged. No new environment variables were introduced. Daraja callback URL and credentials plus the existing STK query URL must be configured as documented in `application.properties`.
 
 ## Verification status
 

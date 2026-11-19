@@ -242,18 +242,6 @@ public class CentralizedCheckoutService {
                 Map.entry("PhoneNumber", phone), Map.entry("CallBackURL", callbackUrl),
                 Map.entry("AccountReference", checkoutReference),
                 Map.entry("TransactionDesc", "LogiFlow checkout"));
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("BusinessShortCode", mpesaShortcode);
-        body.put("Password", password);
-        body.put("Timestamp", timestamp);
-        body.put("TransactionType", "CustomerPayBillOnline");
-        body.put("Amount", payment.getAmount().setScale(0, java.math.RoundingMode.CEILING).intValueExact());
-        body.put("PartyA", phone);
-        body.put("PartyB", mpesaShortcode);
-        body.put("PhoneNumber", phone);
-        body.put("CallBackURL", mpesaCallbackUrl);
-        body.put("AccountReference", payment.getCheckout().getCheckoutReference());
-        body.put("TransactionDesc", "LogiFlow checkout");
         HttpHeaders headers = new HttpHeaders(); headers.setBearerAuth(String.valueOf(accessToken)); headers.setContentType(MediaType.APPLICATION_JSON);
         ResponseEntity<Map> result;
         try {

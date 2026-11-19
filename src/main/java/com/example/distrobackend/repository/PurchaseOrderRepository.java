@@ -14,10 +14,10 @@ import java.util.UUID;
 
 public interface PurchaseOrderRepository extends JpaRepository<PurchaseOrder, UUID> {
 
-    @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {"buyerOrganization", "supplierOrganization", "checkout", "checkout.payment", "destinationWarehouse"})
+    @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {"buyerOrganization", "supplierOrganization", "checkout", "destinationWarehouse"})
     Page<PurchaseOrder> findByBuyerOrganizationId(UUID organizationId, Pageable pageable);
 
-    @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {"buyerOrganization", "supplierOrganization", "checkout", "checkout.payment", "destinationWarehouse"})
+    @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {"buyerOrganization", "supplierOrganization", "checkout", "destinationWarehouse"})
     Page<PurchaseOrder> findBySupplierOrganizationId(UUID organizationId, Pageable pageable);
 
     @Query("select p from PurchaseOrder p "
@@ -28,7 +28,6 @@ public interface PurchaseOrderRepository extends JpaRepository<PurchaseOrder, UU
             + "left join fetch p.items i "
             + "left join fetch i.stockItem "
             + "left join fetch p.checkout checkout "
-            + "left join fetch checkout.payment checkoutPayment "
             + "where p.id = :id")
     Optional<PurchaseOrder> findByIdWithItems(@Param("id") UUID id);
 

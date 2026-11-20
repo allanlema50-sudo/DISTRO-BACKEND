@@ -60,6 +60,9 @@ public class User {
     @Column(name = "job_title", length = 100)
     private String jobTitle;
 
+    @Column(name = "avatar_available", nullable = false)
+    private boolean avatarAvailable = false;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "base_warehouse_id")
     private Warehouse baseWarehouse;

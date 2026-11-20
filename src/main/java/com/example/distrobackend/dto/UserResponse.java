@@ -23,7 +23,8 @@ public record UserResponse(
         boolean emailVerified,
         UserStatus status,
         String jobTitle,
-        UUID warehouseId
+        UUID warehouseId,
+        String avatarUrl
 ) {
     /** Must be called inside a transaction (organization is lazy). */
     public static UserResponse from(User user) {

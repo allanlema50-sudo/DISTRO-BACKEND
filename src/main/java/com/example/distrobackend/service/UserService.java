@@ -3,6 +3,7 @@ package com.example.distrobackend.service;
 import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.entity.CustomerAddress;
 import com.example.distrobackend.Domain.entity.PushDeviceToken;
+import com.example.distrobackend.Domain.entity.UserAvatar;
 import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Domain.enums.UserStatus;
 import com.example.distrobackend.Exception.ApiException;
@@ -17,6 +18,7 @@ import com.example.distrobackend.repository.CustomerAddressRepository;
 import com.example.distrobackend.repository.PushDeviceTokenRepository;
 import com.example.distrobackend.repository.OtpVerificationRepository;
 import com.example.distrobackend.repository.UserRepository;
+import com.example.distrobackend.repository.UserAvatarRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -27,6 +29,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.UUID;
+import java.io.IOException;
+import org.springframework.web.multipart.MultipartFile;
 
 @Slf4j
 @Service
@@ -40,23 +44,87 @@ public class UserService {
     private final PushDeviceTokenRepository pushDeviceTokenRepository;
     private final OtpVerificationRepository otpRepository;
     private final RefreshTokenService refreshTokenService;
+    private final UserAvatarRepository userAvatarRepository;
 
     @Autowired
     public UserService(UserRepository userRepository, CustomerAddressRepository customerAddressRepository,
                        PushDeviceTokenRepository pushDeviceTokenRepository,
-                       OtpVerificationRepository otpRepository, RefreshTokenService refreshTokenService) {
+                       OtpVerificationRepository otpRepository, RefreshTokenService refreshTokenService,
+                       UserAvatarRepository userAvatarRepository) {
         this.userRepository = userRepository;
         this.customerAddressRepository = customerAddressRepository;
         this.pushDeviceTokenRepository = pushDeviceTokenRepository;
         this.otpRepository = otpRepository;
         this.refreshTokenService = refreshTokenService;
+        this.userAvatarRepository = userAvatarRepository;
     }
 
     /** Compatibility constructor for existing unit fixtures that do not exercise mobile profile APIs. */
     public UserService(UserRepository userRepository, OtpVerificationRepository otpRepository,
                        RefreshTokenService refreshTokenService) {
-        this(userRepository, null, null, otpRepository, refreshTokenService);
+        this(userRepository, null, null, otpRepository, refreshTokenService, null);
     }
+
+    @Transactional
+    public UserResponse uploadMyAvatar(UUID userId, MultipartFile file) {
+        if (file == null || file.isEmpty() || file.getSize() > 5L * 1024 * 1024) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Avatar must be a PNG, JPEG, or WebP image up to 5 MB");
+        }
+        if (userAvatarRepository == null) throw new IllegalStateException("Avatar storage is unavailable");
+        try {
+            byte[] bytes = file.getBytes();
+            String contentType = detectAvatarType(bytes);
+            User user = userRepository.findByIdForUpdate(userId)
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "User not found"));
+            UserAvatar avatar = userAvatarRepository.findById(userId).orElseGet(UserAvatar::new);
+            avatar.setUser(user);
+            avatar.setContent(bytes);
+            avatar.setContentType(contentType);
+            avatar.setSizeBytes(bytes.length);
+            userAvatarRepository.save(avatar);
+            user.setAvatarAvailable(true);
+            userRepository.save(user);
+            return UserResponse.from(user);
+        } catch (IOException ex) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Avatar could not be read");
+        }
+    }
+
+    @Transactional(readOnly = true)
+    public AvatarPayload avatar(AuthenticatedUser actor, UUID targetUserId) {
+        User target = userRepository.findWithOrganizationById(targetUserId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "User not found"));
+        boolean sameOrganization = actor.organizationId() != null && target.getOrganization() != null
+                && actor.organizationId().equals(target.getOrganization().getId());
+        if (!actor.userId().equals(targetUserId) && actor.role() != UserRole.SUPER_ADMIN && !sameOrganization) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        UserAvatar avatar = userAvatarRepository.findById(targetUserId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Avatar not found"));
+        return new AvatarPayload(avatar.getContent(), avatar.getContentType());
+    }
+
+    @Transactional
+    public void deleteMyAvatar(UUID userId) {
+        User user = userRepository.findByIdForUpdate(userId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "User not found"));
+        userAvatarRepository.deleteById(userId);
+        user.setAvatarAvailable(false);
+        userRepository.save(user);
+    }
+
+    private static String detectAvatarType(byte[] bytes) {
+        if (bytes.length >= 8 && (bytes[0] & 0xff) == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4e
+                && bytes[3] == 0x47 && bytes[4] == 0x0d && bytes[5] == 0x0a && bytes[6] == 0x1a
+                && bytes[7] == 0x0a) return "image/png";
+        if (bytes.length >= 3 && (bytes[0] & 0xff) == 0xff && (bytes[1] & 0xff) == 0xd8
+                && (bytes[2] & 0xff) == 0xff) return "image/jpeg";
+        if (bytes.length >= 12 && bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F'
+                && bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' && bytes[11] == 'P') return "image/webp";
+        throw new ApiException(ErrorCode.BAD_REQUEST, "Avatar must be a PNG, JPEG, or WebP image up to 5 MB");
+    }
+
+    public record AvatarPayload(byte[] content, String contentType) { }
 
     @Transactional(readOnly = true)
     public Page<UserResponse> listForPlatform(AuthenticatedUser actor,

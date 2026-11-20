@@ -11,6 +11,7 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -38,4 +39,6 @@ public interface ShipmentRepository extends JpaRepository<Shipment, UUID> {
     @EntityGraph(attributePaths = {"order", "order.customer", "organization", "trip"})
     @Query("select s from Shipment s where s.id = :id")
     Optional<Shipment> findByIdForUpdate(@Param("id") UUID id);
+
+    List<Shipment> findByTrip_Id(UUID tripId);
 }

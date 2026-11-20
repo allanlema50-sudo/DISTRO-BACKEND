@@ -9,4 +9,5 @@ import java.util.UUID;
 
 public interface TripOperationalActionRepository extends JpaRepository<TripOperationalAction, UUID> {
     Page<TripOperationalAction> findByTrip_IdOrderByCreatedAtDesc(UUID tripId, Pageable pageable);
+    void deleteByTrip_Id(UUID tripId);
 }

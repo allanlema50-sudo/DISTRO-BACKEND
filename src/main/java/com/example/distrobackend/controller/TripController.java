@@ -38,6 +38,16 @@ public class TripController {
         return tripService.get(me, tripId);
     }
 
+    @DeleteMapping("/{tripId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(@AuthenticationPrincipal AuthenticatedUser me,
+                       @PathVariable UUID tripId) {
+        if (me.role() == UserRole.CUSTOMER || me.role() == UserRole.DRIVER) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED, "Role not authorized to delete trips");
+        }
+        tripService.delete(me, tripId);
+    }
+
     @GetMapping("/{tripId}/stops")
     public List<TripStopResponse> stops(@AuthenticationPrincipal AuthenticatedUser me,
                                         @PathVariable UUID tripId) {

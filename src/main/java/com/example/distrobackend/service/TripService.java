@@ -23,6 +23,7 @@ import java.util.*;
 public class TripService {
 
     private final TripRepository tripRepository;
+    private final ShipmentRepository shipmentRepository;
     private final OrderRepository orderRepository;
     private final StockItemRepository stockItemRepository;
     private final UserRepository userRepository;
@@ -335,6 +336,22 @@ public class TripService {
         return actor.role() == UserRole.CUSTOMER
                 ? customerResponse(trip, actor.userId())
                 : TripResponse.from(trip, aggregateItems(trip));
+    }
+
+    @Transactional
+    public void delete(AuthenticatedUser actor, UUID tripId) {
+        Trip trip = getOrganizationTripForUpdate(actor, tripId);
+        if (trip.getStatus() != TripStatus.SCHEDULED) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    "Only scheduled trips can be deleted");
+        }
+
+        // Keep shipments and their order data; deleting a trip only unlinks them.
+        shipmentRepository.findByTrip_Id(tripId).forEach(shipment -> shipment.setTrip(null));
+        tripLocationPingRepository.deleteByTrip_Id(tripId);
+        tripStatusHistoryRepository.deleteByTrip_Id(tripId);
+        tripOperationalActionRepository.deleteByTrip_Id(tripId);
+        tripRepository.delete(trip);
     }
 
     @Transactional

@@ -38,7 +38,6 @@ class CentralizedCheckoutServiceTest {
 
  @Test void successfulDemoAllocatesFiveMillionAcrossThreeIndependentOrdersWithoutMarkingPayoutsSettled() {
   ReflectionTestUtils.setField(service,"demoEnabled",true);
-  ReflectionTestUtils.setField(service,"activeProfiles","staging");
   ReflectionTestUtils.setField(service,"demoOutcome","SUCCESS");
   ReflectionTestUtils.setField(service,"confirmationDelaySeconds",0L);
   Checkout checkout=new Checkout(); checkout.setId(UUID.randomUUID()); checkout.setTotalAmount(new BigDecimal("5000000.00")); checkout.setCurrency("KES");
@@ -78,7 +77,6 @@ class CentralizedCheckoutServiceTest {
   ReflectionTestUtils.setField(service,"marketplaceCheckoutEnabled",true);
   ReflectionTestUtils.setField(service,"demoEnabled",true);
   ReflectionTestUtils.setField(service,"demoOrganizationIds",buyerId.toString());
-  ReflectionTestUtils.setField(service,"activeProfiles","staging");
   Checkout checkout=new Checkout(); checkout.setId(UUID.randomUUID()); checkout.setBuyerOrganization(new Organization()); checkout.getBuyerOrganization().setId(buyerId); checkout.getBuyerOrganization().setName("Buyer Ltd"); checkout.setTotalAmount(new BigDecimal("5000000.00")); checkout.setCurrency("KES"); checkout.setStatus(CheckoutStatus.PAYMENT_PENDING);
   when(checkoutRepository.findByIdAndBuyerOrganization_Id(checkout.getId(),buyerId)).thenReturn(java.util.Optional.of(checkout));
   UUID paymentId=UUID.randomUUID();
@@ -99,19 +97,16 @@ class CentralizedCheckoutServiceTest {
   assertThat(result.payment().providerReference()).startsWith("DEMO-PENDING-");
   assertThat(checkout.getPayment().getStatus()).isEqualTo(CheckoutPaymentStatus.PENDING);
  }
- @Test void demoConfigurationFailsClosedForProductionProfile() {
+ @Test void enabledDemoAllowsTheProductionProfileWhenAnOrganizationIsAllowlisted() {
   ReflectionTestUtils.setField(service,"demoEnabled",true);
-  ReflectionTestUtils.setField(service,"activeProfiles","production");
   ReflectionTestUtils.setField(service,"demoOrganizationIds",UUID.randomUUID().toString());
   ReflectionTestUtils.setField(service,"demoOutcome","SUCCESS");
   ReflectionTestUtils.setField(service,"confirmationDelaySeconds",3L);
-  assertThatThrownBy(service::validateDemoConfiguration).isInstanceOf(IllegalStateException.class)
-    .hasMessageContaining("only run in local");
+  service.validateDemoConfiguration();
  }
 
  @Test void enabledDemoRequiresAnExplicitOrganizationUuidAllowlist() {
   ReflectionTestUtils.setField(service,"demoEnabled",true);
-  ReflectionTestUtils.setField(service,"activeProfiles","staging");
   ReflectionTestUtils.setField(service,"demoOrganizationIds"," ");
   ReflectionTestUtils.setField(service,"demoOutcome","SUCCESS");
   ReflectionTestUtils.setField(service,"confirmationDelaySeconds",3L);
@@ -121,7 +116,6 @@ class CentralizedCheckoutServiceTest {
 
  @Test void disabledDemoDoesNotRequireAnAllowlistEvenInProduction() {
   ReflectionTestUtils.setField(service,"demoEnabled",false);
-  ReflectionTestUtils.setField(service,"activeProfiles","production");
   ReflectionTestUtils.setField(service,"demoOrganizationIds","");
   ReflectionTestUtils.setField(service,"demoOutcome","SUCCESS");
   ReflectionTestUtils.setField(service,"confirmationDelaySeconds",3L);

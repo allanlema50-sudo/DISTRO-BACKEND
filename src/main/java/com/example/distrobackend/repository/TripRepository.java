@@ -60,6 +60,10 @@ public interface TripRepository extends JpaRepository<Trip, UUID> {
 
     List<Trip> findByRiderIdAndStatusIn(UUID riderId, List<TripStatus> statuses);
 
+    List<Trip> findByVehicle_IdAndStatusIn(UUID vehicleId, List<TripStatus> statuses);
+
+    List<Trip> findByStatus(TripStatus status);
+
     boolean existsByRider_IdAndStatusInAndIdNot(
             UUID riderId, List<TripStatus> statuses, UUID tripId);
 

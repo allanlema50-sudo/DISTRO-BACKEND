@@ -21,5 +21,6 @@ public class ShipmentController {
     @PostMapping @ResponseStatus(HttpStatus.CREATED) public ShipmentResponse create(@AuthenticationPrincipal AuthenticatedUser me,@Valid @RequestBody ShipmentRequest request) { return service.create(me,request); }
     @PutMapping("/{shipmentId}") public ShipmentResponse update(@AuthenticationPrincipal AuthenticatedUser me,@PathVariable UUID shipmentId,@Valid @RequestBody ShipmentRequest request) { return service.update(me,shipmentId,request); }
     @PatchMapping("/{shipmentId}/status") public ShipmentResponse status(@AuthenticationPrincipal AuthenticatedUser me,@PathVariable UUID shipmentId,@Valid @RequestBody ShipmentStatusUpdate request) { return service.updateStatus(me,shipmentId,request.status(),request.note()); }
+    @PatchMapping("/{shipmentId}/location") public ShipmentResponse location(@AuthenticationPrincipal AuthenticatedUser me,@PathVariable UUID shipmentId,@Valid @RequestBody ShipmentLocationUpdate request) { return service.correctLocation(me,shipmentId,request); }
     @DeleteMapping("/{shipmentId}") @ResponseStatus(HttpStatus.NO_CONTENT) public void delete(@AuthenticationPrincipal AuthenticatedUser me,@PathVariable UUID shipmentId) { service.delete(me,shipmentId); }
 }

@@ -50,6 +50,7 @@ public class TripService {
         trip.setOrganization(organization);
         trip.setTripType(request.tripType());
         trip.setTripNumber("TRIP-" + UUID.randomUUID().toString().replace("-", "").substring(0, 20));
+        trip.setDeliveryNumber(tripRepository.nextDeliveryNumber());
         trip.setStatus(TripStatus.SCHEDULED);
         trip.setOriginName(request.origin().name());
         trip.setOriginAddress(request.origin().address());
@@ -608,18 +609,18 @@ public class TripService {
             StockItem stock = item.getStockItem();
             String key = stock.getId().toString();
             TripItemResponse current = itemMap.getOrDefault(key,
-                    new TripItemResponse(key, stock.getName(), stock.getSku(), "unit", 0));
+                    new TripItemResponse(key, stock.getName(), stock.getSku(), "unit", 0, stock.getSku()));
             itemMap.put(key, new TripItemResponse(current.id(), current.productName(), current.brand(),
-                    current.unitLabel(), current.quantity() + item.getQuantity()));
+                    current.unitLabel(), current.quantity() + item.getQuantity(), current.sku()));
         }
     }
 
     private static void addStockItem(Map<String, TripItemResponse> itemMap, StockItem stock, Integer quantity) {
         String key = stock.getId().toString();
         TripItemResponse current = itemMap.getOrDefault(key,
-                new TripItemResponse(key, stock.getName(), stock.getSku(), "unit", 0));
+                new TripItemResponse(key, stock.getName(), stock.getSku(), "unit", 0, stock.getSku()));
         itemMap.put(key, new TripItemResponse(current.id(), current.productName(), current.brand(),
-                current.unitLabel(), current.quantity() + (quantity == null ? 0 : quantity)));
+                current.unitLabel(), current.quantity() + (quantity == null ? 0 : quantity), current.sku()));
     }
 
     private static boolean allStopsCompleted(Trip trip) {

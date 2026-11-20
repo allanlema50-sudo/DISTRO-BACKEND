@@ -8,6 +8,7 @@ import java.util.UUID;
 
 public record TripResponse(
         String id,
+        String deliveryNumber,
         String tripNumber,
         TripType type,
         TripStatus status,
@@ -15,6 +16,7 @@ public record TripResponse(
         UUID vehicleId,
         TripLocation origin,
         List<TripStopResponse> stops,
+        List<TripItemResponse> items,
         List<TripItemResponse> itemsOnBoard,
         String scheduledStartLabel,
         Integer totalDistanceKm

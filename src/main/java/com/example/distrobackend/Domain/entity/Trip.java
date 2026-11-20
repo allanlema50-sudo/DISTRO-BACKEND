@@ -32,6 +32,9 @@ public class Trip {
     @Column(name = "trip_number", nullable = false, unique = true, length = 36)
     private String tripNumber;
 
+    @Column(name = "delivery_number", nullable = false, unique = true, length = 20)
+    private String deliveryNumber;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "trip_type", nullable = false)
     private TripType tripType;

@@ -5,6 +5,7 @@ public record TripItemResponse(
         String productName,
         String brand,
         String unitLabel,
-        Integer quantity
+        Integer quantity,
+        String sku
 ) {
 }

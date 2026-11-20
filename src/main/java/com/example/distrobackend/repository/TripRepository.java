@@ -15,6 +15,10 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface TripRepository extends JpaRepository<Trip, UUID> {
+    @Query(value = "select 'DEL-' || lpad(nextval('trip_delivery_number_seq')::text, 6, '0')",
+            nativeQuery = true)
+    String nextDeliveryNumber();
+
     boolean existsByIdAndRider_Id(UUID tripId, UUID riderId);
 
     @Query("""

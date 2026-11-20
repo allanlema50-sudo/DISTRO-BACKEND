@@ -34,9 +34,10 @@ public class TripMapper {
                                 stop.getLocationLat(), stop.getLocationLng()), stop.getStatus(), stop.getEtaLabel(),
                         stop.getDistanceFromPreviousKm(), stop.getOrder() == null ? null : stop.getOrder().getOrderNumber(),
                         stop.getContactName(), stop.getContactPhone())).toList();
-        return new TripResponse(trip.getId().toString(), trip.getTripNumber(), trip.getTripType(), trip.getStatus(),
+        return new TripResponse(trip.getId().toString(), trip.getDeliveryNumber(), trip.getTripNumber(),
+                trip.getTripType(), trip.getStatus(),
                 trip.getRider() == null ? null : trip.getRider().getId(),
-                trip.getVehicle() == null ? null : trip.getVehicle().getId(), origin, stops, items,
+                trip.getVehicle() == null ? null : trip.getVehicle().getId(), origin, stops, items, items,
                 trip.getScheduledStartLabel(), trip.getTotalDistanceKm() == null ? 0 : trip.getTotalDistanceKm());
     }
 }

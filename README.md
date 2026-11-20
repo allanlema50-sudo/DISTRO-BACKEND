@@ -328,6 +328,10 @@ organization unless an endpoint explicitly says otherwise.
 | `POST` | `/api/auth/forgot-password` | Public | Request a password-reset OTP |
 | `POST` | `/api/auth/reset-password` | Public | Reset a password with an OTP |
 | `GET` | `/api/users/me` | Authenticated | Return the current user and organization profile |
+| `POST` | `/api/users/me/avatar` | Authenticated | Upload or replace the caller's avatar (PNG/JPEG/WebP, max 5 MB) |
+| `DELETE` | `/api/users/me/avatar` | Authenticated | Remove the caller's avatar |
+
+User identity fields (`fullName`, `email`, and `phoneNumber`) are fixed by account onboarding and cannot be changed through the self-service profile API. Avatar upload is the only profile edit supported here. Avatar image reads use the `avatarUrl` returned by the user profile response and require authentication; access is limited to the owner, a user in the same organization, or a Super Admin.
 
 Request bodies (JSON) for authentication:
 

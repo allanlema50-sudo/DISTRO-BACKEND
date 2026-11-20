@@ -210,42 +210,6 @@ public class AuthService {
     }
 
     @Transactional(noRollbackFor = ApiException.class)
-    public UserResponse updateMyProfile(UUID userId, UpdateMyProfileRequest request) {
-        User user = userRepository.findByIdForUpdate(userId)
-                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "User not found"));
-        if (request.fullName() == null && request.email() == null && request.phoneNumber() == null) {
-            throw new ApiException(ErrorCode.BAD_REQUEST, "Provide at least one profile field to update");
-        }
-        boolean verificationRequired = false;
-        if (request.fullName() != null) {
-            if (request.fullName().isBlank()) throw new ApiException(ErrorCode.BAD_REQUEST, "Name cannot be blank");
-            user.setFullName(request.fullName().trim());
-        }
-        if (request.email() != null) {
-            String email = request.email().trim().toLowerCase(java.util.Locale.ROOT);
-            if (email.isBlank()) throw new ApiException(ErrorCode.BAD_REQUEST, "Email cannot be blank");
-            if (!email.equals(user.getEmail())) {
-                if (userRepository.existsByEmail(email)) throw new ApiException(ErrorCode.DUPLICATE_EMAIL);
-                user.setEmail(email);
-                user.setEmailVerified(false);
-                verificationRequired |= requiresEmailVerification(user);
-            }
-        }
-        if (request.phoneNumber() != null) {
-            String phone = PhoneNormalizer.normalize(request.phoneNumber());
-            if (!phone.equals(user.getPhoneNumber())) {
-                if (userRepository.existsByPhoneNumber(phone)) throw new ApiException(ErrorCode.DUPLICATE_PHONE);
-                user.setPhoneNumber(phone);
-                user.setPhoneVerified(false);
-                verificationRequired |= requiresPhoneVerification(user);
-            }
-        }
-        userRepository.save(user);
-        if (verificationRequired) otpService.issue(user, OtpPurpose.ACCOUNT_VERIFICATION);
-        return UserResponse.from(user);
-    }
-
-    @Transactional(noRollbackFor = ApiException.class)
     public MessageResponse changePassword(UUID userId, ChangePasswordRequest request) {
         User user = userRepository.findByIdForUpdate(userId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "User not found"));

@@ -25,6 +25,7 @@ public class ShipmentService {
     private final TripRepository trips;
     private final UserRepository users;
     private final OrderService orderService;
+    private final NotificationService notifications;
 
     @Transactional(readOnly = true)
     public Page<ShipmentResponse> list(AuthenticatedUser actor, ShipmentStatus status,
@@ -186,6 +187,114 @@ public class ShipmentService {
             shipments.saveAndFlush(shipment);
         }
         shipments.delete(shipment);
+    }
+
+    @Transactional
+    public ShipmentResponse correctLocation(AuthenticatedUser actor, UUID id, ShipmentLocationUpdate request) {
+        Shipment shipment = shipments.findByIdForUpdate(id)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Shipment not found"));
+        requireLocationEditor(actor, shipment);
+        if (shipment.getStatus() == ShipmentStatus.DELIVERED
+                || shipment.getStatus() == ShipmentStatus.CANCELLED) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "A delivered or cancelled shipment location cannot be changed");
+        }
+        requirePin(request.pickupLat(), request.pickupLng(), "Pickup");
+        requirePin(request.deliveryLat(), request.deliveryLng(), "Drop-off");
+        String pickupLocation = request.pickupLocation().trim();
+        String deliveryLocation = request.deliveryLocation().trim();
+        boolean pickupChanged = !samePin(shipment.getPickupLat(), shipment.getPickupLng(),
+                request.pickupLat(), request.pickupLng())
+                || !pickupLocation.equals(shipment.getPickupLocation());
+        boolean dropoffChanged = !samePin(shipment.getDeliveryLat(), shipment.getDeliveryLng(),
+                request.deliveryLat(), request.deliveryLng())
+                || !deliveryLocation.equals(shipment.getDeliveryLocation());
+        if (!pickupChanged && !dropoffChanged) {
+            return ShipmentResponse.from(shipment);
+        }
+        Double previousPickupLat = shipment.getPickupLat();
+        Double previousPickupLng = shipment.getPickupLng();
+        String previousPickup = shipment.getPickupLocation();
+        Double previousDropLat = shipment.getDeliveryLat();
+        Double previousDropLng = shipment.getDeliveryLng();
+        String previousDrop = shipment.getDeliveryLocation();
+        shipment.setPickupLocation(pickupLocation);
+        shipment.setPickupLat(request.pickupLat());
+        shipment.setPickupLng(request.pickupLng());
+        shipment.setDeliveryLocation(deliveryLocation);
+        shipment.setDeliveryLat(request.deliveryLat());
+        shipment.setDeliveryLng(request.deliveryLng());
+        syncTripLocation(shipment, previousPickupLat, previousPickupLng, previousPickup,
+                previousDropLat, previousDropLng, previousDrop, pickupChanged, dropoffChanged);
+        Shipment saved = shipments.save(shipment);
+        notifyDriver(saved, pickupChanged, dropoffChanged);
+        return ShipmentResponse.from(saved);
+    }
+
+    private void syncTripLocation(Shipment shipment, Double previousPickupLat, Double previousPickupLng,
+                                  String previousPickup, Double previousDropLat, Double previousDropLng,
+                                  String previousDrop, boolean pickupChanged, boolean dropoffChanged) {
+        Trip trip = shipment.getTrip();
+        if (trip == null) {
+            return;
+        }
+        if (pickupChanged && (samePin(trip.getOriginLat(), trip.getOriginLng(), previousPickupLat, previousPickupLng)
+                || previousPickup != null && previousPickup.equals(trip.getOriginName()))) {
+            trip.setOriginName(shipment.getPickupLocation());
+            trip.setOriginAddress(shipment.getPickupLocation());
+            trip.setOriginLat(shipment.getPickupLat());
+            trip.setOriginLng(shipment.getPickupLng());
+        }
+        if (dropoffChanged && trip.getStops() != null) {
+            for (TripStop stop : trip.getStops()) {
+                if (samePin(stop.getLocationLat(), stop.getLocationLng(), previousDropLat, previousDropLng)
+                        || previousDrop != null && previousDrop.equals(stop.getLocationAddress())) {
+                    stop.setLocationName(shipment.getDeliveryLocation());
+                    stop.setLocationAddress(shipment.getDeliveryLocation());
+                    stop.setLocationLat(shipment.getDeliveryLat());
+                    stop.setLocationLng(shipment.getDeliveryLng());
+                }
+            }
+        }
+        trips.save(trip);
+    }
+
+    private void notifyDriver(Shipment shipment, boolean pickupChanged, boolean dropoffChanged) {
+        Trip trip = shipment.getTrip();
+        if (trip == null || trip.getRider() == null) {
+            return;
+        }
+        String number = shipment.getShipmentNumber() == null ? "This shipment" : shipment.getShipmentNumber();
+        String detail = pickupChanged && dropoffChanged
+                ? "Pickup is now " + shipment.getPickupLocation()
+                    + ". Drop-off is now " + shipment.getDeliveryLocation() + "."
+                : pickupChanged
+                    ? "Pickup is now " + shipment.getPickupLocation() + "."
+                    : "Drop-off is now " + shipment.getDeliveryLocation() + ".";
+        notifications.create(trip.getRider(), "Shipment location corrected",
+                number + ". " + detail, NotificationType.DELIVERY, NotificationPriority.HIGH,
+                shipment.getId(), "SHIPMENT");
+    }
+
+    private void requireLocationEditor(AuthenticatedUser actor, Shipment shipment) {
+        if (actor != null && actor.role() == UserRole.SUPER_ADMIN) {
+            return;
+        }
+        boolean organizationAdmin = actor != null
+                && (actor.role() == UserRole.MANUFACTURER_ADMIN || actor.role() == UserRole.DISTRIBUTOR_ADMIN)
+                && actor.organizationId() != null
+                && actor.organizationId().equals(shipment.getOrganization().getId());
+        if (!organizationAdmin) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED,
+                    "Only a super admin or that organization's admin can correct a location");
+        }
+    }
+
+    private static boolean samePin(Double firstLat, Double firstLng, Double secondLat, Double secondLng) {
+        if (firstLat == null || firstLng == null || secondLat == null || secondLng == null) {
+            return false;
+        }
+        return Math.abs(firstLat - secondLat) < 0.00001 && Math.abs(firstLng - secondLng) < 0.00001;
     }
 
     private Organization resolveOrganization(AuthenticatedUser actor, UUID organizationId) {

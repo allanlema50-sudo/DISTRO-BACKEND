@@ -253,7 +253,6 @@ public class TripService {
     }
 
     @Transactional(noRollbackFor = ApiException.class)
-    @Transactional
     public void deleteUnstarted(AuthenticatedUser actor, UUID tripId) {
         requireSuperAdmin(actor);
         Trip trip = tripRepository.findByIdForUpdate(tripId)

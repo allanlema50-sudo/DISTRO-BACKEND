@@ -3,16 +3,19 @@ package com.example.distrobackend.service;
 import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.Trip;
 import com.example.distrobackend.Domain.entity.User;
+import com.example.distrobackend.Domain.enums.DriverApprovalStatus;
 import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.TripStatus;
 import com.example.distrobackend.Domain.enums.TripType;
 import com.example.distrobackend.Domain.enums.UserRole;
+import com.example.distrobackend.Domain.enums.UserStatus;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.dto.TripLocation;
 import com.example.distrobackend.dto.TripRequest;
 import com.example.distrobackend.dto.TripResponse;
 import com.example.distrobackend.repository.OrganizationRepository;
 import com.example.distrobackend.repository.OrderRepository;
+import com.example.distrobackend.repository.ShipmentRepository;
 import com.example.distrobackend.repository.StockItemRepository;
 import com.example.distrobackend.repository.TripLocationPingRepository;
 import com.example.distrobackend.repository.TripRepository;
@@ -43,6 +46,7 @@ class TripServiceTest {
     @Mock private TripRepository tripRepository;
     @Mock private OrderRepository orderRepository;
     @Mock private StockItemRepository stockItemRepository;
+    @Mock private ShipmentRepository shipmentRepository;
     @Mock private UserRepository userRepository;
     @Mock private OrganizationRepository organizationRepository;
     @Mock private TripLocationPingRepository locationPingRepository;
@@ -86,6 +90,7 @@ class TripServiceTest {
         trip.setOrganization(organization);
         when(tripRepository.findByIdForUpdate(tripId)).thenReturn(Optional.of(trip));
         when(tripRepository.save(trip)).thenReturn(trip);
+        when(shipmentRepository.findByTrip_Id(tripId)).thenReturn(List.of());
         when(userRepository.getReferenceById(any())).thenReturn(new User());
         AuthenticatedUser admin = new AuthenticatedUser(
                 UUID.randomUUID(), UserRole.SUPER_ADMIN, null, null,
@@ -95,6 +100,33 @@ class TripServiceTest {
 
         assertThat(response.status()).isEqualTo(TripStatus.CANCELLED);
         verify(tripRepository, never()).findByIdAndOrganizationForUpdate(any(), any());
+    }
+
+    @Test
+    void driverCannotBeChangedAfterTheTripStarts() {
+        UUID tripId = UUID.randomUUID();
+        UUID riderId = UUID.randomUUID();
+        Organization organization = new Organization();
+        organization.setId(UUID.randomUUID());
+        Trip trip = new Trip();
+        trip.setId(tripId);
+        trip.setStatus(TripStatus.ONGOING);
+        trip.setOrganization(organization);
+        User rider = new User();
+        rider.setRole(UserRole.DRIVER);
+        rider.setStatus(UserStatus.ACTIVE);
+        rider.setDriverApprovalStatus(DriverApprovalStatus.APPROVED);
+        rider.setOrganization(organization);
+        when(tripRepository.findByIdForUpdate(tripId)).thenReturn(Optional.of(trip));
+        when(userRepository.findByIdForUpdate(riderId)).thenReturn(Optional.of(rider));
+        AuthenticatedUser admin = new AuthenticatedUser(
+                UUID.randomUUID(), UserRole.SUPER_ADMIN, null, null,
+                Instant.now().plus(Duration.ofMinutes(5)));
+
+        assertThatThrownBy(() -> tripService.assignRider(admin, tripId, riderId))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("before the trip starts");
+        verify(tripRepository, never()).save(any());
     }
 
     private AuthenticatedUser principal(UUID organizationId) {

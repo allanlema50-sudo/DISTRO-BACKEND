@@ -216,7 +216,8 @@ public class TripService {
         boolean platformDriver = rider.getOrganization() == null;
         boolean sameOrganization = !platformDriver
                 && trip.getOrganization().getId().equals(rider.getOrganization().getId());
-        if (rider.getRole() != UserRole.DRIVER || (!platformDriver && !sameOrganization)) {
+        boolean superAdmin = actor != null && actor.role() == UserRole.SUPER_ADMIN;
+        if (rider.getRole() != UserRole.DRIVER || (!superAdmin && !platformDriver && !sameOrganization)) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Rider is not valid for this organization");
         }
         if (platformDriver && (actor == null || actor.role() != UserRole.SUPER_ADMIN)) {
@@ -228,8 +229,9 @@ public class TripService {
             throw new ApiException(ErrorCode.CONFLICT,
                     "Only an approved active driver can be assigned");
         }
-        if (trip.getStatus() == TripStatus.COMPLETED || trip.getStatus() == TripStatus.CANCELLED) {
-            throw new ApiException(ErrorCode.BAD_REQUEST, "Completed or cancelled trips cannot be assigned");
+        if (trip.getStatus() != TripStatus.SCHEDULED) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "A driver can only be changed before the trip starts");
         }
         List<TripStatus> activeStatuses = List.of(TripStatus.SCHEDULED, TripStatus.ONGOING, TripStatus.DELAYED);
         if (tripRepository.existsByRider_IdAndStatusInAndIdNot(riderId, activeStatuses, tripId)) {

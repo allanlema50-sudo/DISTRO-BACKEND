@@ -151,9 +151,41 @@ public class ShipmentService {
                         "The delivery trip must be completed before closing the shipment");
             }
         }
+        if (requested == ShipmentStatus.CANCELLED && shipment.getTrip() != null) {
+            TripStatus tripStatus = shipment.getTrip().getStatus();
+            if (tripStatus == TripStatus.ONGOING || tripStatus == TripStatus.DELAYED
+                    || tripStatus == TripStatus.COMPLETED) {
+                throw new ApiException(ErrorCode.CONFLICT,
+                        "This shipment is on a trip that has already started");
+            }
+            shipment.setTrip(null);
+        }
         shipment.setStatus(requested);
         record(shipment, from, requested, actor, note);
         return ShipmentResponse.from(shipments.save(shipment));
+    }
+
+    @Transactional
+    public void delete(AuthenticatedUser actor, UUID id) {
+        requireStaff(actor);
+        Shipment shipment = shipments.findByIdForUpdate(id)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Shipment not found"));
+        checkAccess(actor, shipment);
+        if (shipment.getStatus() == ShipmentStatus.IN_TRANSIT
+                || shipment.getStatus() == ShipmentStatus.DELIVERED) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "A shipment that is moving or already delivered cannot be deleted");
+        }
+        if (shipment.getTrip() != null) {
+            TripStatus tripStatus = shipment.getTrip().getStatus();
+            if (tripStatus != TripStatus.SCHEDULED && tripStatus != TripStatus.CANCELLED) {
+                throw new ApiException(ErrorCode.CONFLICT,
+                        "Delete this shipment only before its trip starts");
+            }
+            shipment.setTrip(null);
+            shipments.saveAndFlush(shipment);
+        }
+        shipments.delete(shipment);
     }
 
     private Organization resolveOrganization(AuthenticatedUser actor, UUID organizationId) {

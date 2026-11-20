@@ -35,6 +35,7 @@ public class TripService {
     private final TripOperationalActionRepository tripOperationalActionRepository;
     private final RiderProfileRepository riderProfileRepository;
     private final VehicleRepository vehicleRepository;
+    private final ShipmentRepository shipmentRepository;
     private final TripAccessService tripAccessService;
     private final OtpService otpService;
     private final OrderService orderService;
@@ -110,6 +111,91 @@ public class TripService {
     }
 
     @Transactional
+    public TripResponse createFreightTrip(AuthenticatedUser actor, FreightTripRequest request) {
+        if (actor == null || actor.role() == UserRole.CUSTOMER || actor.role() == UserRole.DRIVER) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED, "Role not authorized to create trips");
+        }
+        Vehicle vehicle = vehicleRepository.findByIdForUpdate(request.vehicleId())
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Vehicle not found"));
+        if (actor.role() != UserRole.SUPER_ADMIN
+                && !requireOrganization(actor).equals(vehicle.getOrganization().getId())) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        User driver = userRepository.findByIdForUpdate(request.driverId())
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Driver not found"));
+        if (driver.getRole() != UserRole.DRIVER) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Driver not found");
+        }
+        if (driver.getStatus() != UserStatus.ACTIVE
+                || driver.getDriverApprovalStatus() != DriverApprovalStatus.APPROVED) {
+            throw new ApiException(ErrorCode.CONFLICT, "Only an approved active driver can be assigned");
+        }
+        List<TripStatus> activeStatuses = List.of(TripStatus.SCHEDULED, TripStatus.ONGOING, TripStatus.DELAYED);
+        if (tripRepository.existsByRider_IdAndStatusInAndIdNot(driver.getId(), activeStatuses, UUID.randomUUID())) {
+            throw new ApiException(ErrorCode.CONFLICT, "The driver is already assigned to another active trip");
+        }
+        if (tripRepository.existsByVehicle_IdAndStatusIn(vehicle.getId(), activeStatuses)) {
+            throw new ApiException(ErrorCode.CONFLICT, "The vehicle is already assigned to another active trip");
+        }
+
+        List<Shipment> shipments = new ArrayList<>();
+        Set<UUID> seen = new HashSet<>();
+        for (UUID shipmentId : request.shipmentIds()) {
+            if (!seen.add(shipmentId)) {
+                throw new ApiException(ErrorCode.BAD_REQUEST, "Each shipment can only be added once");
+            }
+            Shipment shipment = shipmentRepository.findByIdForUpdate(shipmentId)
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Shipment not found"));
+            if (shipment.getStatus() != ShipmentStatus.READY || shipment.getTrip() != null) {
+                throw new ApiException(ErrorCode.CONFLICT, "Shipment is not available for a trip");
+            }
+            shipments.add(shipment);
+        }
+
+        Shipment first = shipments.get(0);
+        Trip trip = new Trip();
+        trip.setOrganization(vehicle.getOrganization());
+        trip.setTripType(TripType.DELIVERY);
+        trip.setTripNumber("TRIP-" + UUID.randomUUID().toString().replace("-", "").substring(0, 20));
+        trip.setStatus(TripStatus.SCHEDULED);
+        trip.setRider(driver);
+        trip.setVehicle(vehicle);
+        requireTripPin(first.getPickupLat(), first.getPickupLng(), "Pickup");
+        trip.setOriginName(first.getPickupLocation());
+        trip.setOriginAddress(first.getPickupLocation());
+        trip.setOriginLat(first.getPickupLat());
+        trip.setOriginLng(first.getPickupLng());
+        trip.setScheduledStartLabel(request.plannedStart());
+        trip.setTotalDistanceKm(request.distanceKm());
+        int sequence = 1;
+        for (Shipment shipment : shipments) {
+            requireTripPin(shipment.getDeliveryLat(), shipment.getDeliveryLng(), "Drop-off");
+            TripStop stop = new TripStop();
+            stop.setSequence(sequence++);
+            stop.setStatus(StopStatus.PENDING);
+            stop.setLocationName(shipment.getDeliveryLocation());
+            stop.setLocationAddress(shipment.getDeliveryLocation());
+            stop.setLocationLat(shipment.getDeliveryLat());
+            stop.setLocationLng(shipment.getDeliveryLng());
+            if (shipment.getDeliveryWindowStart() != null) {
+                stop.setEtaLabel(shipment.getDeliveryWindowStart().toString());
+            }
+            trip.addStop(stop);
+        }
+
+        Trip saved = tripRepository.save(trip);
+        for (Shipment shipment : shipments) {
+            shipment.setTrip(saved);
+            shipment.setStatus(ShipmentStatus.ASSIGNED);
+            shipmentRepository.save(shipment);
+        }
+        String note = request.notes() == null || request.notes().isBlank()
+                ? "Trip created" : request.notes().trim();
+        recordStatus(saved, null, TripStatus.SCHEDULED, actor, note);
+        return TripResponse.from(saved, aggregateItems(saved));
+    }
+
+    @Transactional
     public TripResponse assignRider(AuthenticatedUser actor, UUID tripId, UUID riderId) {
         return assignRider(actor, tripId, riderId, null, false);
     }
@@ -135,7 +221,8 @@ public class TripService {
         boolean platformDriver = rider.getOrganization() == null;
         boolean sameOrganization = !platformDriver
                 && trip.getOrganization().getId().equals(rider.getOrganization().getId());
-        if (rider.getRole() != UserRole.DRIVER || (!platformDriver && !sameOrganization)) {
+        boolean superAdmin = actor != null && actor.role() == UserRole.SUPER_ADMIN;
+        if (rider.getRole() != UserRole.DRIVER || (!superAdmin && !platformDriver && !sameOrganization)) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Rider is not valid for this organization");
         }
         if (platformDriver && (actor == null || actor.role() != UserRole.SUPER_ADMIN)) {
@@ -147,8 +234,9 @@ public class TripService {
             throw new ApiException(ErrorCode.CONFLICT,
                     "Only an approved active driver can be assigned");
         }
-        if (trip.getStatus() == TripStatus.COMPLETED || trip.getStatus() == TripStatus.CANCELLED) {
-            throw new ApiException(ErrorCode.BAD_REQUEST, "Completed or cancelled trips cannot be assigned");
+        if (trip.getStatus() != TripStatus.SCHEDULED) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "A driver can only be changed before the trip starts");
         }
         List<TripStatus> activeStatuses = List.of(TripStatus.SCHEDULED, TripStatus.ONGOING, TripStatus.DELAYED);
         if (tripRepository.existsByRider_IdAndStatusInAndIdNot(riderId, activeStatuses, tripId)) {
@@ -359,6 +447,15 @@ public class TripService {
         TripStatus previous = trip.getStatus();
         trip.setStatus(requested);
         Trip saved = tripRepository.save(trip);
+        if (requested == TripStatus.CANCELLED) {
+            for (Shipment shipment : shipmentRepository.findByTrip_Id(saved.getId())) {
+                if (shipment.getStatus() == ShipmentStatus.ASSIGNED) {
+                    shipment.setTrip(null);
+                    shipment.setStatus(ShipmentStatus.READY);
+                    shipmentRepository.save(shipment);
+                }
+            }
+        }
         recordStatus(saved, previous, requested, actor,
                 note == null || note.isBlank() ? "Trip status updated" : note.trim());
         return TripResponse.from(saved, aggregateItems(saved));
@@ -532,7 +629,14 @@ public class TripService {
     }
 
     private Trip getOrganizationTripForUpdate(AuthenticatedUser actor, UUID tripId) {
-        if (actor == null || actor.organizationId() == null) {
+        if (actor == null) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        if (actor.role() == UserRole.SUPER_ADMIN) {
+            return tripRepository.findByIdForUpdate(tripId)
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Trip not found"));
+        }
+        if (actor.organizationId() == null) {
             throw new ApiException(ErrorCode.ACCESS_DENIED);
         }
         return tripRepository.findByIdAndOrganizationForUpdate(tripId, actor.organizationId())
@@ -554,6 +658,13 @@ public class TripService {
             throw new ApiException(ErrorCode.ACCESS_DENIED, "An organization identity is required");
         }
         return actor.organizationId();
+    }
+
+    private static void requireTripPin(Double latitude, Double longitude, String label) {
+        if (latitude == null || longitude == null || (latitude == 0.0 && longitude == 0.0)) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    label + " needs a map pin before this shipment can go on a trip.");
+        }
     }
 
     private static boolean isAllowedTransition(TripStatus current, TripStatus requested) {

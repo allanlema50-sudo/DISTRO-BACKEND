@@ -28,6 +28,7 @@ import com.example.distrobackend.repository.TripRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.Util.SecretTokenService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -36,12 +37,14 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 
+import java.security.SecureRandom;
 import java.time.OffsetDateTime;
 import java.util.Objects;
 import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class DriverService {
 
     @PersistenceContext
@@ -54,6 +57,7 @@ public class DriverService {
     private final TripRepository tripRepository;
     private final PasswordEncoder passwordEncoder;
     private final OtpService otpService;
+    private final DriverLoginEmailService driverLoginEmailService;
 
     @Transactional
     public DriverResponse registerForReview(AuthenticatedUser actor, DriverRegistrationRequest request) {
@@ -176,7 +180,58 @@ public class DriverService {
             profile.setAvailable(false);
             riderProfileRepository.save(profile);
         }
+        String temporaryPassword = null;
+        if (status == DriverApprovalStatus.APPROVED
+                && driver.getStatus() == UserStatus.ACTIVE
+                && driver.getEmail() != null
+                && !driver.getEmail().isBlank()) {
+            temporaryPassword = temporaryPassword();
+            driver.setPasswordHash(passwordEncoder.encode(temporaryPassword));
+            // The administrator already recorded this phone. Sign-in requires it
+            // to be verified, and the emailed password is the driver's first login.
+            driver.setPhoneVerified(true);
+        }
         userRepository.save(driver);
+        if (temporaryPassword != null) {
+            try {
+                driverLoginEmailService.sendTemporaryPassword(driver.getEmail(), temporaryPassword);
+            } catch (ApiException ex) {
+                log.warn("Driver {} was approved but the sign-in email was not sent: {}",
+                        driver.getId(), ex.getMessage());
+            }
+        }
+        return DriverResponse.from(driver, ensureProfile(driver));
+    }
+
+    /**
+     * Emails a new temporary password for an already approved driver.
+     * Approval status is left unchanged.
+     */
+    @Transactional
+    public DriverResponse sendLoginEmail(AuthenticatedUser actor, UUID driverId) {
+        if (actor == null || actor.role() != UserRole.SUPER_ADMIN) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        User driver = userRepository.findByIdForUpdate(driverId)
+                .filter(user -> user.getRole() == UserRole.DRIVER)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Driver not found"));
+        if (driver.getStatus() != UserStatus.ACTIVE) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "Only an active driver can receive sign-in details");
+        }
+        if (driver.getDriverApprovalStatus() != DriverApprovalStatus.APPROVED) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "Approve the driver before sending sign-in details");
+        }
+        if (driver.getEmail() == null || driver.getEmail().isBlank()) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "This driver has no email address");
+        }
+        String temporaryPassword = temporaryPassword();
+        driver.setPasswordHash(passwordEncoder.encode(temporaryPassword));
+        driver.setPhoneVerified(true);
+        userRepository.save(driver);
+        refreshTokenService.revokeAll(driver.getId());
+        driverLoginEmailService.sendTemporaryPassword(driver.getEmail(), temporaryPassword);
         return DriverResponse.from(driver, ensureProfile(driver));
     }
 
@@ -210,17 +265,115 @@ public class DriverService {
 
     @Transactional
     public DriverResponse update(AuthenticatedUser actor, UUID driverId, UpdateDriverRequest request) {
-        requireOrganizationAdmin(actor);
+        if (actor == null) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        if (actor.role() == UserRole.DRIVER) {
+            if (!actor.userId().equals(driverId)) {
+                throw new ApiException(ErrorCode.ACCESS_DENIED,
+                        "A driver cannot update another driver's profile");
+            }
+            User driver = findDriverForUpdate(actor, driverId);
+            return submitOwnProfileChange(driver, request);
+        }
+        if (actor.role() != UserRole.SUPER_ADMIN) {
+            requireOrganizationAdmin(actor);
+        }
         User driver = findDriverForUpdate(actor, driverId);
+        RiderProfile profile = ensureProfile(driver);
+        applyProfileUpdate(driver, profile, request);
+        userRepository.save(driver);
+        riderProfileRepository.save(profile);
+        return DriverResponse.from(driver, profile);
+    }
+
+    @Transactional
+    public DriverResponse reviewProfileChange(AuthenticatedUser actor, UUID driverId, String decision) {
+        if (actor == null || actor.role() != UserRole.SUPER_ADMIN) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        String normalized = decision == null ? "" : decision.trim().toUpperCase(java.util.Locale.ROOT);
+        boolean approve = switch (normalized) {
+            case "APPROVED", "APPROVE" -> true;
+            case "REJECTED", "REJECT" -> false;
+            default -> throw new ApiException(ErrorCode.BAD_REQUEST,
+                    "decision must be APPROVED or REJECTED");
+        };
+        User driver = userRepository.findByIdForUpdate(driverId)
+                .filter(user -> user.getRole() == UserRole.DRIVER)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Driver not found"));
+        RiderProfile profile = ensureProfile(driver);
+        if (profile.getPendingFullName() == null
+                && profile.getPendingPhoneNumber() == null
+                && profile.getPendingLicenseNumber() == null) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    "This driver has no profile change waiting for approval");
+        }
+        if (approve) {
+            if (profile.getPendingFullName() != null) {
+                driver.setFullName(profile.getPendingFullName());
+            }
+            if (profile.getPendingPhoneNumber() != null
+                    && !profile.getPendingPhoneNumber().equals(driver.getPhoneNumber())) {
+                if (userRepository.existsByPhoneNumber(profile.getPendingPhoneNumber())) {
+                    throw new ApiException(ErrorCode.DUPLICATE_PHONE);
+                }
+                driver.setPhoneNumber(profile.getPendingPhoneNumber());
+                driver.setPhoneVerified(false);
+            }
+            if (profile.getPendingLicenseNumber() != null) {
+                profile.setLicenseNumber(profile.getPendingLicenseNumber());
+            }
+            userRepository.save(driver);
+        }
+        profile.setPendingFullName(null);
+        profile.setPendingPhoneNumber(null);
+        profile.setPendingLicenseNumber(null);
+        riderProfileRepository.save(profile);
+        return DriverResponse.from(driver, profile);
+    }
+
+    private DriverResponse submitOwnProfileChange(User driver, UpdateDriverRequest request) {
+        rejectEmailChange(driver, request);
+        RiderProfile profile = ensureProfile(driver);
+        if (request.fullName() != null) {
+            if (request.fullName().isBlank()) {
+                throw new ApiException(ErrorCode.BAD_REQUEST, "Driver name cannot be blank");
+            }
+            String name = request.fullName().trim();
+            profile.setPendingFullName(name.equals(driver.getFullName()) ? null : name);
+        }
+        if (request.phoneNumber() != null) {
+            String phone = PhoneNormalizer.normalize(request.phoneNumber());
+            if (phone.equals(driver.getPhoneNumber())) {
+                profile.setPendingPhoneNumber(null);
+            } else {
+                if (userRepository.existsByPhoneNumber(phone)) {
+                    throw new ApiException(ErrorCode.DUPLICATE_PHONE);
+                }
+                profile.setPendingPhoneNumber(phone);
+            }
+        }
+        if (request.licenseNumber() != null) {
+            if (request.licenseNumber().isBlank()) {
+                throw new ApiException(ErrorCode.BAD_REQUEST, "License number cannot be blank");
+            }
+            String license = request.licenseNumber().trim();
+            String current = profile.getLicenseNumber();
+            profile.setPendingLicenseNumber(license.equals(current) ? null : license);
+        }
+        riderProfileRepository.save(profile);
+        return DriverResponse.from(driver, profile, false);
+    }
+
+    private void applyProfileUpdate(User driver, RiderProfile profile, UpdateDriverRequest request) {
+        rejectEmailChange(driver, request);
         if (request.fullName() != null) {
             if (request.fullName().isBlank()) {
                 throw new ApiException(ErrorCode.BAD_REQUEST, "Driver name cannot be blank");
             }
             driver.setFullName(request.fullName().trim());
-        }
-        if (request.email() != null && !request.email().trim().equalsIgnoreCase(driver.getEmail())) {
-            throw new ApiException(ErrorCode.BAD_REQUEST,
-                    "Driver email cannot be changed through this endpoint");
+            profile.setPendingFullName(null);
         }
         if (request.phoneNumber() != null) {
             String phone = PhoneNormalizer.normalize(request.phoneNumber());
@@ -229,17 +382,23 @@ public class DriverService {
             }
             driver.setPhoneNumber(phone);
             driver.setPhoneVerified(false);
+            profile.setPendingPhoneNumber(null);
         }
-        RiderProfile profile = ensureProfile(driver);
         if (request.licenseNumber() != null) {
             if (request.licenseNumber().isBlank()) {
                 throw new ApiException(ErrorCode.BAD_REQUEST, "License number cannot be blank");
             }
             profile.setLicenseNumber(request.licenseNumber().trim());
+            profile.setPendingLicenseNumber(null);
         }
-        userRepository.save(driver);
-        riderProfileRepository.save(profile);
-        return DriverResponse.from(driver, profile);
+    }
+
+    private static void rejectEmailChange(User driver, UpdateDriverRequest request) {
+        if (request.email() != null && !request.email().trim().equalsIgnoreCase(
+                driver.getEmail() == null ? "" : driver.getEmail())) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    "Driver email cannot be changed through this endpoint");
+        }
     }
 
     @Transactional
@@ -322,6 +481,11 @@ public class DriverService {
     }
 
     private User findDriverForUpdate(AuthenticatedUser actor, UUID driverId) {
+        if (actor != null && actor.role() == UserRole.SUPER_ADMIN) {
+            return userRepository.findByIdForUpdate(driverId)
+                    .filter(user -> user.getRole() == UserRole.DRIVER)
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Driver not found"));
+        }
         if (actor != null && actor.role() == UserRole.DRIVER) {
             if (!actor.userId().equals(driverId)) throw new ApiException(ErrorCode.ACCESS_DENIED);
             return userRepository.findByIdForUpdate(driverId)
@@ -383,6 +547,19 @@ public class DriverService {
         if (!isOrganizationAdmin(actor)) {
             throw new ApiException(ErrorCode.ACCESS_DENIED);
         }
+    }
+
+    private static String temporaryPassword() {
+        SecureRandom random = new SecureRandom();
+        char[] alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789".toCharArray();
+        char[] password = new char[12];
+        for (int i = 0; i < password.length; i++) {
+            password[i] = alphabet[random.nextInt(alphabet.length)];
+        }
+        password[0] = "ABCDEFGHJKLMNPQRSTUVWXYZ".charAt(random.nextInt(24));
+        password[1] = "abcdefghijkmnopqrstuvwxyz".charAt(random.nextInt(23));
+        password[2] = "23456789".charAt(random.nextInt(8));
+        return new String(password);
     }
 
     private static boolean isOrganizationAdmin(AuthenticatedUser actor) {

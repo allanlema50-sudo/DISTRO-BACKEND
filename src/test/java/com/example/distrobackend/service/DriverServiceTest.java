@@ -1,6 +1,7 @@
 package com.example.distrobackend.service;
 
 import com.example.distrobackend.Domain.entity.Organization;
+import com.example.distrobackend.Domain.entity.RiderProfile;
 import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.UserRole;
@@ -11,12 +12,14 @@ import com.example.distrobackend.dto.DriverLocationRequest;
 import com.example.distrobackend.dto.DriverRegistrationRequest;
 import com.example.distrobackend.dto.DriverResponse;
 import com.example.distrobackend.dto.UpdateDriverAvailabilityRequest;
+import com.example.distrobackend.dto.UpdateDriverRequest;
 import com.example.distrobackend.dto.UpdateUserStatusRequest;
 import com.example.distrobackend.repository.InvitationRepository;
 import com.example.distrobackend.repository.RiderProfileRepository;
 import com.example.distrobackend.repository.UserRepository;
 import com.example.distrobackend.repository.TripRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
+import com.example.distrobackend.service.DriverLoginEmailService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -31,6 +34,7 @@ import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
@@ -46,6 +50,7 @@ class DriverServiceTest {
     @Mock private PasswordEncoder passwordEncoder;
     @Mock private OtpService otpService;
     @Mock private EntityManager entityManager;
+    @Mock private DriverLoginEmailService driverLoginEmailService;
 
     private DriverService driverService;
     private UUID organizationId;
@@ -54,7 +59,8 @@ class DriverServiceTest {
     @BeforeEach
     void setUp() {
         driverService = new DriverService(userRepository, riderProfileRepository,
-                invitationRepository, refreshTokenService, tripRepository, passwordEncoder, otpService);
+                invitationRepository, refreshTokenService, tripRepository, passwordEncoder,
+                otpService, driverLoginEmailService);
         ReflectionTestUtils.setField(driverService, "entityManager", entityManager);
         organizationId = UUID.randomUUID();
         Organization organization = new Organization();
@@ -150,6 +156,89 @@ class DriverServiceTest {
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("invited driver");
         verify(refreshTokenService, never()).revokeAll(any());
+    }
+
+    @Test
+    void driverCannotUpdateAnotherDriversProfile() {
+        AuthenticatedUser actor = principal(UUID.randomUUID(), UserRole.DRIVER);
+
+        assertThatThrownBy(() -> driverService.update(actor, driver.getId(),
+                new UpdateDriverRequest("New Name", null, null, null)))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("another driver");
+        verifyNoInteractions(userRepository);
+    }
+
+    @Test
+    void driverOwnProfileEditWaitsForSuperAdminApproval() {
+        driver.setFullName("Alex Mutua");
+        RiderProfile profile = new RiderProfile();
+        profile.setUser(driver);
+        when(userRepository.findByIdForUpdate(driver.getId())).thenReturn(Optional.of(driver));
+        when(riderProfileRepository.findById(driver.getId())).thenReturn(Optional.of(profile));
+
+        driverService.update(principal(driver.getId(), UserRole.DRIVER), driver.getId(),
+                new UpdateDriverRequest("Alex Updated", null, null, null));
+
+        assertThat(driver.getFullName()).isEqualTo("Alex Mutua");
+        assertThat(profile.getPendingFullName()).isEqualTo("Alex Updated");
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void superAdminAppliesADriverProfileChangeImmediately() {
+        driver.setFullName("Alex Mutua");
+        RiderProfile profile = new RiderProfile();
+        profile.setUser(driver);
+        profile.setPendingFullName("Old request");
+        when(userRepository.findByIdForUpdate(driver.getId())).thenReturn(Optional.of(driver));
+        when(riderProfileRepository.findById(driver.getId())).thenReturn(Optional.of(profile));
+
+        driverService.update(principal(UUID.randomUUID(), UserRole.SUPER_ADMIN), driver.getId(),
+                new UpdateDriverRequest("Set By Admin", null, null, null));
+
+        assertThat(driver.getFullName()).isEqualTo("Set By Admin");
+        assertThat(profile.getPendingFullName()).isNull();
+    }
+
+    @Test
+    void superAdminApprovalAppliesTheDriversPendingName() {
+        driver.setFullName("Alex Mutua");
+        RiderProfile profile = new RiderProfile();
+        profile.setUser(driver);
+        profile.setPendingFullName("Alex Updated");
+        when(userRepository.findByIdForUpdate(driver.getId())).thenReturn(Optional.of(driver));
+        when(riderProfileRepository.findById(driver.getId())).thenReturn(Optional.of(profile));
+
+        driverService.reviewProfileChange(
+                principal(UUID.randomUUID(), UserRole.SUPER_ADMIN), driver.getId(), "APPROVED");
+
+        assertThat(driver.getFullName()).isEqualTo("Alex Updated");
+        assertThat(profile.getPendingFullName()).isNull();
+    }
+
+    @Test
+    void approvalEmailsATemporaryPasswordWithoutChangingItAgainOnResend() {
+        driver.setDriverApprovalStatus(DriverApprovalStatus.PENDING_REVIEW);
+        driver.setEmail("driver@example.com");
+        driver.setPhoneVerified(false);
+        when(userRepository.findByIdForUpdate(driver.getId())).thenReturn(Optional.of(driver));
+        when(passwordEncoder.encode(anyString())).thenReturn("encoded");
+        when(riderProfileRepository.findById(driver.getId())).thenReturn(Optional.of(new RiderProfile()));
+        AuthenticatedUser admin = principal(UUID.randomUUID(), UserRole.SUPER_ADMIN);
+
+        driverService.approve(admin, driver.getId(), DriverApprovalStatus.APPROVED);
+
+        assertThat(driver.isPhoneVerified()).isTrue();
+        assertThat(driver.getDriverApprovalStatus()).isEqualTo(DriverApprovalStatus.APPROVED);
+        verify(driverLoginEmailService).sendTemporaryPassword(eq("driver@example.com"),
+                argThat(password -> password != null && password.length() >= 8));
+
+        driverService.sendLoginEmail(admin, driver.getId());
+
+        assertThat(driver.getDriverApprovalStatus()).isEqualTo(DriverApprovalStatus.APPROVED);
+        verify(refreshTokenService).revokeAll(driver.getId());
+        verify(driverLoginEmailService, times(2)).sendTemporaryPassword(eq("driver@example.com"), anyString());
     }
 
     @Test

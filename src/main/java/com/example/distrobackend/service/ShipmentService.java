@@ -151,6 +151,15 @@ public class ShipmentService {
                         "The delivery trip must be completed before closing the shipment");
             }
         }
+        if (requested == ShipmentStatus.CANCELLED && shipment.getTrip() != null) {
+            TripStatus tripStatus = shipment.getTrip().getStatus();
+            if (tripStatus == TripStatus.ONGOING || tripStatus == TripStatus.DELAYED
+                    || tripStatus == TripStatus.COMPLETED) {
+                throw new ApiException(ErrorCode.CONFLICT,
+                        "This shipment is on a trip that has already started");
+            }
+            shipment.setTrip(null);
+        }
         shipment.setStatus(requested);
         record(shipment, from, requested, actor, note);
         return ShipmentResponse.from(shipments.save(shipment));
@@ -186,6 +195,29 @@ public class ShipmentService {
         shipments.save(shipment);
     }
 
+    @Transactional
+    public void delete(AuthenticatedUser actor, UUID id) {
+        requireStaff(actor);
+        Shipment shipment = shipments.findByIdForUpdate(id)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Shipment not found"));
+        checkAccess(actor, shipment);
+        if (shipment.getStatus() == ShipmentStatus.IN_TRANSIT
+                || shipment.getStatus() == ShipmentStatus.DELIVERED) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "A shipment that is moving or already delivered cannot be deleted");
+        }
+        if (shipment.getTrip() != null) {
+            TripStatus tripStatus = shipment.getTrip().getStatus();
+            if (tripStatus != TripStatus.SCHEDULED && tripStatus != TripStatus.CANCELLED) {
+                throw new ApiException(ErrorCode.CONFLICT,
+                        "Delete this shipment only before its trip starts");
+            }
+            shipment.setTrip(null);
+            shipments.saveAndFlush(shipment);
+        }
+        shipments.delete(shipment);
+    }
+
     private Organization resolveOrganization(AuthenticatedUser actor, UUID organizationId) {
         if (actor.role() != UserRole.SUPER_ADMIN && !organizationId.equals(actor.organizationId())) {
             throw new ApiException(ErrorCode.ACCESS_DENIED);
@@ -219,9 +251,18 @@ public class ShipmentService {
         shipment.setWeightKg(request.weightKg());
         shipment.setVolumeM3(request.volumeM3());
         shipment.setHandlingRequirements(request.handlingRequirements());
+        requirePin(request.pickupLat(), request.pickupLng(), "Pickup");
+        requirePin(request.deliveryLat(), request.deliveryLng(), "Drop-off");
+        shipment.setPickupLocation(request.pickupLocation().trim());
+        shipment.setPickupWindowStart(request.pickupWindowStart());
+        shipment.setPickupWindowEnd(request.pickupWindowEnd());
+        shipment.setPickupLat(request.pickupLat());
+        shipment.setPickupLng(request.pickupLng());
         shipment.setDeliveryLocation(request.deliveryLocation().trim());
         shipment.setDeliveryWindowStart(request.deliveryWindowStart());
         shipment.setDeliveryWindowEnd(request.deliveryWindowEnd());
+        shipment.setDeliveryLat(request.deliveryLat());
+        shipment.setDeliveryLng(request.deliveryLng());
         shipment.setAllowSharedLoads(Boolean.TRUE.equals(request.allowSharedLoads()));
         shipment.setSpecialInstructions(trimToNull(request.specialInstructions()));
         shipment.setTrackingReference(trimToNull(request.trackingReference()));
@@ -229,10 +270,25 @@ public class ShipmentService {
     }
 
     private void validateWindow(ShipmentRequest request) {
+        if (request.pickupWindowStart() != null && request.pickupWindowEnd() != null
+                && !request.pickupWindowEnd().isAfter(request.pickupWindowStart())) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    "Pickup window end must be later than its start");
+        }
         if (request.deliveryWindowStart() != null && request.deliveryWindowEnd() != null
                 && !request.deliveryWindowEnd().isAfter(request.deliveryWindowStart())) {
             throw new ApiException(ErrorCode.BAD_REQUEST,
                     "Delivery window end must be later than its start");
+        }
+    }
+
+    private static void requirePin(Double latitude, Double longitude, String label) {
+        if (latitude == null || longitude == null
+                || latitude < -90 || latitude > 90
+                || longitude < -180 || longitude > 180
+                || (latitude == 0.0 && longitude == 0.0)) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    label + " needs a map pin. 0, 0 is not a pickup or drop-off.");
         }
     }
 

@@ -8,4 +8,6 @@ import java.util.UUID;
 
 public interface TripLocationPingRepository extends JpaRepository<TripLocationPing, Long> {
     List<TripLocationPing> findByTripIdOrderByRecordedAtDesc(UUID tripId);
+
+    void deleteByTrip_Id(UUID tripId);
 }

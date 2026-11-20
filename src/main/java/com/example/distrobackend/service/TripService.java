@@ -36,6 +36,7 @@ public class TripService {
     private final RiderProfileRepository riderProfileRepository;
     private final VehicleRepository vehicleRepository;
     private final ShipmentRepository shipmentRepository;
+    private final SharedLoadRepository sharedLoadRepository;
     private final TripAccessService tripAccessService;
     private final OtpService otpService;
     private final OrderService orderService;
@@ -130,13 +131,8 @@ public class TripService {
                 || driver.getDriverApprovalStatus() != DriverApprovalStatus.APPROVED) {
             throw new ApiException(ErrorCode.CONFLICT, "Only an approved active driver can be assigned");
         }
-        List<TripStatus> activeStatuses = List.of(TripStatus.SCHEDULED, TripStatus.ONGOING, TripStatus.DELAYED);
-        if (tripRepository.existsByRider_IdAndStatusInAndIdNot(driver.getId(), activeStatuses, UUID.randomUUID())) {
-            throw new ApiException(ErrorCode.CONFLICT, "The driver is already assigned to another active trip");
-        }
-        if (tripRepository.existsByVehicle_IdAndStatusIn(vehicle.getId(), activeStatuses)) {
-            throw new ApiException(ErrorCode.CONFLICT, "The vehicle is already assigned to another active trip");
-        }
+        takeDriverFromUnstartedTrips(actor, driver.getId(), null);
+        takeVehicleFromUnstartedTrips(actor, vehicle.getId(), null);
 
         List<Shipment> shipments = new ArrayList<>();
         Set<UUID> seen = new HashSet<>();
@@ -238,10 +234,7 @@ public class TripService {
             throw new ApiException(ErrorCode.CONFLICT,
                     "A driver can only be changed before the trip starts");
         }
-        List<TripStatus> activeStatuses = List.of(TripStatus.SCHEDULED, TripStatus.ONGOING, TripStatus.DELAYED);
-        if (tripRepository.existsByRider_IdAndStatusInAndIdNot(riderId, activeStatuses, tripId)) {
-            throw new ApiException(ErrorCode.CONFLICT, "The driver is already assigned to another active trip");
-        }
+        takeDriverFromUnstartedTrips(actor, riderId, tripId);
         if (vehicleId != null) {
             Vehicle vehicle = vehicleRepository.findByIdAndOrganizationForUpdate(
                             vehicleId, trip.getOrganization().getId())
@@ -249,9 +242,7 @@ public class TripService {
             if (vehicle.getStatus() != VehicleStatus.ACTIVE) {
                 throw new ApiException(ErrorCode.CONFLICT, "Only an active vehicle can be assigned");
             }
-            if (tripRepository.existsByVehicle_IdAndStatusInAndIdNot(vehicleId, activeStatuses, tripId)) {
-                throw new ApiException(ErrorCode.CONFLICT, "The vehicle is already assigned to another active trip");
-            }
+            takeVehicleFromUnstartedTrips(actor, vehicleId, tripId);
             trip.setVehicle(vehicle);
         } else if (clearVehicle) {
             trip.setVehicle(null);
@@ -259,6 +250,114 @@ public class TripService {
         trip.setRider(rider);
         Trip saved = tripRepository.save(trip);
         return TripResponse.from(saved, aggregateItems(saved));
+    }
+
+    @Transactional(noRollbackFor = ApiException.class)
+    @Transactional
+    public void deleteUnstarted(AuthenticatedUser actor, UUID tripId) {
+        requireSuperAdmin(actor);
+        Trip trip = tripRepository.findByIdForUpdate(tripId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Trip not found"));
+        removeUnstartedTrip(trip);
+    }
+
+    @Transactional
+    public int deleteAllUnstarted(AuthenticatedUser actor) {
+        requireSuperAdmin(actor);
+        List<Trip> scheduled = tripRepository.findByStatus(TripStatus.SCHEDULED);
+        int deleted = 0;
+        for (Trip trip : scheduled) {
+            Trip locked = tripRepository.findByIdForUpdate(trip.getId()).orElse(null);
+            if (locked != null && locked.getStatus() == TripStatus.SCHEDULED) {
+                removeUnstartedTrip(locked);
+                deleted++;
+            }
+        }
+        return deleted;
+    }
+
+    private void removeUnstartedTrip(Trip trip) {
+        if (trip.getStatus() != TripStatus.SCHEDULED) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "Only a trip that has not started can be deleted");
+        }
+        for (Shipment shipment : shipmentRepository.findByTrip_Id(trip.getId())) {
+            if (shipment.getStatus() == ShipmentStatus.IN_TRANSIT
+                    || shipment.getStatus() == ShipmentStatus.DELIVERED) {
+                throw new ApiException(ErrorCode.CONFLICT,
+                        "This trip has a shipment that is already moving or delivered");
+            }
+            if (shipment.getStatus() == ShipmentStatus.ASSIGNED) {
+                shipment.setStatus(ShipmentStatus.READY);
+            }
+            shipment.setTrip(null);
+            shipmentRepository.saveAndFlush(shipment);
+        }
+        tripStatusHistoryRepository.deleteByTrip_Id(trip.getId());
+        locationPingRepository.deleteByTrip_Id(trip.getId());
+        sharedLoadRepository.deleteByTripId(trip.getId());
+        tripRepository.delete(trip);
+    }
+
+    private void takeDriverFromUnstartedTrips(AuthenticatedUser actor, UUID driverId, UUID exceptTripId) {
+        List<TripStatus> started = List.of(TripStatus.ONGOING, TripStatus.DELAYED);
+        if (tripRepository.existsByRider_IdAndStatusIn(driverId, started)) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "This driver is on a trip that has already started");
+        }
+        List<Trip> scheduled = tripRepository.findByRiderIdAndStatusIn(driverId, List.of(TripStatus.SCHEDULED))
+                .stream()
+                .filter(trip -> exceptTripId == null || !exceptTripId.equals(trip.getId()))
+                .toList();
+        if (scheduled.isEmpty()) {
+            return;
+        }
+        if (actor == null || actor.role() != UserRole.SUPER_ADMIN) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "The driver is already assigned to another active trip");
+        }
+        for (Trip other : scheduled) {
+            Trip locked = tripRepository.findByIdForUpdate(other.getId())
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Trip not found"));
+            if (locked.getStatus() == TripStatus.SCHEDULED) {
+                locked.setRider(null);
+                tripRepository.save(locked);
+            }
+        }
+    }
+
+    private void takeVehicleFromUnstartedTrips(AuthenticatedUser actor, UUID vehicleId, UUID exceptTripId) {
+        List<TripStatus> started = List.of(TripStatus.ONGOING, TripStatus.DELAYED);
+        if (tripRepository.existsByVehicle_IdAndStatusIn(vehicleId, started)) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "This vehicle is on a trip that has already started");
+        }
+        List<Trip> scheduled = tripRepository.findByVehicle_IdAndStatusIn(vehicleId, List.of(TripStatus.SCHEDULED))
+                .stream()
+                .filter(trip -> exceptTripId == null || !exceptTripId.equals(trip.getId()))
+                .toList();
+        if (scheduled.isEmpty()) {
+            return;
+        }
+        if (actor == null || actor.role() != UserRole.SUPER_ADMIN) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "The vehicle is already assigned to another active trip");
+        }
+        for (Trip other : scheduled) {
+            Trip locked = tripRepository.findByIdForUpdate(other.getId())
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Trip not found"));
+            if (locked.getStatus() == TripStatus.SCHEDULED) {
+                locked.setVehicle(null);
+                tripRepository.save(locked);
+            }
+        }
+    }
+
+    private void requireSuperAdmin(AuthenticatedUser actor) {
+        if (actor == null || actor.role() != UserRole.SUPER_ADMIN) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED,
+                    "Only a super admin can delete a trip that has not started");
+        }
     }
 
     @Transactional(noRollbackFor = ApiException.class)

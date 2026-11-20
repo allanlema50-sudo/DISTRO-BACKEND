@@ -129,6 +129,64 @@ class TripServiceTest {
         verify(tripRepository, never()).save(any());
     }
 
+    @Test
+    void superAdminMovesADriverOffAnotherTripThatHasNotStarted() {
+        UUID tripId = UUID.randomUUID();
+        UUID otherId = UUID.randomUUID();
+        UUID riderId = UUID.randomUUID();
+        Organization organization = new Organization();
+        organization.setId(UUID.randomUUID());
+        Trip trip = scheduledTrip(tripId, organization);
+        Trip other = scheduledTrip(otherId, organization);
+        User rider = new User();
+        rider.setRole(UserRole.DRIVER);
+        rider.setStatus(UserStatus.ACTIVE);
+        rider.setDriverApprovalStatus(DriverApprovalStatus.APPROVED);
+        rider.setOrganization(organization);
+        when(tripRepository.findByIdForUpdate(tripId)).thenReturn(Optional.of(trip));
+        when(tripRepository.findByIdForUpdate(otherId)).thenReturn(Optional.of(other));
+        when(userRepository.findByIdForUpdate(riderId)).thenReturn(Optional.of(rider));
+        when(tripRepository.existsByRider_IdAndStatusIn(eq(riderId), any())).thenReturn(false);
+        when(tripRepository.findByRiderIdAndStatusIn(eq(riderId), any())).thenReturn(List.of(other));
+        when(tripRepository.save(any(Trip.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        AuthenticatedUser admin = new AuthenticatedUser(
+                UUID.randomUUID(), UserRole.SUPER_ADMIN, null, null,
+                Instant.now().plus(Duration.ofMinutes(5)));
+
+        tripService.assignRider(admin, tripId, riderId);
+
+        assertThat(other.getRider()).isNull();
+        assertThat(trip.getRider()).isSameAs(rider);
+    }
+
+    @Test
+    void superAdminCannotDeleteATripThatHasStarted() {
+        UUID tripId = UUID.randomUUID();
+        Organization organization = new Organization();
+        organization.setId(UUID.randomUUID());
+        Trip trip = scheduledTrip(tripId, organization);
+        trip.setStatus(TripStatus.ONGOING);
+        when(tripRepository.findByIdForUpdate(tripId)).thenReturn(Optional.of(trip));
+        AuthenticatedUser admin = new AuthenticatedUser(
+                UUID.randomUUID(), UserRole.SUPER_ADMIN, null, null,
+                Instant.now().plus(Duration.ofMinutes(5)));
+
+        assertThatThrownBy(() -> tripService.deleteUnstarted(admin, tripId))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("has not started");
+        verify(tripRepository, never()).delete(any());
+    }
+
+    private Trip scheduledTrip(UUID tripId, Organization organization) {
+        Trip trip = new Trip();
+        trip.setId(tripId);
+        trip.setTripNumber("TRIP-1");
+        trip.setTripType(TripType.DELIVERY);
+        trip.setStatus(TripStatus.SCHEDULED);
+        trip.setOrganization(organization);
+        return trip;
+    }
+
     private AuthenticatedUser principal(UUID organizationId) {
         return new AuthenticatedUser(UUID.randomUUID(), UserRole.MANUFACTURER_ADMIN,
                 organizationId, Organizationtype.MANUFACTURER,

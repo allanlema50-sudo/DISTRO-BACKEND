@@ -52,7 +52,6 @@ public class CentralizedCheckoutService {
     @Value("${logiflow.demo-payments.allowed-organization-ids:}") private String demoOrganizationIds;
     @Value("${logiflow.demo-payments.outcome:SUCCESS}") private String demoOutcome;
     @Value("${logiflow.demo-payments.confirmation-delay-seconds:3}") private long confirmationDelaySeconds;
-    @Value("${spring.profiles.active:local}") private String activeProfiles;
     @Value("${mpesa.base-url:https://sandbox.safaricom.co.ke}") private String mpesaBaseUrl;
     @Value("${mpesa.auth-url}") private String mpesaAuthUrl;
     @Value("${mpesa.stk-push-url}") private String mpesaStkPushUrl;
@@ -67,10 +66,6 @@ public class CentralizedCheckoutService {
     @PostConstruct
     void validateDemoConfiguration() {
         if (demoEnabled) {
-            if (Arrays.stream(activeProfiles.split(",")).map(String::trim)
-                    .anyMatch(p -> !Set.of("local", "dev", "development", "staging", "test").contains(p.toLowerCase(Locale.ROOT)))) {
-                throw new IllegalStateException("DEMO payments may only run in local, development, staging, or test profiles");
-            }
             allowedDemoOrganizationIds();
         }
         if (!Set.of("SUCCESS", "FAILED", "CANCELLED", "TIMED_OUT").contains(demoOutcome.toUpperCase(Locale.ROOT))) {
@@ -453,8 +448,7 @@ public class CentralizedCheckoutService {
     @Scheduled(fixedDelayString = "${logiflow.demo-payments.poll-interval-ms:1000}")
     @Transactional
     public void simulatePendingDemoPayments() {
-        if (!demoEnabled || Arrays.stream(activeProfiles.split(",")).map(String::trim)
-                .anyMatch(p -> p.equalsIgnoreCase("prod") || p.equalsIgnoreCase("production"))) return;
+        if (!demoEnabled) return;
         OffsetDateTime cutoff = OffsetDateTime.now().minusSeconds(confirmationDelaySeconds);
         for (CheckoutPayment payment : checkoutPaymentRepository.findByDemoTrueAndStatusAndInitiatedAtBefore(CheckoutPaymentStatus.PENDING, cutoff)) {
             Checkout checkout = payment.getCheckout();
@@ -584,9 +578,6 @@ public class CentralizedCheckoutService {
     private void ensureDemoAuthorized(AuthenticatedUser actor) {
         if (!demoEnabled) throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "DEMO checkout payment is disabled");
         if (!allowedDemoOrganizationIds().contains(actor.organizationId())) throw new ApiException(ErrorCode.ACCESS_DENIED, "Organization is not enabled for DEMO payments");
-        if (Arrays.stream(activeProfiles.split(",")).map(String::trim).anyMatch(p -> p.equalsIgnoreCase("prod") || p.equalsIgnoreCase("production"))) {
-            throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "DEMO payments are forbidden in production");
-        }
     }
 
     private Set<UUID> allowedDemoOrganizationIds() {

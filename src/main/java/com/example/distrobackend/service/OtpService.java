@@ -4,6 +4,7 @@ package com.example.distrobackend.service;
 
 import com.example.distrobackend.Domain.entity.OtpVerification;
 import com.example.distrobackend.Domain.entity.User;
+import com.example.distrobackend.Domain.entity.TripStop;
 import com.example.distrobackend.Domain.enums.OtpPurpose;
 import com.example.distrobackend.Domain.enums.OtpStatus;
 import com.example.distrobackend.Exception.ApiException;
@@ -115,6 +116,62 @@ public class OtpService {
             throw new ApiException(ErrorCode.INVALID_OTP);
         }
 
+        otp.setStatus(OtpStatus.VERIFIED);
+        otp.setVerifiedAt(now);
+    }
+
+    @Transactional(noRollbackFor = ApiException.class)
+    public void issueDelivery(User recipient, TripStop stop) {
+        OffsetDateTime now = OffsetDateTime.now();
+        repository.findFirstByDeliveryStop_IdOrderByCreatedAtDesc(stop.getId())
+                .filter(last -> last.getCreatedAt().isAfter(now.minusSeconds(cooldownSeconds)))
+                .ifPresent(last -> { throw new ApiException(ErrorCode.OTP_COOLDOWN); });
+        repository.findByDeliveryStop_IdAndStatus(stop.getId(), OtpStatus.PENDING)
+                .forEach(old -> old.setStatus(OtpStatus.EXPIRED));
+        String code = String.format("%06d", RANDOM.nextInt(1_000_000));
+        OtpVerification otp = new OtpVerification();
+        otp.setUser(recipient);
+        otp.setDeliveryStop(stop);
+        boolean emailDelivery = "resend".equalsIgnoreCase(otpProvider)
+                || "mailgun".equalsIgnoreCase(otpProvider)
+                || "brevo".equalsIgnoreCase(otpProvider);
+        otp.setDestination(emailDelivery ? recipient.getEmail() : recipient.getPhoneNumber());
+        otp.setCodeHash(passwordEncoder.encode(code));
+        otp.setPurpose(OtpPurpose.DELIVERY_CONFIRMATION);
+        otp.setStatus(OtpStatus.PENDING);
+        otp.setMaxAttempts((short) maxAttempts);
+        otp.setExpiresAt(now.plusMinutes(ttlMinutes));
+        repository.save(otp);
+        try {
+            otpSender.send(recipient, OtpPurpose.DELIVERY_CONFIRMATION, code, ttlMinutes);
+        } catch (ApiException ex) {
+            TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+            throw ex;
+        }
+    }
+
+    @Transactional(noRollbackFor = ApiException.class)
+    public void verifyDelivery(TripStop stop, String code) {
+        OffsetDateTime now = OffsetDateTime.now();
+        OtpVerification otp = repository.findFirstByDeliveryStop_IdOrderByCreatedAtDesc(stop.getId())
+                .filter(o -> o.getStatus() == OtpStatus.PENDING)
+                .orElseThrow(() -> new ApiException(ErrorCode.INVALID_OTP));
+        if (otp.getExpiresAt().isBefore(now)) {
+            otp.setStatus(OtpStatus.EXPIRED);
+            throw new ApiException(ErrorCode.OTP_EXPIRED);
+        }
+        if (otp.getAttemptCount() >= otp.getMaxAttempts()) {
+            otp.setStatus(OtpStatus.FAILED);
+            throw new ApiException(ErrorCode.OTP_ATTEMPTS_EXCEEDED);
+        }
+        if (!passwordEncoder.matches(code, otp.getCodeHash())) {
+            otp.setAttemptCount((short) (otp.getAttemptCount() + 1));
+            if (otp.getAttemptCount() >= otp.getMaxAttempts()) {
+                otp.setStatus(OtpStatus.FAILED);
+                throw new ApiException(ErrorCode.OTP_ATTEMPTS_EXCEEDED);
+            }
+            throw new ApiException(ErrorCode.INVALID_OTP);
+        }
         otp.setStatus(OtpStatus.VERIFIED);
         otp.setVerifiedAt(now);
     }

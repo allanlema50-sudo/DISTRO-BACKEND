@@ -1176,23 +1176,21 @@ the customer and submitted by the assigned driver.
 ### Driver onboarding and fleet dispatch
 
 Drivers are organization users with `DRIVER` role and `INVITED` status until
-they accept their email invitation. An invited driver cannot log in or receive
-trip assignments. After accepting, the driver must verify the account-
-verification code sent through the configured OTP provider before the first
-login. Drivers are currently
-onboarded by distributor administrators because distributors own the delivery
-fleet.
+organization administrators create organization-owned driver records directly.
+The driver receives an account-verification OTP through the configured OTP
+provider and must verify their phone before login. Organization-created drivers
+are approved by their owning organization administrator; platform pool drivers
+remain subject to Super Admin review.
 
 | Method | Endpoint | Access | Purpose |
 |---|---|---|---|
-| `POST` | `/api/v1/drivers/invitations` | Manufacturer/distributor admin | Create an invited driver and send the email activation link |
-| `POST` | `/api/v1/drivers/{driverId}/invitation` | Manufacturer/distributor admin | Reissue an expired invitation or re-invite a revoked, unaccepted driver |
+| `POST` | `/api/v1/drivers` | Super Admin or manufacturer/distributor admin | Directly create a driver and `RiderProfile`; organization admins create an active, approved driver under their own organization and receive the existing phone OTP flow |
 | `GET` | `/api/v1/drivers` | Super Admin or organization staff/admin | List drivers within the caller's organization; supports `status=APPROVED` (active) and `availability=AVAILABLE|UNAVAILABLE`; Super Admin may use `organizationId` filters |
 | `GET` | `/api/v1/drivers/{driverId}` | Super Admin, organization staff/admin, or that driver | Read one organization driver within the caller's tenant |
 | `PATCH` | `/api/v1/drivers/{driverId}` | Manufacturer/distributor admin | Update driver profile and license details |
 | `PATCH` | `/api/v1/drivers/{driverId}/status` | Manufacturer/distributor admin | Activate, suspend, or deactivate a driver |
 | `PATCH` | `/api/v1/drivers/{driverId}/availability` | Driver or manufacturer/distributor admin | Set whether an approved active driver is available |
-| `PATCH` | `/api/v1/admin/drivers/{driverId}/approval` | Super Admin | Approve or reject a driver application; organization roles cannot perform this platform workflow |
+| `PATCH` | `/api/v1/admin/drivers/{driverId}/approval` | Super Admin | Approve or reject a platform driver application; organization drivers are approved by their owning admin at creation |
 | `POST` | `/api/v1/drivers/me/location` | Driver | Update the driver's latest profile location |
 | `GET` | `/api/v1/vehicles` | Super Admin or distributor staff/admin | List vehicles; filters include `status`, `organizationId` (Super Admin), and derived `status=AVAILABLE` |
 | `GET` | `/api/v1/vehicles/{vehicleId}` | Super Admin or distributor staff/admin | Read one vehicle |

@@ -167,6 +167,36 @@ public class ShipmentService {
     }
 
     @Transactional
+    public void recordOrderDelivered(UUID orderId, AuthenticatedUser actor) {
+        Shipment shipment = shipments.findByOrder_Id(orderId).orElse(null);
+        if (shipment == null || shipment.getStatus() == ShipmentStatus.DELIVERED) return;
+        if (shipment.getStatus() != ShipmentStatus.IN_TRANSIT) {
+            throw new ApiException(ErrorCode.CONFLICT, "Order shipment is not in transit");
+        }
+        shipment.setStatus(ShipmentStatus.DELIVERED);
+        record(shipment, ShipmentStatus.IN_TRANSIT, ShipmentStatus.DELIVERED, actor,
+                "Delivery confirmed by assigned driver OTP");
+        shipments.save(shipment);
+    }
+
+    @Transactional
+    public void updateOrderDispatched(UUID orderId, UUID tripId, AuthenticatedUser actor) {
+        Shipment shipment = shipments.findByOrder_Id(orderId).orElse(null);
+        if (shipment == null || shipment.getStatus() == ShipmentStatus.IN_TRANSIT) return;
+        if (shipment.getStatus() != ShipmentStatus.ASSIGNED || shipment.getTrip() == null
+                || !tripId.equals(shipment.getTrip().getId())
+                || (shipment.getTrip().getStatus() != TripStatus.ONGOING
+                && shipment.getTrip().getStatus() != TripStatus.SCHEDULED)) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "Order shipment must be assigned to the dispatching trip before dispatch");
+        }
+        shipment.setStatus(ShipmentStatus.IN_TRANSIT);
+        record(shipment, ShipmentStatus.ASSIGNED, ShipmentStatus.IN_TRANSIT, actor,
+                "Shipment dispatched with delivery trip");
+        shipments.save(shipment);
+    }
+
+    @Transactional
     public void delete(AuthenticatedUser actor, UUID id) {
         requireStaff(actor);
         Shipment shipment = shipments.findByIdForUpdate(id)

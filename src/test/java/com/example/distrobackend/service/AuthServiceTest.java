@@ -1,6 +1,8 @@
 package com.example.distrobackend.service;
 
 import com.example.distrobackend.Domain.entity.User;
+import com.example.distrobackend.Domain.entity.Organization;
+import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Domain.enums.UserStatus;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.dto.VerifyOtpRequest;
@@ -88,6 +90,28 @@ class AuthServiceTest {
                 new LoginRequest("driver@example.test", "StrongPassword1!")))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("invitation");
+        verify(jwtService, never()).generateAccessToken(any());
+        verify(refreshTokenService, never()).create(any());
+    }
+
+    @Test
+    void organizationDriverMustVerifyPhoneBeforeMobileLogin() {
+        AuthService authService = new AuthService(
+                userRepository, passwordEncoder, jwtService, refreshTokenService, otpService);
+        User user = new User();
+        user.setRole(UserRole.DRIVER);
+        user.setStatus(UserStatus.ACTIVE);
+        user.setOrganization(new Organization());
+        user.setEmail("org-driver@example.test");
+        user.setPhoneVerified(false);
+        user.setPasswordHash("encoded-password");
+        when(userRepository.findByEmail("org-driver@example.test")).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("StrongPassword1!", "encoded-password")).thenReturn(true);
+
+        assertThatThrownBy(() -> authService.login(
+                new LoginRequest("org-driver@example.test", "StrongPassword1!")))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("not verified");
         verify(jwtService, never()).generateAccessToken(any());
         verify(refreshTokenService, never()).create(any());
     }

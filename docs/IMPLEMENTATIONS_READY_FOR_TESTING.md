@@ -52,14 +52,13 @@ The backend therefore supports creating an offer before physical receipt and mak
 
 ### Driver onboarding
 
-- Organization admins use `POST /api/v1/drivers/invitations`; `POST /api/v1/drivers` remains the platform-admin registration flow. Calling the latter as an organization admin explains the reported `403`.
-- Backend invitation authorization permits both manufacturer and distributor organization admins to invite a driver.
-- Invitation acceptance remains a separate public flow: `GET /api/invitations/{token}`, then `POST /api/invitations/{token}/accept` with `{ "phoneNumber": "...", "password": "..." }`. Driver phone OTP verification is still required before login.
-- Invitation email is sent only when mail is enabled and provider credentials/from address are configured. The frontend must use an acceptance route compatible with the invitation URL and API; the existing frontend activation route was identified as incompatible.
+- Manufacturer and Distributor admins use `POST /api/v1/drivers` for direct tenant-scoped creation. The endpoint returns the created `DriverResponse` with an active account, approved status and unverified phone.
+- The backend issues the existing account-verification OTP. The driver verifies the phone through `/api/auth/verify-account`, then uses the existing password-reset OTP endpoints to create a password before `/api/auth/login`.
+- This direct registration path creates no driver invitation or activation link. The Super Admin platform-driver path remains unchanged.
 
 ## Frontend integration checklist
 
-1. For organization-managed drivers, call `/api/v1/drivers/invitations`, map the invitation response separately from a driver record, and implement token acceptance plus OTP verification.
+1. For organization-managed drivers, call `/api/v1/drivers`, display the returned driver record immediately, and direct the driver to the existing mobile phone-verification/password setup flow.
 2. Load distributor catalog and authorization statuses from the API; request authorization and block purchase until approved.
 3. Create an authorized distributor offer linked to a warehouse before shipment creation. Keep it unavailable to customers until received stock is available.
 4. Submit purchase orders, show manufacturer review state, and start M-Pesa payment only in the supported state. Treat backend settlement status/callback result as authoritative.

@@ -86,6 +86,15 @@ public class Order {
     @Column(name = "delivered_at")
     private OffsetDateTime deliveredAt;
 
+    @Column(name = "delivery_email_status", nullable = false, length = 20)
+    private String deliveryEmailStatus = "NOT_REQUESTED";
+
+    @Column(name = "delivery_email_sent_at")
+    private OffsetDateTime deliveryEmailSentAt;
+
+    @Column(name = "delivery_email_error", length = 500)
+    private String deliveryEmailError;
+
     @Column(name = "cancelled_at")
     private OffsetDateTime cancelledAt;
 

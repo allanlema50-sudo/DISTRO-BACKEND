@@ -5,13 +5,11 @@ import com.example.distrobackend.Domain.enums.UserStatus;
 import com.example.distrobackend.Domain.enums.DriverApprovalStatus;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
-import com.example.distrobackend.dto.CreateDriverInvitationRequest;
 import com.example.distrobackend.dto.DriverRegistrationRequest;
 import com.example.distrobackend.dto.DriverOperationalStatusRequest;
 import com.example.distrobackend.dto.DriverLocationRequest;
 import com.example.distrobackend.dto.DriverResponse;
 import com.example.distrobackend.dto.DriverSelfProfileResponse;
-import com.example.distrobackend.dto.InvitationResponse;
 import com.example.distrobackend.dto.UpdateDriverAvailabilityRequest;
 import com.example.distrobackend.dto.UpdateDriverRequest;
 import com.example.distrobackend.dto.UpdateUserStatusRequest;
@@ -21,7 +19,6 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
-import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -49,42 +46,12 @@ public class DriverController {
             @Valid @RequestBody DriverRegistrationRequest request) {
         if (actor != null && (actor.role() == UserRole.MANUFACTURER_ADMIN
                 || actor.role() == UserRole.DISTRIBUTOR_ADMIN)) {
-            if (request.email() == null || request.email().isBlank()) {
-                throw new ApiException(ErrorCode.BAD_REQUEST, "An email address is required to invite a driver");
-            }
-            InvitationResponse invitation = driverService.invite(actor,
-                    new CreateDriverInvitationRequest(request.fullName(), request.email(),
-                            request.phoneNumber(), request.licenseNumber(), request.nationalId(),
-                            request.licenseExpiryDate(), request.baseWarehouseId(), request.notes()));
-            return org.springframework.http.ResponseEntity.status(HttpStatus.ACCEPTED).body(invitation);
+            DriverResponse driver = driverService.registerForOrganization(actor, request);
+            return org.springframework.http.ResponseEntity.status(org.springframework.http.HttpStatus.CREATED)
+                    .body(driver);
         }
         DriverResponse driver = driverService.registerForReview(actor, request);
-        return org.springframework.http.ResponseEntity.status(HttpStatus.CREATED).body(driver);
-    }
-    @PostMapping("/invitations")
-    @ResponseStatus(HttpStatus.ACCEPTED)
-    public InvitationResponse invite(
-            @AuthenticationPrincipal AuthenticatedUser actor,
-            @Valid @RequestBody CreateDriverInvitationRequest request) {
-        return driverService.invite(actor, request);
-    }
-
-    @PostMapping({"/{driverId}/invitation", "/{driverId}/invitation/resend"})
-    @ResponseStatus(HttpStatus.ACCEPTED)
-    public InvitationResponse resendInvitation(
-            @AuthenticationPrincipal AuthenticatedUser actor,
-            @PathVariable UUID driverId) {
-        requireOrganizationAdmin(actor);
-        return driverService.resendInvitation(actor, driverId);
-    }
-
-    @DeleteMapping("/{driverId}/invitation")
-    @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void revokeInvitation(
-            @AuthenticationPrincipal AuthenticatedUser actor,
-            @PathVariable UUID driverId) {
-        requireOrganizationAdmin(actor);
-        driverService.revokeInvitation(actor, driverId);
+        return org.springframework.http.ResponseEntity.status(org.springframework.http.HttpStatus.CREATED).body(driver);
     }
 
     @GetMapping

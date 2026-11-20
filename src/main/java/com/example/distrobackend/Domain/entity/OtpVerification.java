@@ -30,6 +30,11 @@ private UUID id;
     @JoinColumn(name = "user_id")
     private User user;
 
+    /** Delivery codes are scoped to one recipient stop, preventing cross-stop replay. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "delivery_stop_id")
+    private TripStop deliveryStop;
+
     @Column(name = "destination", nullable = false, length = 150)
     private String destination;
 

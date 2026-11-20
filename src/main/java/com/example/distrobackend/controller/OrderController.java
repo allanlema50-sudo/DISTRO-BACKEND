@@ -8,6 +8,8 @@ import com.example.distrobackend.dto.*;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.service.OrderService;
 import com.example.distrobackend.service.OtpService;
+import com.example.distrobackend.repository.TripStopRepository;
+import com.example.distrobackend.Domain.enums.StopStatus;
 import com.example.distrobackend.service.PaymentAdministrationService;
 import com.example.distrobackend.Domain.enums.OtpPurpose;
 import jakarta.validation.Valid;
@@ -29,6 +31,7 @@ public class OrderController {
 
     private final OrderService orderService;
     private final OtpService otpService;
+    private final TripStopRepository tripStopRepository;
     private final PaymentAdministrationService paymentAdministrationService;
 
     @GetMapping("/stats")
@@ -224,7 +227,10 @@ public class OrderController {
         if (order.status() != OrderStatus.IN_TRANSIT) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Delivery OTP is available only for in-transit orders");
         }
-        otpService.issue(orderService.getCustomer(orderId), OtpPurpose.DELIVERY_CONFIRMATION);
+        var stop = tripStopRepository.findFirstByOrder_IdAndStatusOrderBySequenceAsc(orderId, StopStatus.IN_PROGRESS)
+                .orElseThrow(() -> new ApiException(ErrorCode.BAD_REQUEST,
+                        "Order has no active delivery stop"));
+        otpService.issueDelivery(orderService.getCustomer(orderId), stop);
     }
 
     // -----------------------------------------------------------------------

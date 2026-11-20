@@ -28,6 +28,10 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.RequestPart;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.UUID;
@@ -50,6 +54,27 @@ public class UserController {
     public UserResponse updateMyProfile(@AuthenticationPrincipal AuthenticatedUser me,
                                         @Valid @RequestBody UpdateMyProfileRequest request) {
         return authService.updateMyProfile(me.userId(), request);
+    }
+
+    @PostMapping(value = "/avatar", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public UserResponse uploadMyAvatar(@AuthenticationPrincipal AuthenticatedUser me,
+                                       @RequestPart("avatar") MultipartFile avatar) {
+        return userService.uploadMyAvatar(me.userId(), avatar);
+    }
+
+    @GetMapping(value = "/{userId}/avatar", produces = {MediaType.IMAGE_PNG_VALUE, MediaType.IMAGE_JPEG_VALUE,
+            "image/webp"})
+    public ResponseEntity<byte[]> avatar(@AuthenticationPrincipal AuthenticatedUser me,
+                                         @PathVariable UUID userId) {
+        UserService.AvatarPayload avatar = userService.avatar(me, userId);
+        return ResponseEntity.ok().contentType(MediaType.parseMediaType(avatar.contentType()))
+                .body(avatar.content());
+    }
+
+    @DeleteMapping("/avatar")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteMyAvatar(@AuthenticationPrincipal AuthenticatedUser me) {
+        userService.deleteMyAvatar(me.userId());
     }
 
     @PostMapping("/password")

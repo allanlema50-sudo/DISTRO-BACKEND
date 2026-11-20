@@ -49,3 +49,23 @@ Deployment steps:
 Checkout initiation creates a pending payment attempt. For M-Pesa, the backend initiates Daraja STK Push and processes verified callbacks through the existing checkout callback flow. For DEMO, the scheduled simulator confirms or fails that pending attempt according to server configuration. A successful confirmation records checkout allocations and retains the existing purchase order, settlement, and manufacturer fulfilment flow. Allocation is accounting state, not a supplier payout; DEMO settlements must not be represented as money received by suppliers.
 
 For endpoint request and response contracts, use the checkout controller DTOs and the live `/v3/api-docs` schema. The frontend must not send payment outcome, allocation amounts, or a claim of payment success.
+
+## Driver delivery OTP confirmation
+
+After staff dispatches a delivery trip through `POST /api/v1/trips/{tripId}/dispatch`, the backend creates and sends a separate six-digit delivery code for each order stop. Codes are hashed in `otp_verifications`, tied to `delivery_stop_id`, expire after the configured OTP TTL, allow a configured number of attempts, and invalidate an earlier pending code when reissued. The recipient can request a resend with `POST /api/v1/trips/{tripId}/stops/{stopId}/delivery-otp` (or `POST /api/v1/orders/{orderId}/delivery-otp` for the active stop). The customer shares the code with the driver in person; the customer does not submit the completion request.
+
+The authenticated assigned driver submits the code from the Driver App:
+
+```http
+POST /api/v1/trips/{tripId}/stops/{stopId}/confirm
+Authorization: Bearer <driver JWT>
+Content-Type: application/json
+```
+
+```json
+{"otp":"123456"}
+```
+
+The server checks driver assignment, active stop, stop-specific code, expiry, and attempt count before setting the stop and order delivered. A linked standalone shipment is also marked delivered. The response is the updated `TripResponse`; invalid codes return the normal API error envelope. A successful delivery attempts an email to the order's customer email with its order reference and delivery address. `OrderResponse.deliveryEmailStatus` is `NOT_REQUESTED`, `PENDING`, `SENT`, or `FAILED`, with `deliveryEmailSentAt` populated on success. Email failure does not reverse delivery.
+
+The manufacturer purchase-order shipment/receipt workflow is a separate domain path; it does not yet create this OTP-protected driver stop automatically. The app should continue using `/api/v1/purchase-order-shipments/{shipmentId}/receive` for that warehouse receipt workflow.

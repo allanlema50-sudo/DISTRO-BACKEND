@@ -19,6 +19,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
@@ -58,6 +59,17 @@ public class TripController {
                                              @PathVariable UUID stopId,
                                              @Valid @RequestBody TripStopStatusUpdate request) {
         return tripService.updateStopStatus(me, tripId, stopId, request.status());
+    }
+
+    @DeleteMapping("/unstarted")
+    public Map<String, Integer> deleteUnstarted(@AuthenticationPrincipal AuthenticatedUser me) {
+        return Map.of("deleted", tripService.deleteAllUnstarted(me));
+    }
+
+    @DeleteMapping("/{tripId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(@AuthenticationPrincipal AuthenticatedUser me, @PathVariable UUID tripId) {
+        tripService.deleteUnstarted(me, tripId);
     }
 
     @PostMapping

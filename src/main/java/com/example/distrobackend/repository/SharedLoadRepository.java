@@ -8,6 +8,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -16,6 +17,10 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface SharedLoadRepository extends JpaRepository<SharedLoad, UUID> {
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("delete from SharedLoad s where s.proposedTrip.id = :tripId or s.candidateTrip.id = :tripId")
+    void deleteByTripId(@Param("tripId") UUID tripId);
+
     boolean existsByProposedTrip_IdAndCandidateTrip_IdAndStatusIn(
             UUID proposedTripId, UUID candidateTripId, Collection<SharedLoadStatus> statuses);
 

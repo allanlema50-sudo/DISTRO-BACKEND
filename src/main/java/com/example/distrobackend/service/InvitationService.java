@@ -339,22 +339,27 @@ public class InvitationService {
             user.setBaseWarehouse(invitation.getBaseWarehouse());
         }
         user.setPasswordHash(passwordEncoder.encode(request.password()));
+        if (user.getRole() == UserRole.DRIVER && user.getOrganization() != null) {
+            // The organization administrator is the approving authority for its
+            // own workforce; platform pool driver review remains unchanged.
+            user.setDriverApprovalStatus(DriverApprovalStatus.APPROVED);
+        }
         user.setStatus(com.example.distrobackend.Domain.enums.UserStatus.ACTIVE);
         user.setPhoneVerified(false);
         // Accepting the emailed invitation verifies the organization user's email.
         user.setEmailVerified(true);
         userRepository.save(user);
 
-        // Drivers require phone verification before login. The invitation email
-        // establishes email ownership; this code completes the remaining step.
-        if (user.getRole() == UserRole.DRIVER) {
+        // Organization driver invitations are activated by the emailed,
+        // single-use link. Platform pool drivers retain the existing phone OTP.
+        if (user.getRole() == UserRole.DRIVER && user.getOrganization() == null) {
             otpService.issue(user, OtpPurpose.ACCOUNT_VERIFICATION);
         }
 
         invitation.setStatus(InvitationStatus.ACCEPTED);
         invitation.setAcceptedAt(OffsetDateTime.now());
         invitationRepository.save(invitation);
-        String message = user.getRole() == UserRole.DRIVER
+        String message = user.getRole() == UserRole.DRIVER && user.getOrganization() == null
                 ? "Invitation accepted. Enter the account-verification code before signing in."
                 : "Invitation accepted. You can now sign in.";
         return new RegisterResponse(user.getId(), message);

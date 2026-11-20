@@ -5,7 +5,6 @@ import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.entity.RiderProfile;
 import com.example.distrobackend.Domain.enums.Organizationtype;
-import com.example.distrobackend.Domain.enums.OtpPurpose;
 import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Domain.enums.UserStatus;
 import com.example.distrobackend.Exception.ApiException;
@@ -46,6 +45,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -181,7 +181,7 @@ class InvitationServiceTest {
     }
 
     @Test
-    void acceptingDriverInvitationIssuesPhoneVerificationOtp() {
+    void acceptingOrganizationDriverInvitationUsesEmailActivationWithoutPhoneOtp() {
         String rawToken = "driver-invitation-token";
         User invitedDriver = new User();
         invitedDriver.setId(UUID.randomUUID());
@@ -209,8 +209,12 @@ class InvitationServiceTest {
         RegisterResponse response = invitationService.accept(rawToken,
                 new AcceptInvitationRequest("+254700000002", "StrongPassword1!"));
 
-        assertThat(response.message()).contains("verification code");
-        verify(otpService).issue(invitedDriver, OtpPurpose.ACCOUNT_VERIFICATION);
+        assertThat(response.message()).contains("sign in");
+        assertThat(invitedDriver.isEmailVerified()).isTrue();
+        assertThat(invitedDriver.isPhoneVerified()).isFalse();
+        assertThat(invitedDriver.getDriverApprovalStatus())
+                .isEqualTo(com.example.distrobackend.Domain.enums.DriverApprovalStatus.APPROVED);
+        verify(otpService, never()).issue(any(), any());
     }
 
     @Test

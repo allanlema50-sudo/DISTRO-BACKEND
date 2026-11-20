@@ -19,7 +19,8 @@ public class OrderMapper {
                 order.getDeliveryAddress(), order.getDeliveryLat(), order.getDeliveryLng(),
                 order.getSubtotalAmount(), order.getDeliveryFee(), order.getTotalAmount(),
                 order.getPackageCount(), order.getCancellationReason(), order.getPlacedAt(), order.getReservationExpiresAt(),
-                order.getConfirmedAt(), order.getDeliveredAt(), order.getCancelledAt(),
+                order.getConfirmedAt(), order.getDeliveredAt(), order.getDeliveryEmailStatus(),
+                order.getDeliveryEmailSentAt(), order.getCancelledAt(),
                 order.getOrderItems().stream().map(OrderMapper::toItemResponse).toList());
     }
 

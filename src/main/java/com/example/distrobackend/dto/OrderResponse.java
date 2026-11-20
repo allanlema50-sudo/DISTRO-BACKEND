@@ -24,6 +24,8 @@ public record OrderResponse(
         OffsetDateTime reservationExpiresAt,
         OffsetDateTime confirmedAt,
         OffsetDateTime deliveredAt,
+        String deliveryEmailStatus,
+        OffsetDateTime deliveryEmailSentAt,
         OffsetDateTime cancelledAt,
         List<OrderItemResponse> items
 ) {}

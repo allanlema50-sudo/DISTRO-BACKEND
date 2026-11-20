@@ -8,6 +8,8 @@ import com.example.distrobackend.dto.*;
 import com.example.distrobackend.repository.*;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.security.TripAccessService;
+import com.example.distrobackend.integration.notification.EmailProviderClient;
+import lombok.extern.slf4j.Slf4j;
 import com.example.distrobackend.Domain.enums.UserStatus;
 import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -20,6 +22,7 @@ import java.util.*;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class TripService {
 
     private final TripRepository tripRepository;
@@ -36,6 +39,8 @@ public class TripService {
     private final OtpService otpService;
     private final OrderService orderService;
     private final SimpMessagingTemplate messagingTemplate;
+    private final EmailProviderClient emailProviderClient;
+    private final ShipmentService shipmentService;
 
     @Transactional
     public TripResponse createTrip(AuthenticatedUser actor, TripRequest request) {
@@ -168,7 +173,7 @@ public class TripService {
         return TripResponse.from(saved, aggregateItems(saved));
     }
 
-    @Transactional
+    @Transactional(noRollbackFor = ApiException.class)
     public TripResponse confirmStopDelivery(AuthenticatedUser actor, UUID tripId, UUID stopId,
                                             ConfirmStopRequest request) {
         Trip trip = getAssignedTrip(actor, tripId);
@@ -182,14 +187,16 @@ public class TripService {
         if (stop.getOrder() == null) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "This endpoint only completes delivery stops");
         }
-        otpService.verify(stop.getOrder().getCustomer(), OtpPurpose.DELIVERY_CONFIRMATION, request.otp());
         if (stop.getOrder().getStatus() != OrderStatus.IN_TRANSIT) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Order is not in transit");
         }
+        otpService.verifyDelivery(stop, request.otp());
 
         stop.setStatus(StopStatus.COMPLETED);
         orderService.updateOrderStatus(stop.getOrder().getId(), actor.userId(),
                 new OrderStatusUpdate(OrderStatus.DELIVERED, "Delivery confirmed by customer OTP"));
+        shipmentService.recordOrderDelivered(stop.getOrder().getId(), actor);
+        sendDeliveryConfirmation(stop.getOrder());
         trip.getStops().stream()
                 .filter(s -> s.getStatus() == StopStatus.PENDING
                         && s.getSequence() == stop.getSequence() + 1)
@@ -225,7 +232,7 @@ public class TripService {
         if (stop.getOrder().getStatus() != OrderStatus.IN_TRANSIT) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Order is not in transit");
         }
-        otpService.issue(stop.getOrder().getCustomer(), OtpPurpose.DELIVERY_CONFIRMATION);
+        otpService.issueDelivery(stop.getOrder().getCustomer(), stop);
     }
 
     @Transactional
@@ -378,6 +385,8 @@ public class TripService {
                             "Every delivery trip stop must reference a customer order");
                 }
                 orderService.dispatchFromTrip(actor, stop.getOrder().getId());
+                shipmentService.updateOrderDispatched(stop.getOrder().getId(), trip.getId(), actor);
+                otpService.issueDelivery(stop.getOrder().getCustomer(), stop);
             }
         }
         TripStatus previous = trip.getStatus();
@@ -389,6 +398,30 @@ public class TripService {
         Trip saved = tripRepository.save(trip);
         recordStatus(saved, previous, TripStatus.ONGOING, actor, "Trip dispatched");
         return TripResponse.from(saved, aggregateItems(saved));
+    }
+
+    private void sendDeliveryConfirmation(Order order) {
+        if (order.getDeliveryEmailSentAt() != null) return;
+        order.setDeliveryEmailStatus("PENDING");
+        try {
+            String recipient = order.getCustomer().getEmail();
+            if (recipient == null || recipient.isBlank()) {
+                throw new IllegalStateException("Recipient email is not available");
+            }
+            String subject = "Your LogiFlow Order Has Arrived";
+            String body = "Your order has arrived at its destination and has been successfully handed over.\n"
+                    + "Order reference: " + order.getOrderNumber() + "\n"
+                    + "Delivery address: " + (order.getDeliveryAddress() == null ? "Not specified" : order.getDeliveryAddress())
+                    + "\nThank you for using LogiFlow.";
+            emailProviderClient.send(recipient, subject, body);
+            order.setDeliveryEmailStatus("SENT");
+            order.setDeliveryEmailSentAt(java.time.OffsetDateTime.now());
+            order.setDeliveryEmailError(null);
+        } catch (Exception ex) {
+            order.setDeliveryEmailStatus("FAILED");
+            order.setDeliveryEmailError(ex.getMessage() == null ? "Email delivery failed" : ex.getMessage());
+            log.warn("Delivery confirmation email failed for order {}", order.getOrderNumber());
+        }
     }
 
     @Transactional(readOnly = true)

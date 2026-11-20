@@ -1,17 +1,19 @@
 package com.example.distrobackend.service;
 
 import com.example.distrobackend.Domain.entity.Invitation;
+import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.RiderProfile;
 import com.example.distrobackend.Domain.entity.User;
+import com.example.distrobackend.Domain.entity.Warehouse;
 import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Domain.enums.UserStatus;
 import com.example.distrobackend.Domain.enums.DriverApprovalStatus;
 import com.example.distrobackend.Domain.enums.TripStatus;
 import com.example.distrobackend.Domain.enums.Organizationtype;
+import com.example.distrobackend.Domain.enums.OtpPurpose;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.Util.PhoneNormalizer;
-import com.example.distrobackend.dto.CreateDriverInvitationRequest;
 import com.example.distrobackend.dto.DriverRegistrationRequest;
 import com.example.distrobackend.dto.DriverLocationRequest;
 import com.example.distrobackend.dto.DriverResponse;
@@ -19,7 +21,6 @@ import com.example.distrobackend.dto.DriverSelfProfileResponse;
 import com.example.distrobackend.dto.UpdateDriverAvailabilityRequest;
 import com.example.distrobackend.dto.UpdateDriverRequest;
 import com.example.distrobackend.dto.UpdateUserStatusRequest;
-import com.example.distrobackend.dto.InvitationResponse;
 import com.example.distrobackend.repository.InvitationRepository;
 import com.example.distrobackend.repository.RiderProfileRepository;
 import com.example.distrobackend.repository.UserRepository;
@@ -49,16 +50,45 @@ public class DriverService {
     private final UserRepository userRepository;
     private final RiderProfileRepository riderProfileRepository;
     private final InvitationRepository invitationRepository;
-    private final InvitationService invitationService;
     private final RefreshTokenService refreshTokenService;
     private final TripRepository tripRepository;
     private final PasswordEncoder passwordEncoder;
+    private final OtpService otpService;
 
     @Transactional
     public DriverResponse registerForReview(AuthenticatedUser actor, DriverRegistrationRequest request) {
         if (actor == null || actor.role() != UserRole.SUPER_ADMIN) {
             throw new ApiException(ErrorCode.ACCESS_DENIED);
         }
+        return registerDirect(request, null, null, DriverApprovalStatus.PENDING_REVIEW, false);
+    }
+
+    @Transactional
+    public DriverResponse registerForOrganization(AuthenticatedUser actor, DriverRegistrationRequest request) {
+        requireOrganizationAdmin(actor);
+        UUID organizationId = requireDriverOrganization(actor);
+        Warehouse baseWarehouse = null;
+        if (request.baseWarehouseId() != null) {
+            baseWarehouse = entityManager.createQuery(
+                            "select w from Warehouse w where w.id = :warehouseId and w.organization.id = :organizationId",
+                            Warehouse.class)
+                    .setParameter("warehouseId", request.baseWarehouseId())
+                    .setParameter("organizationId", organizationId)
+                    .getResultStream().findFirst()
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND,
+                            "Warehouse not found in this organization"));
+        }
+        Organization organization = entityManager.getReference(Organization.class, organizationId);
+        DriverResponse response = registerDirect(request, organization, baseWarehouse,
+                DriverApprovalStatus.APPROVED, true);
+        return response;
+    }
+
+    private DriverResponse registerDirect(DriverRegistrationRequest request,
+                                          Organization organization,
+                                          Warehouse baseWarehouse,
+                                          DriverApprovalStatus approvalStatus,
+                                          boolean organizationManaged) {
         String phone = PhoneNormalizer.normalize(request.phoneNumber());
         String email = request.email() == null || request.email().isBlank()
                 ? null : request.email().trim().toLowerCase(java.util.Locale.ROOT);
@@ -71,7 +101,6 @@ public class DriverService {
         if (riderProfileRepository.existsByNationalIdIgnoreCase(request.nationalId().trim())) {
             throw new ApiException(ErrorCode.CONFLICT, "A driver with this national ID is already registered");
         }
-
         User driver = new User();
         driver.setFullName(request.fullName().trim());
         driver.setEmail(email);
@@ -79,9 +108,9 @@ public class DriverService {
         driver.setPasswordHash(passwordEncoder.encode(SecretTokenService.generate()));
         driver.setRole(UserRole.DRIVER);
         driver.setStatus(UserStatus.ACTIVE);
-        driver.setDriverApprovalStatus(DriverApprovalStatus.PENDING_REVIEW);
-        // Platform pool drivers are owned by Mydistro and are attached to a
-        // distributor only for the duration of a Super Admin dispatch.
+        driver.setDriverApprovalStatus(approvalStatus);
+        driver.setOrganization(organization);
+        driver.setBaseWarehouse(baseWarehouse);
         driver.setPhoneVerified(false);
         driver.setEmailVerified(false);
         User saved = userRepository.save(driver);
@@ -93,31 +122,11 @@ public class DriverService {
         profile.setLicenseExpiryDate(request.licenseExpiryDate());
         profile.setInternalNotes(request.notes() == null || request.notes().isBlank()
                 ? null : request.notes().trim());
-        return DriverResponse.from(saved, persistNewProfile(profile));
-    }
-
-    @Transactional
-    public InvitationResponse invite(AuthenticatedUser actor, CreateDriverInvitationRequest request) {
-        requireOrganizationAdmin(actor);
-        return invitationService.createDriver(actor, request);
-    }
-
-    @Transactional
-    public InvitationResponse resendInvitation(AuthenticatedUser actor, UUID driverId) {
-        requireOrganizationAdmin(actor);
-        return invitationService.resendDriverInvitation(actor, driverId);
-    }
-
-    @Transactional
-    public void revokeInvitation(AuthenticatedUser actor, UUID driverId) {
-        requireOrganizationAdmin(actor);
-        Invitation invitation = invitationRepository.findTopByInvitedUser_IdOrderByCreatedAtDesc(driverId)
-                .orElseThrow(() -> new ApiException(ErrorCode.INVITATION_NOT_FOUND));
-        if (invitation.getInvitedUser() == null
-                || invitation.getInvitedUser().getRole() != UserRole.DRIVER) {
-            throw new ApiException(ErrorCode.INVITATION_NOT_FOUND);
+        RiderProfile savedProfile = persistNewProfile(profile);
+        if (organizationManaged) {
+            otpService.issue(saved, OtpPurpose.ACCOUNT_VERIFICATION);
         }
-        invitationService.revoke(actor, invitation.getId());
+        return DriverResponse.from(saved, savedProfile);
     }
 
     @Transactional

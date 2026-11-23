@@ -62,10 +62,9 @@ public class PaymentService {
     private final OrderRepository orderRepository;
     private final OrderService orderService;
     private final RestTemplate darajaRestTemplate;
-    @Autowired(required = false)
-    private PurchaseOrderShipmentService purchaseOrderShipmentService;
-    @Autowired(required = false)
-    private ApplicationEventPublisher eventPublisher;
+    private final FinancialLedgerService financialLedgerService;
+    private final PurchaseOrderShipmentService purchaseOrderShipmentService;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Autowired
     public PaymentService(PaymentRepository paymentRepository,
@@ -73,13 +72,19 @@ public class PaymentService {
                           PurchaseOrderSettlementRepository settlementRepository,
                           OrderRepository orderRepository,
                           OrderService orderService,
-                          RestTemplate darajaRestTemplate) {
+                          RestTemplate darajaRestTemplate,
+                          FinancialLedgerService financialLedgerService,
+                          PurchaseOrderShipmentService purchaseOrderShipmentService,
+                          ApplicationEventPublisher eventPublisher) {
         this.paymentRepository = paymentRepository;
         this.purchaseOrderRepository = purchaseOrderRepository;
         this.settlementRepository = settlementRepository;
         this.orderRepository = orderRepository;
         this.orderService = orderService;
         this.darajaRestTemplate = darajaRestTemplate;
+        this.financialLedgerService = financialLedgerService;
+        this.purchaseOrderShipmentService = purchaseOrderShipmentService;
+        this.eventPublisher = eventPublisher;
     }
 
     /** Compatibility constructor for existing customer-order unit fixtures. */
@@ -87,7 +92,8 @@ public class PaymentService {
                           OrderRepository orderRepository,
                           OrderService orderService,
                           RestTemplate darajaRestTemplate) {
-        this(paymentRepository, null, null, orderRepository, orderService, darajaRestTemplate);
+        this(paymentRepository, null, null, orderRepository, orderService, darajaRestTemplate,
+                null, null, null);
     }
 
     @Value("${mpesa.base-url}")
@@ -303,6 +309,11 @@ public class PaymentService {
             payment.setConfirmedAt(OffsetDateTime.now());
             paymentRepository.save(payment);
             orderService.confirmPaidOrder(payment.getOrder().getId());
+            if (financialLedgerService != null) {
+                financialLedgerService.recordCapturedPayment(
+                        "CUSTOMER_ORDER_PAYMENT", payment.getId(), payment.getOrder().getOrganization(),
+                        payment.getAmount(), BigDecimal.ZERO, payment.getCurrency(), false);
+            }
         } else {
             payment.setStatus(PaymentStatus.FAILED);
             payment.setFailureReason(callback.getResultDesc());
@@ -351,6 +362,11 @@ public class PaymentService {
                             ? "" : result.resultDescription()));
             paymentRepository.save(payment);
             orderService.confirmPaidOrder(orderId);
+            if (financialLedgerService != null) {
+                financialLedgerService.recordCapturedPayment(
+                        "CUSTOMER_ORDER_PAYMENT", payment.getId(), order.getOrganization(),
+                        payment.getAmount(), BigDecimal.ZERO, payment.getCurrency(), false);
+            }
         } else if (isConfiguredFinalFailureCode(result.resultCode())) {
             String reason = isBlank(result.resultDescription())
                     ? "M-Pesa payment did not complete"

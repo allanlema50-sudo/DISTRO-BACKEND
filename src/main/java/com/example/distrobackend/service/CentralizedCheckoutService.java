@@ -15,15 +15,14 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.*;
-import java.util.stream.Collectors;
 import java.net.URI;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.http.*;
 import java.nio.charset.StandardCharsets;
@@ -47,8 +46,9 @@ public class CentralizedCheckoutService {
     private final UserRepository userRepository;
     private final PurchaseOrderService purchaseOrderService;
     private final CheckoutPaymentAttemptStore paymentAttemptStore;
+    private final FinancialLedgerService financialLedgerService;
     private final PurchaseOrderShipmentService purchaseOrderShipmentService;
-    @Autowired(required = false) private ApplicationEventPublisher eventPublisher;
+    private final ApplicationEventPublisher eventPublisher;
     @Qualifier("darajaRestTemplate") private final RestTemplate darajaRestTemplate;
 
     @Value("${logiflow.marketplace-checkout.enabled:false}") private boolean marketplaceCheckoutEnabled;
@@ -227,7 +227,9 @@ public class CentralizedCheckoutService {
         validateDarajaConfiguration();
         HttpHeaders authHeaders = new HttpHeaders();
         authHeaders.setBasicAuth(mpesaConsumerKey, mpesaConsumerSecret);
-        ResponseEntity<Map> tokenResult = darajaRestTemplate.exchange(mpesaAuthUrl, HttpMethod.GET, new HttpEntity<>(authHeaders), Map.class);
+        ResponseEntity<Map<String, Object>> tokenResult = darajaRestTemplate.exchange(
+                mpesaAuthUrl, HttpMethod.GET, new HttpEntity<>(authHeaders),
+                new ParameterizedTypeReference<>() {});
         Object accessToken = tokenResult.getBody() == null ? null : tokenResult.getBody().get("access_token");
         if (accessToken == null) throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "Daraja authentication failed");
         String timestamp = java.time.LocalDateTime.now(ZoneId.of("Africa/Nairobi")).format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
@@ -242,13 +244,15 @@ public class CentralizedCheckoutService {
                 Map.entry("AccountReference", checkoutReference),
                 Map.entry("TransactionDesc", "LogiFlow checkout"));
         HttpHeaders headers = new HttpHeaders(); headers.setBearerAuth(String.valueOf(accessToken)); headers.setContentType(MediaType.APPLICATION_JSON);
-        ResponseEntity<Map> result;
+        ResponseEntity<Map<String, Object>> result;
         try {
-            result = darajaRestTemplate.postForEntity(mpesaStkPushUrl, new HttpEntity<>(body,headers), Map.class);
+            result = darajaRestTemplate.exchange(
+                    mpesaStkPushUrl, HttpMethod.POST, new HttpEntity<>(body, headers),
+                    new ParameterizedTypeReference<>() {});
         } catch (org.springframework.web.client.RestClientException ex) {
             throw new StkPushOutcomeUnknownException(ex);
         }
-        Map data=result.getBody();
+        Map<String, Object> data=result.getBody();
         if (data == null || !"0".equals(String.valueOf(data.get("ResponseCode")))) {
             throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "Daraja did not accept the STK request");
         }
@@ -373,15 +377,19 @@ public class CentralizedCheckoutService {
             throw new ApiException(ErrorCode.BAD_REQUEST, "M-Pesa merchant request correlation failed");
         }
         validateDarajaConfiguration();
-        Map verifiedBody;
+        Map<String, Object> verifiedBody;
         try {
             String timestamp=java.time.LocalDateTime.now(ZoneId.of("Africa/Nairobi")).format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
             String password=Base64.getEncoder().encodeToString((mpesaShortcode+mpesaPasskey+timestamp).getBytes(StandardCharsets.UTF_8));
             Map<String,String> query=Map.of("BusinessShortCode",mpesaShortcode,"Password",password,"Timestamp",timestamp,"CheckoutRequestID",callback.getCheckoutRequestId());
             HttpHeaders headers=new HttpHeaders(); headers.setBasicAuth(mpesaConsumerKey,mpesaConsumerSecret);
-            ResponseEntity<Map> token=darajaRestTemplate.exchange(mpesaAuthUrl,HttpMethod.GET,new HttpEntity<>(headers),Map.class);
+            ResponseEntity<Map<String, Object>> token = darajaRestTemplate.exchange(
+                    mpesaAuthUrl, HttpMethod.GET, new HttpEntity<>(headers),
+                    new ParameterizedTypeReference<>() {});
             HttpHeaders queryHeaders=new HttpHeaders(); queryHeaders.setBearerAuth(String.valueOf(token.getBody().get("access_token"))); queryHeaders.setContentType(MediaType.APPLICATION_JSON);
-            ResponseEntity<Map> verified=darajaRestTemplate.postForEntity(mpesaStkQueryUrl,new HttpEntity<>(query,queryHeaders),Map.class);
+            ResponseEntity<Map<String, Object>> verified = darajaRestTemplate.exchange(
+                    mpesaStkQueryUrl, HttpMethod.POST, new HttpEntity<>(query, queryHeaders),
+                    new ParameterizedTypeReference<>() {});
             verifiedBody = verified.getBody();
             if (verifiedBody == null
                     || !String.valueOf(callback.getResultCode()).equals(String.valueOf(verifiedBody.get("ResultCode")))
@@ -503,6 +511,15 @@ public class CentralizedCheckoutService {
             allocation.setCurrency(order.getCurrency());
             allocation.setDemo(payment.isDemo());
             allocation = allocationRepository.save(allocation);
+            if (!payment.isDemo()) {
+                FinancialLedgerService.FinancialBreakdown breakdown = financialLedgerService.recordCapturedPayment(
+                        "CHECKOUT_ALLOCATION", allocation.getId(), order.getSupplierOrganization(),
+                        allocation.getGrossAmount(), allocation.getProviderFee(), allocation.getCurrency(), false);
+                allocation.setProviderFee(breakdown.providerFee());
+                allocation.setCommission(breakdown.commission());
+                allocation.setSupplierAmount(breakdown.supplierAmount());
+                allocationRepository.save(allocation);
+            }
             SupplierSettlement settlement = new SupplierSettlement();
             settlement.setAllocation(allocation);
             settlement.setSupplierOrganization(order.getSupplierOrganization());

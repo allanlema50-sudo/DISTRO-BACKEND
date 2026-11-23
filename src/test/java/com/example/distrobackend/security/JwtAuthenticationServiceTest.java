@@ -5,7 +5,6 @@ import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.repository.UserRepository;
-import com.example.distrobackend.security.AuthenticatedUser;
 import io.jsonwebtoken.Claims;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

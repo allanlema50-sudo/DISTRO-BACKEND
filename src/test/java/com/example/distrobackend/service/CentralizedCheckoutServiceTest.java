@@ -34,6 +34,7 @@ class CentralizedCheckoutServiceTest {
  @Mock UserRepository userRepository;
  @Mock PurchaseOrderService purchaseOrderService;
  @Mock CheckoutPaymentAttemptStore paymentAttemptStore;
+ @Mock FinancialLedgerService financialLedgerService;
  @Mock PurchaseOrderShipmentService purchaseOrderShipmentService;
  @InjectMocks CentralizedCheckoutService service;
 

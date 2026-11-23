@@ -60,7 +60,6 @@ public class PurchaseOrderService {
     private final NotificationService notificationService;
     private final ProductAuthorizationService productAuthorizationService;
     private final DistributorProductAuthorizationRepository authorizationRepository;
-    private final com.example.distrobackend.repository.CheckoutPaymentRepository checkoutPaymentRepository;
 
     @Transactional
     public PurchaseOrderResponse create(AuthenticatedUser actor, CreatePurchaseOrderRequest request) {
@@ -442,7 +441,13 @@ public class PurchaseOrderService {
         if (!isPurchaseOrderPaid(order)) return "PAYMENT_PENDING";
         if (!order.isStockReserved()) return "INVENTORY_EXCEPTION";
         if (dispatchReady(order)) return "READY_FOR_DISPATCH";
-        if (order.getItems().stream().anyMatch(item -> item.getPickedQuantity() > 0)) return "PICKING";
+        boolean anyPicked = order.getItems().stream().anyMatch(item -> item.getPickedQuantity() > 0);
+        boolean allPicked = !order.getItems().isEmpty()
+                && order.getItems().stream().allMatch(item -> item.getPickedQuantity() >= item.getQuantity());
+        boolean anyPacked = order.getItems().stream().anyMatch(item -> item.getPackedQuantity() > 0);
+        if (anyPacked) return "PACKING";
+        if (allPicked) return "READY_FOR_PACKING";
+        if (anyPicked) return "PICKING";
         return "READY_FOR_PICKING";
     }
 

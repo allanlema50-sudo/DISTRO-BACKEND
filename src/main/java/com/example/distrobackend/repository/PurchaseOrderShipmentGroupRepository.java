@@ -13,6 +13,10 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface PurchaseOrderShipmentGroupRepository extends JpaRepository<PurchaseOrderShipmentGroup, UUID> {
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select shipmentGroup from PurchaseOrderShipmentGroup shipmentGroup where shipmentGroup.trip.id = :tripId")
+    java.util.List<PurchaseOrderShipmentGroup> findByTrip_IdForUpdate(@Param("tripId") UUID tripId);
+
     @Query("select groupEntity.id from PurchaseOrderShipmentGroup groupEntity "
             + "join groupEntity.shipments shipment where shipment.id = :shipmentId")
     Optional<UUID> findIdByShipmentId(@Param("shipmentId") UUID shipmentId);

@@ -115,6 +115,7 @@ Important environment values:
 | `ONBOARDING_DOCUMENT_RETENTION_SCAN_MS` | `86400000` | Scheduled cleanup interval for retained onboarding evidence |
 | `ORDER_RESERVATION_TTL` | `15m` | Unpaid stock-reservation lifetime |
 | `ORDER_MAX_OPEN_PENDING_PER_CUSTOMER` | `5` | Maximum open unpaid orders per customer |
+| `PURCHASE_ORDER_FULFILMENT_RECOVERY_SCAN_MS` | `60000` | Scan interval for retrying paid checkout shipment preparation |
 | `FLYWAY_BASELINE_ON_MIGRATE` | `false` | Only for a reviewed pre-Flyway database |
 
 M-Pesa variables are optional for starting the API, but they must be configured
@@ -963,7 +964,18 @@ Order creation reserves stock immediately. An unpaid reservation expires after
 M-Pesa request is still in flight, cleanup reconciles the provider first so a
 successful payment is not stranded.
 
+After a centralized checkout payment succeeds, shipment preparation runs after
+the payment transaction commits. If that work fails, the backend records a
+retry time and error on the affected purchase order; a scheduled worker retries
+with increasing delays. The scan interval is configurable with
+`PURCHASE_ORDER_FULFILMENT_RECOVERY_SCAN_MS`.
+
 ### Payments
+
+The financial foundation and commission-rule handoff is documented in
+[`docs/financial-ledger-commission.md`](docs/financial-ledger-commission.md).
+It records confirmed non-demo allocations and customer payments in a balanced,
+idempotent ledger, but it does not yet execute supplier payouts.
 
 | Method | Endpoint | Access | Purpose / integration note |
 |---|---|---|---|

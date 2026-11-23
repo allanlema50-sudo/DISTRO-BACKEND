@@ -11,7 +11,6 @@ import com.example.distrobackend.service.OtpService;
 import com.example.distrobackend.repository.TripStopRepository;
 import com.example.distrobackend.Domain.enums.StopStatus;
 import com.example.distrobackend.service.PaymentAdministrationService;
-import com.example.distrobackend.Domain.enums.OtpPurpose;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;

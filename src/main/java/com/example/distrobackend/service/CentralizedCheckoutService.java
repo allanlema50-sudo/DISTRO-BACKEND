@@ -14,6 +14,8 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -46,6 +48,7 @@ public class CentralizedCheckoutService {
     private final PurchaseOrderService purchaseOrderService;
     private final CheckoutPaymentAttemptStore paymentAttemptStore;
     private final PurchaseOrderShipmentService purchaseOrderShipmentService;
+    @Autowired(required = false) private ApplicationEventPublisher eventPublisher;
     @Qualifier("darajaRestTemplate") private final RestTemplate darajaRestTemplate;
 
     @Value("${logiflow.marketplace-checkout.enabled:false}") private boolean marketplaceCheckoutEnabled;
@@ -413,7 +416,7 @@ public class CentralizedCheckoutService {
             if (receipt != null && suppliedSecret != null && !suppliedSecret.isBlank()) payment.setProviderReference(receipt);
             else payment.setProviderReference(callback.getCheckoutRequestId());
             checkout.setStatus(CheckoutStatus.PAID); recordAllocations(payment);
-            purchaseOrderShipmentService.markCheckoutOrdersReady(payment);
+            publishPaymentVerified(payment);
         } else { payment.setStatus(callback.getResultCode()==1032 ? CheckoutPaymentStatus.CANCELLED : CheckoutPaymentStatus.FAILED); payment.setFailureReason(callback.getResultDesc()); checkout.setStatus(CheckoutStatus.PAYMENT_FAILED); }
         checkoutPaymentRepository.save(payment); checkoutRepository.save(checkout);
     }
@@ -471,7 +474,7 @@ public class CentralizedCheckoutService {
                     payment.setStatus(CheckoutPaymentStatus.SUCCESS);
                     checkout.setStatus(CheckoutStatus.PAID);
                     recordAllocations(payment);
-                    purchaseOrderShipmentService.markCheckoutOrdersReady(payment);
+                    publishPaymentVerified(payment);
                     checkoutStatus = CheckoutStatus.PAID;
                 }
                 case "FAILED" -> { payment.setStatus(CheckoutPaymentStatus.FAILED); checkoutStatus = CheckoutStatus.PAYMENT_FAILED; }
@@ -483,6 +486,14 @@ public class CentralizedCheckoutService {
             checkout.setPayment(payment);
             checkoutRepository.save(checkout);
         }
+    }
+
+    private void publishPaymentVerified(CheckoutPayment payment) {
+        if (eventPublisher == null) {
+            purchaseOrderShipmentService.markCheckoutOrdersReady(payment);
+            return;
+        }
+        eventPublisher.publishEvent(PurchaseOrderPaymentVerifiedEvent.checkout(payment.getId()));
     }
 
     private void recordAllocations(CheckoutPayment payment) {

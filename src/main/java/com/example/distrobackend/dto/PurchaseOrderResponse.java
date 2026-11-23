@@ -34,5 +34,6 @@ public record PurchaseOrderResponse(
         BigDecimal paidAmount,
         OffsetDateTime paymentConfirmedAt,
         String fulfilmentStatus,
-        boolean dispatchEligible
+        boolean dispatchEligible,
+        int packageCount
 ) {}

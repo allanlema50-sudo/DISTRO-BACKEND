@@ -6,6 +6,7 @@ import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.dto.*;
 import com.example.distrobackend.repository.*;
+import com.example.distrobackend.Domain.enums.ManufacturerShipmentStatus;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.security.TripAccessService;
 import com.example.distrobackend.integration.notification.EmailProviderClient;
@@ -43,6 +44,8 @@ public class TripService {
     private final SimpMessagingTemplate messagingTemplate;
     private final EmailProviderClient emailProviderClient;
     private final ShipmentService shipmentService;
+    private final PurchaseOrderShipmentGroupRepository purchaseOrderShipmentGroupRepository;
+    private final PurchaseOrderShipmentService purchaseOrderShipmentService;
 
     @Transactional
     public TripResponse createTrip(AuthenticatedUser actor, TripRequest request) {
@@ -188,6 +191,86 @@ public class TripService {
         String note = request.notes() == null || request.notes().isBlank()
                 ? "Trip created" : request.notes().trim();
         recordStatus(saved, null, TripStatus.SCHEDULED, actor, note);
+        return TripResponse.from(saved, aggregateItems(saved));
+    }
+
+    @Transactional
+    public TripResponse createManufacturerShipmentTrip(AuthenticatedUser actor,
+                                                        ManufacturerShipmentTripRequest request) {
+        UUID organizationId = requireOrganization(actor);
+        if (actor.role() != UserRole.MANUFACTURER_ADMIN && actor.role() != UserRole.MANUFACTURER_STAFF) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED, "Only manufacturer staff can dispatch manufacturer shipments");
+        }
+        Vehicle vehicle = vehicleRepository.findByIdAndOrganizationForUpdate(request.vehicleId(), organizationId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Vehicle not found"));
+        if (vehicle.getStatus() != VehicleStatus.ACTIVE) {
+            throw new ApiException(ErrorCode.CONFLICT, "Only an active vehicle can be assigned");
+        }
+        User driver = userRepository.findByIdForUpdate(request.driverId())
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Driver not found"));
+        if (driver.getRole() != UserRole.DRIVER || driver.getOrganization() == null
+                || !organizationId.equals(driver.getOrganization().getId())
+                || driver.getStatus() != UserStatus.ACTIVE
+                || driver.getDriverApprovalStatus() != DriverApprovalStatus.APPROVED) {
+            throw new ApiException(ErrorCode.CONFLICT, "Driver must be approved, active and belong to this manufacturer");
+        }
+        takeDriverFromUnstartedTrips(actor, driver.getId(), null);
+        takeVehicleFromUnstartedTrips(actor, vehicle.getId(), null);
+        Set<UUID> uniqueIds = new HashSet<>();
+        List<PurchaseOrderShipmentGroup> groups = new ArrayList<>();
+        for (UUID groupId : request.manufacturerShipmentGroupIds()) {
+            if (!uniqueIds.add(groupId)) throw new ApiException(ErrorCode.BAD_REQUEST, "Duplicate shipment group");
+            purchaseOrderShipmentGroupRepository.findByIdForUpdate(groupId)
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Shipment group not found"));
+            PurchaseOrderShipmentGroup group = purchaseOrderShipmentGroupRepository.findWithDetails(groupId)
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Shipment group not found"));
+            if (!organizationId.equals(group.getManufacturerOrganization().getId())) {
+                throw new ApiException(ErrorCode.ACCESS_DENIED, "Shipment group belongs to another manufacturer");
+            }
+            if (group.getStatus() != ManufacturerShipmentStatus.CREATED || group.getTrip() != null
+                    || group.getShipments().isEmpty()) {
+                throw new ApiException(ErrorCode.CONFLICT, "Shipment group is not eligible for trip assignment");
+            }
+            groups.add(group);
+        }
+        Warehouse origin = groups.get(0).getOriginWarehouse();
+        if (groups.stream().anyMatch(g -> !origin.getId().equals(g.getOriginWarehouse().getId()))) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Trip shipment groups must share one origin warehouse");
+        }
+        Organization organization = groups.get(0).getManufacturerOrganization();
+        Trip trip = new Trip();
+        trip.setOrganization(organization);
+        trip.setTripType(TripType.DELIVERY);
+        trip.setTripNumber("TRIP-" + UUID.randomUUID().toString().replace("-", "").substring(0, 20));
+        trip.setStatus(TripStatus.SCHEDULED);
+        trip.setRider(driver);
+        trip.setVehicle(vehicle);
+        trip.setOriginName(origin.getName());
+        trip.setOriginAddress(origin.getAddress());
+        trip.setOriginLat(origin.getLatitude());
+        trip.setOriginLng(origin.getLongitude());
+        trip.setScheduledStartLabel(request.plannedStart());
+        int sequence = 1;
+        for (PurchaseOrderShipmentGroup group : groups) {
+            Warehouse destination = group.getDestinationWarehouse();
+            TripStop stop = new TripStop();
+            stop.setSequence(sequence++);
+            stop.setStatus(StopStatus.PENDING);
+            stop.setPurchaseOrderShipmentGroup(group);
+            stop.setLocationName(destination.getName());
+            stop.setLocationAddress(destination.getAddress());
+            stop.setLocationLat(destination.getLatitude());
+            stop.setLocationLng(destination.getLongitude());
+            trip.addStop(stop);
+        }
+        Trip saved = tripRepository.save(trip);
+        for (PurchaseOrderShipmentGroup group : groups) {
+            group.setTrip(saved);
+            group.setStatus(ManufacturerShipmentStatus.TRIP_ASSIGNED);
+            purchaseOrderShipmentGroupRepository.save(group);
+        }
+        recordStatus(saved, null, TripStatus.SCHEDULED, actor,
+                request.notes() == null || request.notes().isBlank() ? "Manufacturer shipment trip created" : request.notes().trim());
         return TripResponse.from(saved, aggregateItems(saved));
     }
 
@@ -514,7 +597,14 @@ public class TripService {
                         stop.getLocationLat(), stop.getLocationLng()), stop.getStatus(),
                 stop.getEtaLabel(), stop.getDistanceFromPreviousKm(),
                 stop.getOrder() == null ? null : stop.getOrder().getOrderNumber(),
-                stop.getContactName(), stop.getContactPhone());
+                stop.getContactName(), stop.getContactPhone(),
+                stop.getPurchaseOrderShipmentGroup() == null ? null
+                        : stop.getPurchaseOrderShipmentGroup().getId(),
+                stop.getPurchaseOrderShipmentGroup() == null ? null
+                        : stop.getPurchaseOrderShipmentGroup().getShipmentReference(),
+                stop.getPurchaseOrderShipmentGroup() == null ? List.of()
+                        : stop.getPurchaseOrderShipmentGroup().getShipments().stream()
+                            .map(shipment -> shipment.getPurchaseOrder().getPurchaseOrderNumber()).toList());
     }
 
     @Transactional(readOnly = true)
@@ -575,6 +665,22 @@ public class TripService {
         }
         if (trip.getTripType() == TripType.DELIVERY) {
             for (TripStop stop : trip.getStops()) {
+                if (stop.getPurchaseOrderShipmentGroup() != null) {
+                    PurchaseOrderShipmentGroup group = stop.getPurchaseOrderShipmentGroup();
+                    if (group.getStatus() != ManufacturerShipmentStatus.TRIP_ASSIGNED
+                            || !trip.getOrganization().getId().equals(group.getManufacturerOrganization().getId())) {
+                        throw new ApiException(ErrorCode.CONFLICT, "Manufacturer shipment group is not assigned to this trip");
+                    }
+                    for (PurchaseOrderShipment consignment : group.getShipments()) {
+                        purchaseOrderShipmentService.updateStatus(actor, consignment.getId(),
+                                new ShipmentStatusRequest(PurchaseOrderShipmentStatus.IN_TRANSIT,
+                                        "Dispatched on trip " + trip.getTripNumber()));
+                    }
+                    group.setStatus(ManufacturerShipmentStatus.IN_TRANSIT);
+                    group.setDispatchedAt(java.time.OffsetDateTime.now());
+                    purchaseOrderShipmentGroupRepository.save(group);
+                    continue;
+                }
                 if (stop.getOrder() == null) {
                     throw new ApiException(ErrorCode.CONFLICT,
                             "Every delivery trip stop must reference a customer order");

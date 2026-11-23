@@ -6,8 +6,11 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.UUID;
+import java.util.Optional;
 
 public interface StockMovementRepository extends JpaRepository<StockMovement, UUID> {
+
+    Optional<StockMovement> findByStockItem_IdAndIdempotencyKey(UUID stockItemId, String idempotencyKey);
 
     Page<StockMovement> findByStockItem_IdAndStockItem_Organization_IdOrderByCreatedAtDesc(
             UUID stockItemId, UUID organizationId, Pageable pageable);

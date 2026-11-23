@@ -57,6 +57,12 @@ public class PurchaseOrder {
     @Column(name = "stock_reserved", nullable = false)
     private boolean stockReserved = false;
 
+    @Column(name = "package_count", nullable = false)
+    private int packageCount;
+
+    @Column(name = "fulfilment_status", nullable = false, length = 40)
+    private String fulfilmentStatus = "PAYMENT_PENDING";
+
     @Column(name = "total_amount", nullable = false, precision = 12, scale = 2)
     private BigDecimal totalAmount = BigDecimal.ZERO;
 

@@ -29,6 +29,7 @@ public class FinancialLedgerService {
     private final LedgerAccountRepository accountRepository;
     private final LedgerJournalRepository journalRepository;
     private final CommissionRuleService commissionRuleService;
+    private final PostgresTransactionLockService transactionLockService;
 
     @Transactional
     public FinancialBreakdown recordCapturedPayment(String sourceType, UUID sourceId,
@@ -93,6 +94,7 @@ public class FinancialLedgerService {
     }
 
     private LedgerAccount platformAccount(LedgerAccountType type, String currency) {
+        transactionLockService.lock("ledger:platform:" + type.name() + ":" + currency);
         return accountRepository.findPlatformAccount(type, currency).orElseGet(() -> {
             LedgerAccount account = new LedgerAccount();
             account.setAccountType(type);
@@ -103,6 +105,8 @@ public class FinancialLedgerService {
     }
 
     private LedgerAccount organizationAccount(LedgerAccountType type, String currency, Organization organization) {
+        transactionLockService.lock("ledger:organization:" + organization.getId()
+                + ":" + type.name() + ":" + currency);
         return accountRepository.findOrganizationAccount(type, currency, organization.getId()).orElseGet(() -> {
             LedgerAccount account = new LedgerAccount();
             account.setAccountType(type);

@@ -26,11 +26,12 @@ class FinancialLedgerServiceTest {
     @Mock private LedgerAccountRepository accountRepository;
     @Mock private LedgerJournalRepository journalRepository;
     @Mock private CommissionRuleService commissionRuleService;
+    @Mock private PostgresTransactionLockService transactionLockService;
 
     @Test
     void recordsABalancedCaptureJournalAndCommission() {
         FinancialLedgerService service = new FinancialLedgerService(
-                accountRepository, journalRepository, commissionRuleService);
+                accountRepository, journalRepository, commissionRuleService, transactionLockService);
         Organization distributor = new Organization();
         distributor.setId(UUID.randomUUID());
         distributor.setName("Distributor");
@@ -68,7 +69,7 @@ class FinancialLedgerServiceTest {
     @Test
     void doesNotCreateASecondJournalForTheSamePaymentEvent() {
         FinancialLedgerService service = new FinancialLedgerService(
-                accountRepository, journalRepository, commissionRuleService);
+                accountRepository, journalRepository, commissionRuleService, transactionLockService);
         Organization distributor = new Organization();
         distributor.setId(UUID.randomUUID());
         distributor.setType(Organizationtype.DISTRIBUTOR);

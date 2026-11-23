@@ -18,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /** Commits checkout payment-attempt state independently of Daraja network calls. */
@@ -119,6 +120,26 @@ public class CheckoutPaymentAttemptStore {
         payment.setProviderPayload(Map.of("provider", payment.getProvider() == null ? "UNKNOWN" : payment.getProvider().name(),
                 "state", "REQUEST_OUTCOME_UNKNOWN"));
         checkoutPaymentRepository.saveAndFlush(payment);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public Optional<String> claimUnknownPaystackReference(UUID paymentId, OffsetDateTime initiatedBefore,
+                                                          OffsetDateTime checkedBefore,
+                                                          OffsetDateTime checkedAt) {
+        CheckoutPayment payment = checkoutPaymentRepository.findByIdForUpdate(paymentId).orElse(null);
+        if (payment == null || payment.getProvider() != PaymentProvider.PAYSTACK
+                || payment.getStatus() != CheckoutPaymentStatus.PENDING
+                || payment.getProviderReference() == null
+                || payment.getInitiatedAt().isAfter(initiatedBefore)
+                || payment.getProviderStatusCheckedAt() != null
+                && payment.getProviderStatusCheckedAt().isAfter(checkedBefore)
+                || payment.getProviderPayload() == null
+                || !"REQUEST_OUTCOME_UNKNOWN".equals(payment.getProviderPayload().get("state"))) {
+            return Optional.empty();
+        }
+        payment.setProviderStatusCheckedAt(checkedAt);
+        checkoutPaymentRepository.saveAndFlush(payment);
+        return Optional.of(payment.getProviderReference());
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)

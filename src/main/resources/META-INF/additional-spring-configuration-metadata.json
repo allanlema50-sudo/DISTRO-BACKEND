@@ -53,6 +53,10 @@
     ,{ "name": "paystack.base-url", "type": "java.lang.String", "description": "Paystack API base URL; production uses https://api.paystack.co." }
     ,{ "name": "paystack.secret-key", "type": "java.lang.String", "description": "Paystack server-side secret key." }
     ,{ "name": "paystack.webhook-secret", "type": "java.lang.String", "description": "Paystack webhook signing secret." }
+    ,{ "name": "paystack.reconciliation.scan-ms", "type": "java.lang.Long", "description": "Delay between Paystack payment and transfer reconciliation scans in milliseconds." }
+    ,{ "name": "paystack.reconciliation.batch-size", "type": "java.lang.Integer", "description": "Maximum Paystack payment or transfer references reconciled in one scan." }
+    ,{ "name": "paystack.reconciliation.initial-delay-ms", "type": "java.lang.Long", "description": "Minimum age before an unknown Paystack checkout initialization is verified." }
+    ,{ "name": "paystack.reconciliation.repeat-delay-ms", "type": "java.lang.Long", "description": "Minimum delay between repeated Paystack status verification requests." }
     ,{ "name": "paystack.callback-url", "type": "java.lang.String", "description": "Optional Paystack browser redirect URL." }
   ]
 }

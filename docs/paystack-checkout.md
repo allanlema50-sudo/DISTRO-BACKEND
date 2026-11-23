@@ -85,11 +85,30 @@ enable payouts. After Paystack approves transfers, set
    attached to a settlement.
 3. A Super Admin creates and approves a settlement batch. The API refuses
    demo, already batched, unpaid, or beneficiary-less settlements.
-4. A Super Admin executes the approved batch. Each transfer has one stable
-   reference, so an ambiguous provider response is not retried with a new
-   transfer and cannot double-credit a beneficiary.
+4. A Super Admin executes the approved batch. Each transfer keeps one stable
+   reference. If the API response is ambiguous, LogiFlow does not start a new
+   transfer; a scheduled reconciliation job verifies that same reference with
+   Paystack. It updates the settlement from the provider's verified status, or
+   marks it failed if Paystack confirms that no transfer exists for the
+   reference. A failed settlement can be retried only with its original
+   reference.
 5. Signed `transfer.success`, `transfer.failed`, and `transfer.reversed`
-   webhooks update the settlement and batch status.
+   webhooks also update the settlement and batch status. The reconciliation
+   job provides recovery if a webhook is delayed or lost.
+
+Paystack checkout attempts whose initialization response is ambiguous are
+verified by their stored transaction reference as well. While verification is
+still pending, the attempt remains unresolved and the buyer must not start a
+second payment. A confirmed success or failure is applied through the same
+idempotent processing path as a webhook. A reference that Paystack confirms is
+absent is timed out, allowing the buyer to try again.
+
+Reconciliation cadence is controlled by `PAYSTACK_RECONCILIATION_SCAN_MS`,
+`PAYSTACK_RECONCILIATION_BATCH_SIZE`,
+`PAYSTACK_RECONCILIATION_INITIAL_DELAY_MS`, and
+`PAYSTACK_RECONCILIATION_REPEAT_DELAY_MS`. The default initial and repeat
+delays are five minutes. Provider timeouts remain unresolved and are queried
+again; they never trigger a transfer under a new reference.
 
 Transfers use the Paystack balance. The business must complete Paystack's
 transfer/KYC setup and ensure its balance and transfer approval settings are

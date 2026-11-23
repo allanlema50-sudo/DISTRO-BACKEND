@@ -13,6 +13,16 @@ public interface CheckoutPaymentRepository extends JpaRepository<CheckoutPayment
  Optional<CheckoutPayment> findByCheckout_Id(UUID checkoutId);
  Optional<CheckoutPayment> findFirstByCheckout_IdOrderByInitiatedAtDesc(UUID checkoutId);
  List<CheckoutPayment> findByStatusAndInitiatedAtBefore(CheckoutPaymentStatus status, OffsetDateTime before);
+ @org.springframework.data.jpa.repository.Query(value = "select * from checkout_payments p "
+         + "where p.provider = 'PAYSTACK' and p.status = 'PENDING' "
+         + "and p.initiated_at <= :cutoff "
+         + "and (p.provider_status_checked_at is null or p.provider_status_checked_at <= :checkBefore) "
+         + "and p.provider_payload ->> 'state' = 'REQUEST_OUTCOME_UNKNOWN' "
+         + "order by p.initiated_at asc limit :batchSize", nativeQuery = true)
+ List<CheckoutPayment> findUnknownPaystackAttempts(
+         @org.springframework.data.repository.query.Param("cutoff") OffsetDateTime cutoff,
+         @org.springframework.data.repository.query.Param("checkBefore") OffsetDateTime checkBefore,
+         @org.springframework.data.repository.query.Param("batchSize") int batchSize);
  List<CheckoutPayment> findByDemoTrueAndStatusAndInitiatedAtBefore(CheckoutPaymentStatus status, OffsetDateTime before);
  Optional<CheckoutPayment> findByIdAndCheckout_Id(UUID paymentId, UUID checkoutId);
  Optional<CheckoutPayment> findByMpesaCheckoutRequestId(String checkoutRequestId);

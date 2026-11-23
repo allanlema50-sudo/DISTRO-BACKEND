@@ -34,6 +34,7 @@ public class CommissionRuleService {
     private final CommissionRuleRepository commissionRuleRepository;
     private final UserRepository userRepository;
     private final AuditLogRepository auditLogRepository;
+    private final PostgresTransactionLockService transactionLockService;
 
     @Value("${logiflow.commission.default-percent:5.00}")
     private BigDecimal defaultRatePercent;
@@ -58,6 +59,9 @@ public class CommissionRuleService {
         requirePlatformAdmin(actor);
         String currency = normalizeCurrency(request.currency());
         validateWindow(request.effectiveFrom(), request.effectiveUntil());
+        // Lock even when no matching rule exists; row locks alone cannot
+        // serialize concurrent first-time rules for a currency.
+        transactionLockService.lock("commission-rule:" + currency);
         List<CommissionRule> existingRules = commissionRuleRepository.findActiveForUpdate(currency);
         if (existingRules.stream().anyMatch(existing -> overlaps(existing, request, currency))) {
             throw new ApiException(ErrorCode.CONFLICT,

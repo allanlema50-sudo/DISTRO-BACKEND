@@ -203,22 +203,29 @@ public class CentralizedCheckoutService {
         if (paystack) {
             String reference = "LF-" + checkout.getCheckoutReference() + "-"
                     + attempt.paymentId().toString().replace("-", "").substring(0, 12);
-            paymentAttemptStore.preparePaystack(attempt.paymentId(), reference);
+            PaystackPaymentService.Initialization result;
             try {
-                PaystackPaymentService.Initialization result = paystackPaymentService.initialize(
+                paymentAttemptStore.preparePaystack(attempt.paymentId(), reference);
+                result = paystackPaymentService.initialize(
                         reference, checkout.getTotalAmount(), checkout.getCurrency(),
                         checkout.getCreatedBy().getEmail(), paystackChannel,
                         attempt.paymentId().toString(), checkout.getCheckoutReference());
-                paymentAttemptStore.markPaystackAccepted(attempt.paymentId(), result.providerReference(),
-                        result.authorizationUrl(), result.accessCode(), result.channel());
             } catch (PaystackPaymentService.ProviderOutcomeUnknownException ex) {
                 paymentAttemptStore.markOutcomeUnknown(attempt.paymentId());
                 throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED,
-                        "Paystack payment status is temporarily unknown; retry by checking the checkout status");
+                        "Paystack payment initialization is being checked; do not start another payment yet");
             } catch (RuntimeException ex) {
                 paymentAttemptStore.markFailed(attempt.paymentId(),
                         ex instanceof ApiException ? ex.getMessage() : "Paystack request failed");
                 throw ex;
+            }
+            try {
+                paymentAttemptStore.markPaystackAccepted(attempt.paymentId(), result.providerReference(),
+                        result.authorizationUrl(), result.accessCode(), result.channel());
+            } catch (RuntimeException ex) {
+                paymentAttemptStore.markOutcomeUnknown(attempt.paymentId());
+                throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED,
+                        "Paystack accepted initialization but the response could not be saved; payment status is being checked");
             }
         } else if (!demo) {
             DarajaStkResult result;
@@ -441,6 +448,23 @@ public class CentralizedCheckoutService {
             payment.setConfirmedAt(OffsetDateTime.now());
             payment.getCheckout().setStatus(CheckoutStatus.PAYMENT_FAILED);
         }
+        checkoutPaymentRepository.save(payment);
+        checkoutRepository.save(payment.getCheckout());
+    }
+
+    @Transactional
+    public void markUnknownPaystackAttemptNotFound(String reference) {
+        CheckoutPayment payment = checkoutPaymentRepository.findByProviderReferenceForUpdate(reference).orElse(null);
+        if (payment == null || payment.getProvider() != PaymentProvider.PAYSTACK
+                || payment.getStatus() != CheckoutPaymentStatus.PENDING
+                || payment.getProviderPayload() == null
+                || !"REQUEST_OUTCOME_UNKNOWN".equals(payment.getProviderPayload().get("state"))) {
+            return;
+        }
+        payment.setStatus(CheckoutPaymentStatus.TIMED_OUT);
+        payment.setConfirmedAt(OffsetDateTime.now());
+        payment.setFailureReason("Paystack has no transaction for this initialization reference");
+        payment.getCheckout().setStatus(CheckoutStatus.PAYMENT_FAILED);
         checkoutPaymentRepository.save(payment);
         checkoutRepository.save(payment.getCheckout());
     }

@@ -965,6 +965,11 @@ successful payment is not stranded.
 
 ### Payments
 
+The financial foundation and commission-rule handoff is documented in
+[`docs/financial-ledger-commission.md`](docs/financial-ledger-commission.md).
+It records confirmed non-demo allocations and customer payments in a balanced,
+idempotent ledger, but it does not yet execute supplier payouts.
+
 | Method | Endpoint | Access | Purpose / integration note |
 |---|---|---|---|
 | `POST` | `/api/v1/payments/initiate` | Customer or distributor admin/staff with order access | Start an M-Pesa STK Push; send `orderId`, Kenyan `phoneNumber`, and optional idempotency key |

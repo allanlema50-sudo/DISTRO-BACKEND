@@ -61,6 +61,7 @@ public class PaymentService {
     private final OrderRepository orderRepository;
     private final OrderService orderService;
     private final RestTemplate darajaRestTemplate;
+    private final FinancialLedgerService financialLedgerService;
 
     @Autowired
     public PaymentService(PaymentRepository paymentRepository,
@@ -68,13 +69,15 @@ public class PaymentService {
                           PurchaseOrderSettlementRepository settlementRepository,
                           OrderRepository orderRepository,
                           OrderService orderService,
-                          RestTemplate darajaRestTemplate) {
+                          RestTemplate darajaRestTemplate,
+                          FinancialLedgerService financialLedgerService) {
         this.paymentRepository = paymentRepository;
         this.purchaseOrderRepository = purchaseOrderRepository;
         this.settlementRepository = settlementRepository;
         this.orderRepository = orderRepository;
         this.orderService = orderService;
         this.darajaRestTemplate = darajaRestTemplate;
+        this.financialLedgerService = financialLedgerService;
     }
 
     /** Compatibility constructor for existing customer-order unit fixtures. */
@@ -82,7 +85,7 @@ public class PaymentService {
                           OrderRepository orderRepository,
                           OrderService orderService,
                           RestTemplate darajaRestTemplate) {
-        this(paymentRepository, null, null, orderRepository, orderService, darajaRestTemplate);
+        this(paymentRepository, null, null, orderRepository, orderService, darajaRestTemplate, null);
     }
 
     @Value("${mpesa.base-url}")
@@ -298,6 +301,11 @@ public class PaymentService {
             payment.setConfirmedAt(OffsetDateTime.now());
             paymentRepository.save(payment);
             orderService.confirmPaidOrder(payment.getOrder().getId());
+            if (financialLedgerService != null) {
+                financialLedgerService.recordCapturedPayment(
+                        "CUSTOMER_ORDER_PAYMENT", payment.getId(), payment.getOrder().getOrganization(),
+                        payment.getAmount(), BigDecimal.ZERO, payment.getCurrency(), false);
+            }
         } else {
             payment.setStatus(PaymentStatus.FAILED);
             payment.setFailureReason(callback.getResultDesc());

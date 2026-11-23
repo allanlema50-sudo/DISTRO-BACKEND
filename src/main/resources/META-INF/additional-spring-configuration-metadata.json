@@ -34,6 +34,7 @@
     { "name": "app.orders.max-open-pending-per-customer", "type": "java.lang.Integer", "description": "Maximum open pending orders per customer." },
     { "name": "app.orders.reservation-expiry-scan-ms", "type": "java.lang.Long", "description": "Reservation-expiry scan interval in milliseconds." },
     { "name": "app.orders.reservation-expiry-batch-size", "type": "java.lang.Integer", "description": "Maximum reservations processed per expiry scan." },
+    { "name": "logiflow.commission.default-percent", "type": "java.math.BigDecimal", "description": "Fallback commission percentage used until an effective database commission rule matches." },
     { "name": "mpesa.base-url", "type": "java.lang.String", "description": "M-Pesa API base URL." },
     { "name": "mpesa.consumer-key", "type": "java.lang.String", "description": "M-Pesa consumer key." },
     { "name": "mpesa.consumer-secret", "type": "java.lang.String", "description": "M-Pesa consumer secret." },

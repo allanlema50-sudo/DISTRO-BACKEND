@@ -405,6 +405,42 @@ public class PaystackPaymentService {
         throw new ProviderOutcomeUnknownException("Paystack has not returned the refund reference yet", null);
     }
 
+    public ProviderTransactionPage listTransactions(java.time.OffsetDateTime from,
+                                                     java.time.OffsetDateTime to,
+                                                     int page, int perPage) {
+        requireEnabled();
+        if (from == null || to == null || !from.isBefore(to) || page < 1
+                || perPage < 1 || perPage > 100) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack transaction report filters are invalid");
+        }
+        String path = "/transaction?from=" + encodePath(from.toString())
+                + "&to=" + encodePath(to.toString())
+                + "&page=" + page + "&perPage=" + perPage;
+        JsonNode root = getJson(path, "Paystack transaction list request failed");
+        JsonNode data = root.path("data");
+        if (!data.isArray()) {
+            throw new ProviderOutcomeUnknownException("Paystack transaction list response was incomplete", null);
+        }
+        List<ProviderTransaction> transactions = new ArrayList<>();
+        for (JsonNode item : data) {
+            String reference = item.path("reference").asText("").trim();
+            String status = item.path("status").asText("").trim();
+            if (reference.isBlank() || status.isBlank() || !item.path("amount").canConvertToLong()) {
+                throw new ProviderOutcomeUnknownException("Paystack transaction row is missing required fields", null);
+            }
+            JsonNode id = item.path("id");
+            transactions.add(new ProviderTransaction(id.isMissingNode() ? null : id.asText(), reference,
+                    status, item.path("amount").longValue(), item.path("currency").asText(null),
+                    item.path("paid_at").asText(null)));
+        }
+        JsonNode meta = root.path("meta");
+        int returnedPage = meta.path("page").canConvertToInt() ? meta.path("page").intValue() : page;
+        int returnedPerPage = meta.path("perPage").canConvertToInt()
+                ? meta.path("perPage").intValue() : perPage;
+        long total = meta.path("total").canConvertToLong() ? meta.path("total").longValue() : -1;
+        return new ProviderTransactionPage(transactions, returnedPage, returnedPerPage, total);
+    }
+
     private Verification verification(JsonNode root, boolean transfer) {
         JsonNode data = root.path("data");
         String reference = data.path("reference").asText("");
@@ -483,6 +519,12 @@ public class PaystackPaymentService {
 
     public record Refund(String reference, String providerRefundId, String status,
                          Long amountMinor, String currency) {}
+
+    public record ProviderTransaction(String providerId, String reference, String status,
+                                      long amountMinor, String currency, String paidAt) {}
+
+    public record ProviderTransactionPage(List<ProviderTransaction> transactions,
+                                          int page, int perPage, long total) {}
 
     public record Webhook(String event, String reference, String status, Long amountMinor,
                            String currency, String gatewayResponse, String transferCode,

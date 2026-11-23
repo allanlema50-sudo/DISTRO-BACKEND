@@ -1013,6 +1013,7 @@ Settlement and payout APIs are intentionally Super Admin controlled:
 | `GET` | `/api/v1/admin/financial/disputes?status=AWAITING_MERCHANT_FEEDBACK` | `SUPER_ADMIN` | Review Paystack disputes; supports pagination and optional status filter |
 | `PATCH` | `/api/v1/admin/financial/disputes/{providerDisputeId}/review` | `SUPER_ADMIN` | Add an internal review note; set `clearForSettlement: true` only after Paystack marks the dispute resolved |
 | `GET` | `/api/v1/admin/financial/reconciliation-report?from=2026-11-01T00:00:00Z&to=2026-11-08T00:00:00Z` | `SUPER_ADMIN` | Paginated internal consistency report for Paystack checkouts; date range is required and capped at 31 days |
+| `GET` | `/api/v1/admin/financial/provider-transaction-matches?from=2026-11-01T00:00:00Z&to=2026-11-08T00:00:00Z&page=1&perPage=50` | `SUPER_ADMIN` | Compare a live Paystack transaction-feed page to local payments; flags missing local references or amount/currency/status mismatches |
 
 Paystack callbacks are signature-verified, stored in a durable inbox, and
 acknowledged before background processing. Raw callback bodies are not retained.
@@ -1042,6 +1043,12 @@ dispute remains uncleared. A Super Admin may clear a resolved case for
 settlement only after documenting a review note. This records internal review;
 Paystack remains responsible for provider-side dispute resolution. Transfers
 already initiated before a dispute arrives cannot be recalled by this API.
+
+The reconciliation report checks LogiFlow's own stored data. The separate
+provider transaction match endpoint reads the Paystack transaction feed on
+demand, compares the returned page with local payment references, and limits the
+range to 31 days and page size to 100. It does not persist provider statements
+or discover local payments missing from unrequested provider pages.
 
 The reconciliation report checks persisted payment allocations, balanced
 capture journals, supplier settlement rows, refund state, and dispute review

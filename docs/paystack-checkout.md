@@ -168,8 +168,17 @@ exist, processed refunds agree with the payment status, and disputes have been
 reviewed before payout. A non-empty `issues` array identifies records needing
 attention.
 
-This report reconciles LogiFlow's own stored data. It does not yet import or
-compare Paystack's transaction export or bank settlement statement.
+This report reconciles LogiFlow's own stored data. It does not import a bank
+settlement statement.
+
+`GET /api/v1/admin/financial/provider-transaction-matches?from=<ISO-8601>&to=<ISO-8601>&page=1&perPage=50`
+reads one page from Paystack's transaction-list API and compares each provider
+reference with the matching LogiFlow payment. It flags provider-only
+transactions, amount/currency mismatches, and status mismatches. The date window
+is capped at 31 days and `perPage` at 100. This is a live provider comparison,
+not a stored statement import; page through the full range to review all
+provider transactions. The Paystack secret key must remain configured only on
+the backend.
 
 Transfers use the Paystack balance. The business must complete Paystack's
 transfer/KYC setup and ensure its balance and transfer approval settings are

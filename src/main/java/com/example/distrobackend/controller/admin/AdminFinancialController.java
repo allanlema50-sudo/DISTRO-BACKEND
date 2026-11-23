@@ -14,6 +14,7 @@ import com.example.distrobackend.dto.PaymentRefundResponse;
 import com.example.distrobackend.dto.PaymentDisputeResponse;
 import com.example.distrobackend.dto.UpdatePaymentDisputeReviewRequest;
 import com.example.distrobackend.dto.FinancialReconciliationItem;
+import com.example.distrobackend.dto.ProviderTransactionMatchPage;
 import com.example.distrobackend.Domain.enums.PaymentDisputeStatus;
 import com.example.distrobackend.Domain.enums.SupplierSettlementStatus;
 import com.example.distrobackend.Domain.enums.ProviderWebhookStatus;
@@ -21,6 +22,7 @@ import com.example.distrobackend.service.ProviderWebhookInboxService;
 import com.example.distrobackend.service.PaymentRefundService;
 import com.example.distrobackend.service.PaymentDisputeService;
 import com.example.distrobackend.service.FinancialReconciliationReportService;
+import com.example.distrobackend.service.PaystackTransactionMatchingService;
 import com.example.distrobackend.service.PaystackSettlementService;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.service.CommissionRuleService;
@@ -51,6 +53,7 @@ public class AdminFinancialController {
     private final PaymentRefundService paymentRefundService;
     private final PaymentDisputeService paymentDisputeService;
     private final FinancialReconciliationReportService reconciliationReportService;
+    private final PaystackTransactionMatchingService paystackTransactionMatchingService;
 
     @GetMapping("/commission-rules")
     public List<CommissionRuleResponse> commissionRules(@AuthenticationPrincipal AuthenticatedUser actor) {
@@ -186,5 +189,15 @@ public class AdminFinancialController {
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime to,
             Pageable pageable) {
         return reconciliationReportService.report(actor, from, to, pageable);
+    }
+
+    @GetMapping("/provider-transaction-matches")
+    public ProviderTransactionMatchPage providerTransactionMatches(
+            @AuthenticationPrincipal AuthenticatedUser actor,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime to,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "50") int perPage) {
+        return paystackTransactionMatchingService.compare(actor, from, to, page, perPage);
     }
 }

@@ -20,6 +20,9 @@ public record FinancialReconciliationItem(
         int unbalancedCaptureJournalCount,
         int settlementCount,
         BigDecimal settledAmount,
+        int payoutJournalCount,
+        int reversedPayoutJournalCount,
+        int unbalancedPayoutJournalCount,
         String latestRefundStatus,
         int disputeCount,
         List<String> issues

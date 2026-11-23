@@ -16,8 +16,15 @@ public interface LedgerJournalRepository extends JpaRepository<LedgerJournal, UU
                                                                       String eventType);
 
     @EntityGraph(attributePaths = "entries")
+    java.util.List<LedgerJournal> findBySourceTypeAndSourceIdOrderByCreatedAtAsc(String sourceType, UUID sourceId);
+
+    @EntityGraph(attributePaths = "entries")
     java.util.List<LedgerJournal> findBySourceTypeAndSourceIdInAndEventTypeIn(
             String sourceType, java.util.Collection<UUID> sourceIds, java.util.Collection<String> eventTypes);
+
+    @EntityGraph(attributePaths = "entries")
+    java.util.List<LedgerJournal> findBySourceTypeAndSourceIdIn(
+            String sourceType, java.util.Collection<UUID> sourceIds);
 
     @EntityGraph(attributePaths = {"entries", "entries.account", "entries.account.organization"})
     @Query("select j from LedgerJournal j order by j.createdAt desc, j.id desc")

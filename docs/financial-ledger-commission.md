@@ -53,12 +53,30 @@ Create-rule example:
 
 Set `organizationType` to `null` for a global rule. Rules may not overlap for the same currency and scope. A more specific organization-type rule wins over a global rule.
 
+## Supplier payout accounting
+
+When Paystack confirms a supplier transfer, LogiFlow posts a balanced journal:
+
+```text
+DEBIT  organization payable
+CREDIT provider clearing
+```
+
+If Paystack later reverses that transfer, LogiFlow writes the opposite entries
+as a separate reversal journal. Replayed provider events do not duplicate an
+open payout posting. The Super Admin reconciliation report flags missing or
+unbalanced payout journals for settled transfers and checks reversal state.
+
+These entries record the provider-confirmed movement; they do not initiate a
+transfer or independently prove bank statement settlement.
+
 ## What is deliberately not included yet
 
 The settlement branch adds Paystack beneficiary onboarding, Super Admin-reviewed
 batches, retry-safe transfer references, and signed transfer webhook handling.
 `PAYSTACK_TRANSFERS_ENABLED` remains separate from collection and defaults to
-false. Refunds, disputes, provider reconciliation reports, and a durable
-outbox/worker for deferred transfer attempts remain follow-up work.
+false. Partial refunds, recovery of funds after a supplier payout, provider
+statement import, and a durable outbox/worker for deferred transfer attempts
+remain follow-up work.
 
 No Tingg, M-Pesa, PesaLink, card, or bank API key is created by this branch. Provider credentials must be added later as deployment secrets, never committed to `.env.example` or source control.

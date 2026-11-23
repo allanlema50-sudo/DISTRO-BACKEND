@@ -968,7 +968,8 @@ successful payment is not stranded.
 The financial foundation and commission-rule handoff is documented in
 [`docs/financial-ledger-commission.md`](docs/financial-ledger-commission.md).
 It records confirmed non-demo allocations and customer payments in a balanced,
-idempotent ledger, but it does not yet execute supplier payouts.
+idempotent ledger. Confirmed Paystack supplier transfers also post a balanced
+payout journal; provider-reversed transfers post a matching reversal journal.
 
 | Method | Endpoint | Access | Purpose / integration note |
 |---|---|---|---|
@@ -1051,10 +1052,10 @@ range to 31 days and page size to 100. It does not persist provider statements
 or discover local payments missing from unrequested provider pages.
 
 The reconciliation report checks persisted payment allocations, balanced
-capture journals, supplier settlement rows, refund state, and dispute review
-state. It reports LogiFlow database consistency; it is not a Paystack statement
-or bank-settlement reconciliation. The API caps reports to 31 days and 100 rows
-per page.
+capture and payout journals, supplier settlement rows, refund state, and
+dispute review state. It reports LogiFlow database consistency; it is not a
+Paystack statement or bank-settlement reconciliation. The API caps reports to
+31 days and 100 rows per page.
 
 Typical payment status values are `INITIATING`, `PENDING`, `CONFIRMED`,
 `RECONCILED`, `FAILED`, and `REVERSED`. A successful STK response means the

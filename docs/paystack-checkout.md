@@ -168,8 +168,10 @@ exist, processed refunds agree with the payment status, and disputes have been
 reviewed before payout. A non-empty `issues` array identifies records needing
 attention.
 
-This report reconciles LogiFlow's own stored data. It does not import a bank
-settlement statement.
+This report reconciles LogiFlow's own stored data, including whether confirmed
+supplier settlements have balanced payout journals and whether provider-
+reversed transfers have corresponding reversal journals. It does not import a
+bank settlement statement.
 
 `GET /api/v1/admin/financial/provider-transaction-matches?from=<ISO-8601>&to=<ISO-8601>&page=1&perPage=50`
 reads one page from Paystack's transaction-list API and compares each provider

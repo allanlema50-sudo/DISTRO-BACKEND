@@ -35,8 +35,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.OffsetDateTime;
-import java.util.ArrayList;
-import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -84,6 +83,9 @@ public class FinancialReconciliationReportService {
         List<LedgerJournal> journals = allocationIds.isEmpty() ? List.of()
                 : journalRepository.findBySourceTypeAndSourceIdInAndEventTypeIn(
                         "CHECKOUT_ALLOCATION", allocationIds, LEDGER_EVENTS);
+        List<UUID> settlementIds = settlements.stream().map(SupplierSettlement::getId).toList();
+        List<LedgerJournal> payoutJournals = settlementIds.isEmpty() ? List.of()
+                : journalRepository.findBySourceTypeAndSourceIdIn("SUPPLIER_SETTLEMENT", settlementIds);
 
         Map<UUID, List<PaymentAllocation>> allocationsByPayment = allocations.stream().collect(
                 Collectors.groupingBy(item -> item.getPayment().getId()));
@@ -95,17 +97,21 @@ public class FinancialReconciliationReportService {
                 Collectors.groupingBy(item -> item.getPayment().getId()));
         Map<UUID, List<LedgerJournal>> journalsByAllocation = journals.stream().collect(
                 Collectors.groupingBy(LedgerJournal::getSourceId));
+        Map<UUID, List<LedgerJournal>> journalsBySettlement = payoutJournals.stream().collect(
+                Collectors.groupingBy(LedgerJournal::getSourceId));
         return payments.map(payment -> build(payment,
                 allocationsByPayment.getOrDefault(payment.getId(), List.of()),
                 settlementsByPayment.getOrDefault(payment.getId(), List.of()),
                 refundsByPayment.getOrDefault(payment.getId(), List.of()),
-                disputesByPayment.getOrDefault(payment.getId(), List.of()), journalsByAllocation));
+                disputesByPayment.getOrDefault(payment.getId(), List.of()), journalsByAllocation,
+                journalsBySettlement));
     }
 
     private FinancialReconciliationItem build(CheckoutPayment payment, List<PaymentAllocation> allocations,
                                                List<SupplierSettlement> settlements, List<PaymentRefund> refunds,
                                                List<PaymentDispute> disputes,
-                                               Map<UUID, List<LedgerJournal>> journalsByAllocation) {
+                                               Map<UUID, List<LedgerJournal>> journalsByAllocation,
+                                               Map<UUID, List<LedgerJournal>> journalsBySettlement) {
         BigDecimal allocationTotal = allocations.stream().map(PaymentAllocation::getGrossAmount)
                 .filter(java.util.Objects::nonNull).reduce(ZERO, BigDecimal::add);
         BigDecimal settledTotal = settlements.stream()
@@ -132,16 +138,60 @@ public class FinancialReconciliationReportService {
                 if (debits.compareTo(credits) != 0 || debits.signum() <= 0) unbalancedCount++;
             }
         }
+        int payoutJournalCount = 0;
+        int reversedPayoutJournalCount = 0;
+        int unbalancedPayoutJournalCount = 0;
+        Set<String> issues = new LinkedHashSet<>();
+        for (SupplierSettlement settlement : settlements) {
+            List<LedgerJournal> settlementJournals = journalsBySettlement
+                    .getOrDefault(settlement.getId(), List.of());
+            Set<String> reversedEvents = settlementJournals.stream().map(LedgerJournal::getEventType)
+                    .filter(event -> event.startsWith("PAYOUT_REVERSED_"))
+                    .collect(Collectors.toSet());
+            List<LedgerJournal> payoutEvents = settlementJournals.stream()
+                    .filter(journal -> journal.getEventType().startsWith("PAYOUT_SETTLED_"))
+                    .toList();
+            long openPayouts = payoutEvents.stream().filter(journal -> !reversedEvents.contains(
+                    journal.getEventType().replace("PAYOUT_SETTLED_", "PAYOUT_REVERSED_"))).count();
+            payoutJournalCount += payoutEvents.size();
+            reversedPayoutJournalCount += reversedEvents.size();
+            if (settlement.getStatus() == SupplierSettlementStatus.SETTLED && openPayouts != 1) {
+                issues.add("SETTLED_PAYOUT_LEDGER_COUNT_MISMATCH");
+            }
+            if (settlement.getStatus() == SupplierSettlementStatus.REVERSED
+                    && (payoutEvents.isEmpty() || reversedEvents.size() != payoutEvents.size() || openPayouts != 0)) {
+                issues.add("REVERSED_PAYOUT_LEDGER_MISMATCH");
+            }
+            for (LedgerJournal journal : settlementJournals) {
+                if (!journal.getEventType().startsWith("PAYOUT_SETTLED_")
+                        && !journal.getEventType().startsWith("PAYOUT_REVERSED_")) continue;
+                BigDecimal debits = journal.getEntries().stream()
+                        .filter(entry -> entry.getDirection() == LedgerEntryDirection.DEBIT)
+                        .map(LedgerEntry::getAmount).reduce(ZERO, BigDecimal::add);
+                BigDecimal credits = journal.getEntries().stream()
+                        .filter(entry -> entry.getDirection() == LedgerEntryDirection.CREDIT)
+                        .map(LedgerEntry::getAmount).reduce(ZERO, BigDecimal::add);
+                if (debits.compareTo(credits) != 0 || debits.signum() <= 0) {
+                    unbalancedPayoutJournalCount++;
+                }
+                if (journal.getEventType().startsWith("PAYOUT_SETTLED_")
+                        && (settlement.getAmount() == null || debits.compareTo(settlement.getAmount()) != 0
+                        || settlement.getCurrency() == null
+                        || !settlement.getCurrency().equalsIgnoreCase(journal.getCurrency()))) {
+                    issues.add("PAYOUT_JOURNAL_AMOUNT_MISMATCH");
+                }
+            }
+        }
         PaymentRefund latestRefund = refunds.stream().max(java.util.Comparator.comparing(
                 PaymentRefund::getCreatedAt, java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder())))
                 .orElse(null);
-        List<String> issues = new ArrayList<>();
         if (allocations.isEmpty()) issues.add("MISSING_ALLOCATIONS");
         if (!allocations.isEmpty() && allocationTotal.compareTo(payment.getAmount()) != 0) {
             issues.add("ALLOCATION_TOTAL_MISMATCH");
         }
         if (captureCount != allocations.size()) issues.add("CAPTURE_JOURNAL_COUNT_MISMATCH");
         if (unbalancedCount > 0) issues.add("UNBALANCED_CAPTURE_JOURNAL");
+        if (unbalancedPayoutJournalCount > 0) issues.add("UNBALANCED_PAYOUT_JOURNAL");
         if (!allocations.isEmpty() && settlements.size() != allocations.size()) {
             issues.add("SETTLEMENT_COUNT_MISMATCH");
         }
@@ -163,7 +213,8 @@ public class FinancialReconciliationReportService {
                 payment.getProviderReference(), payment.getStatus().name(), payment.getAmount(),
                 payment.getCurrency(), payment.getInitiatedAt(), allocationTotal, allocations.size(),
                 captureCount, refundJournalCount, unbalancedCount, settlements.size(), settledTotal,
-                latestRefund == null ? null : latestRefund.getStatus().name(), disputes.size(), issues);
+                payoutJournalCount, reversedPayoutJournalCount, unbalancedPayoutJournalCount,
+                latestRefund == null ? null : latestRefund.getStatus().name(), disputes.size(), List.copyOf(issues));
     }
 
     private static void requireSuperAdmin(AuthenticatedUser actor) {

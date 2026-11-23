@@ -36,7 +36,9 @@ public class CheckoutPayment {
  @JdbcTypeCode(SqlTypes.JSON) @Column(name="provider_payload", columnDefinition="jsonb") private Map<String,Object> providerPayload;
  @Column(name="initiated_at", nullable=false) private OffsetDateTime initiatedAt;
  @Column(name="confirmed_at") private OffsetDateTime confirmedAt;
- @Column(name="provider_status_checked_at") private OffsetDateTime providerStatusCheckedAt;
+ @Column(name="provider_verification_attempts", nullable=false) private int providerVerificationAttempts;
+ @Column(name="provider_next_verification_at") private OffsetDateTime providerNextVerificationAt;
+ @Column(name="provider_last_verification_error", columnDefinition="TEXT") private String providerLastVerificationError;
  @CreationTimestamp @Column(name="created_at", nullable=false, updatable=false) private OffsetDateTime createdAt;
  @UpdateTimestamp @Column(name="updated_at", nullable=false) private OffsetDateTime updatedAt;
  @Version @Column(name="version", nullable=false) private long version;

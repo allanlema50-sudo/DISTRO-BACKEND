@@ -364,7 +364,7 @@ public class PaymentService {
             orderService.confirmPaidOrder(orderId);
             if (financialLedgerService != null) {
                 financialLedgerService.recordCapturedPayment(
-                        "CUSTOMER_ORDER_PAYMENT", payment.getId(), payment.getOrder().getOrganization(),
+                        "CUSTOMER_ORDER_PAYMENT", payment.getId(), order.getOrganization(),
                         payment.getAmount(), BigDecimal.ZERO, payment.getCurrency(), false);
             }
         } else if (isConfiguredFinalFailureCode(result.resultCode())) {

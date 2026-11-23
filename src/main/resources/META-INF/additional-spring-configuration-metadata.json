@@ -35,6 +35,7 @@
     { "name": "app.orders.reservation-expiry-scan-ms", "type": "java.lang.Long", "description": "Reservation-expiry scan interval in milliseconds." },
     { "name": "app.orders.reservation-expiry-batch-size", "type": "java.lang.Integer", "description": "Maximum reservations processed per expiry scan." },
     { "name": "logiflow.commission.default-percent", "type": "java.math.BigDecimal", "description": "Fallback commission percentage used until an effective database commission rule matches." },
+    { "name": "purchase-order.fulfilment-recovery-scan-ms", "type": "java.lang.Long", "description": "Interval in milliseconds for retrying paid checkout shipment preparation." },
     { "name": "mpesa.base-url", "type": "java.lang.String", "description": "M-Pesa API base URL." },
     { "name": "mpesa.consumer-key", "type": "java.lang.String", "description": "M-Pesa consumer key." },
     { "name": "mpesa.consumer-secret", "type": "java.lang.String", "description": "M-Pesa consumer secret." },
@@ -50,13 +51,15 @@
     { "name": "mpesa.read-timeout", "type": "java.time.Duration", "description": "M-Pesa read timeout." }
     ,{ "name": "paystack.enabled", "type": "java.lang.Boolean", "description": "Enable Paystack hosted checkout and webhook processing." }
     ,{ "name": "paystack.transfers-enabled", "type": "java.lang.Boolean", "description": "Enable Paystack beneficiary creation and supplier transfers separately from collection." }
+    ,{ "name": "paystack.mode", "type": "java.lang.String", "description": "Paystack credential environment: TEST requires an sk_test_ key; LIVE requires an sk_live_ key." }
     ,{ "name": "paystack.base-url", "type": "java.lang.String", "description": "Paystack API base URL; production uses https://api.paystack.co." }
     ,{ "name": "paystack.secret-key", "type": "java.lang.String", "description": "Paystack server-side secret key." }
     ,{ "name": "paystack.webhook-secret", "type": "java.lang.String", "description": "Paystack webhook signing secret." }
-    ,{ "name": "paystack.reconciliation.scan-ms", "type": "java.lang.Long", "description": "Delay between Paystack payment and transfer reconciliation scans in milliseconds." }
-    ,{ "name": "paystack.reconciliation.batch-size", "type": "java.lang.Integer", "description": "Maximum Paystack payment or transfer references reconciled in one scan." }
-    ,{ "name": "paystack.reconciliation.initial-delay-ms", "type": "java.lang.Long", "description": "Minimum age before an unknown Paystack checkout initialization is verified." }
-    ,{ "name": "paystack.reconciliation.repeat-delay-ms", "type": "java.lang.Long", "description": "Minimum delay between repeated Paystack status verification requests." }
     ,{ "name": "paystack.callback-url", "type": "java.lang.String", "description": "Optional Paystack browser redirect URL." }
+    ,{ "name": "paystack.reconciliation-scan-ms", "type": "java.lang.Long", "description": "Interval in milliseconds for verifying unresolved Paystack checkout payments." }
+    ,{ "name": "paystack.settlement.reconciliation.scan-ms", "type": "java.lang.Long", "description": "Delay between Paystack supplier transfer verification scans in milliseconds." }
+    ,{ "name": "paystack.settlement.reconciliation.batch-size", "type": "java.lang.Integer", "description": "Maximum supplier transfers checked per reconciliation scan." }
+    ,{ "name": "paystack.settlement.reconciliation.initial-delay-ms", "type": "java.lang.Long", "description": "Minimum age before an ambiguous supplier transfer is verified." }
+    ,{ "name": "paystack.settlement.reconciliation.repeat-delay-ms", "type": "java.lang.Long", "description": "Minimum delay between repeated supplier transfer verification requests." }
   ]
 }

@@ -14,16 +14,26 @@ Keep these values in Render or another secret manager, not in Git:
 ```dotenv
 PAYSTACK_ENABLED=true
 PAYSTACK_TRANSFERS_ENABLED=false
+PAYSTACK_MODE=test
 PAYSTACK_BASE_URL=https://api.paystack.co
 PAYSTACK_SECRET_KEY=sk_test_...
 PAYSTACK_WEBHOOK_SECRET=whsec_...
 PAYSTACK_CALLBACK_URL=https://your-frontend.example/payments/paystack/complete
+PAYSTACK_RECONCILIATION_SCAN_MS=60000
+PAYSTACK_SETTLEMENT_RECONCILIATION_SCAN_MS=60000
+PAYSTACK_SETTLEMENT_RECONCILIATION_BATCH_SIZE=100
+PAYSTACK_SETTLEMENT_RECONCILIATION_INITIAL_DELAY_MS=300000
+PAYSTACK_SETTLEMENT_RECONCILIATION_REPEAT_DELAY_MS=300000
 ```
 
 The application refuses to start with Paystack enabled unless the secret key
-and webhook signing secret are present. The API host is restricted to
-`https://api.paystack.co`. Use test keys until the full payment and settlement
-workflow has been accepted.
+and webhook signing secret are present. `PAYSTACK_MODE=test` requires an
+`sk_test_` key, while `PAYSTACK_MODE=live` requires an `sk_live_` key. The API
+host is restricted to `https://api.paystack.co`; Paystack selects test or live
+transactions from the key. Test mode is suitable for an isolated staging
+deployment and database. Do not run test transactions against production data:
+the backend still records a successful test webhook as paid and starts normal
+fulfilment.
 
 ## Checkout flow
 
@@ -39,6 +49,19 @@ workflow has been accepted.
    currency, and processes the event idempotently.
 6. Only `charge.success` creates allocations and marks the checkout paid.
    Failed or mismatched events never release stock or create a payable amount.
+7. If the initialization response or webhook is missed, a scheduled verifier
+   checks Paystack by the server-generated reference. It accepts only a verified
+   matching amount, currency, and reference. Unresolved attempts remain blocked
+   from starting another charge and are retried with backoff. A Paystack
+   initialization whose outcome was unknown and whose reference remains absent
+   for ten minutes is timed out; the backend never returned its checkout URL to
+   the buyer. Verified failed or abandoned attempts also become terminal.
+
+`PAYSTACK_CALLBACK_URL` is only a browser redirect for the user experience; a
+user reaching it does not prove payment. The backend changes payment state
+from signed webhooks and server-side verification. Direct `MPESA` checkout
+uses Daraja, while `PAYSTACK_MPESA` uses Paystack's mobile-money channel. Each
+payment attempt selects one provider; do not start both for the same checkout.
 
 Example payment request:
 
@@ -87,11 +110,10 @@ enable payouts. After Paystack approves transfers, set
    demo, already batched, unpaid, or beneficiary-less settlements.
 4. A Super Admin executes the approved batch. Each transfer keeps one stable
    reference. If the API response is ambiguous, LogiFlow does not start a new
-   transfer; a scheduled reconciliation job verifies that same reference with
-   Paystack. It updates the settlement from the provider's verified status, or
-   marks it failed if Paystack confirms that no transfer exists for the
-   reference. A failed settlement can be retried only with its original
-   reference.
+   transfer. A scheduled reconciliation job verifies that same reference with
+   Paystack, updates the settlement from the provider's verified status, or
+   marks it failed if Paystack confirms no transfer exists. Operators can then
+   retry a definitively failed transfer only with its original reference.
 5. Signed `transfer.success`, `transfer.failed`, and `transfer.reversed`
    webhooks also update the settlement and batch status. The reconciliation
    job provides recovery if a webhook is delayed or lost.
@@ -103,12 +125,15 @@ second payment. A confirmed success or failure is applied through the same
 idempotent processing path as a webhook. A reference that Paystack confirms is
 absent is timed out, allowing the buyer to try again.
 
-Reconciliation cadence is controlled by `PAYSTACK_RECONCILIATION_SCAN_MS`,
-`PAYSTACK_RECONCILIATION_BATCH_SIZE`,
-`PAYSTACK_RECONCILIATION_INITIAL_DELAY_MS`, and
-`PAYSTACK_RECONCILIATION_REPEAT_DELAY_MS`. The default initial and repeat
-delays are five minutes. Provider timeouts remain unresolved and are queried
-again; they never trigger a transfer under a new reference.
+Checkout payment verification cadence is controlled by
+`PAYSTACK_RECONCILIATION_SCAN_MS`. Supplier transfer reconciliation has separate
+settings: `PAYSTACK_SETTLEMENT_RECONCILIATION_SCAN_MS`,
+`PAYSTACK_SETTLEMENT_RECONCILIATION_BATCH_SIZE`,
+`PAYSTACK_SETTLEMENT_RECONCILIATION_INITIAL_DELAY_MS`, and
+`PAYSTACK_SETTLEMENT_RECONCILIATION_REPEAT_DELAY_MS`. The default initial and
+repeat delays are five minutes. Provider timeouts remain unresolved and are
+queried again; they never trigger a transfer under a new reference. Transfer
+reconciliation runs only when `PAYSTACK_TRANSFERS_ENABLED=true`.
 
 Transfers use the Paystack balance. The business must complete Paystack's
 transfer/KYC setup and ensure its balance and transfer approval settings are

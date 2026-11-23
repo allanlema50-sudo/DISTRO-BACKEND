@@ -30,15 +30,13 @@ class CommissionRuleServiceTest {
     @Mock private CommissionRuleRepository ruleRepository;
     @Mock private UserRepository userRepository;
     @Mock private AuditLogRepository auditLogRepository;
-    @Mock private PostgresTransactionLockService transactionLockService;
 
     private CommissionRuleService service;
     private AuthenticatedUser admin;
 
     @BeforeEach
     void setUp() {
-        service = new CommissionRuleService(ruleRepository, userRepository, auditLogRepository,
-                transactionLockService);
+        service = new CommissionRuleService(ruleRepository, userRepository, auditLogRepository);
         ReflectionTestUtils.setField(service, "defaultRatePercent", new BigDecimal("5.00"));
         admin = new AuthenticatedUser(UUID.randomUUID(), UserRole.SUPER_ADMIN, null, null,
                 java.time.Instant.now().plusSeconds(300));

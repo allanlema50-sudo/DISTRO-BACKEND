@@ -18,7 +18,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 
 /** Commits checkout payment-attempt state independently of Daraja network calls. */
@@ -85,6 +84,15 @@ public class CheckoutPaymentAttemptStore {
         payment.setMpesaMerchantRequestId(merchantRequestId);
         payment.setProviderReference(checkoutRequestId);
         payment.setProviderPayload(Map.of("responseDescription", responseDescription));
+        payment.setProviderNextVerificationAt(null);
+        checkoutPaymentRepository.saveAndFlush(payment);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void prepareDaraja(UUID paymentId) {
+        CheckoutPayment payment = requirePayment(paymentId);
+        payment.setProvider(PaymentProvider.DARAJA);
+        payment.setProviderPayload(Map.of("provider", PaymentProvider.DARAJA.name(), "state", "INITIALIZATION_STARTED"));
         checkoutPaymentRepository.saveAndFlush(payment);
     }
 
@@ -94,6 +102,9 @@ public class CheckoutPaymentAttemptStore {
         payment.setProvider(PaymentProvider.PAYSTACK);
         payment.setProviderReference(providerReference);
         payment.setProviderPayload(Map.of("provider", PaymentProvider.PAYSTACK.name(), "state", "INITIALIZATION_STARTED"));
+        payment.setProviderVerificationAttempts(0);
+        payment.setProviderNextVerificationAt(OffsetDateTime.now().plusMinutes(1));
+        payment.setProviderLastVerificationError(null);
         checkoutPaymentRepository.saveAndFlush(payment);
     }
 
@@ -101,54 +112,80 @@ public class CheckoutPaymentAttemptStore {
     public void markPaystackAccepted(UUID paymentId, String providerReference,
                                      String authorizationUrl, String accessCode,
                                      String channel) {
-        CheckoutPayment payment = requirePayment(paymentId);
+        CheckoutPayment payment = checkoutPaymentRepository.findByIdForUpdate(paymentId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Checkout payment not found"));
+        if (payment.getStatus() != CheckoutPaymentStatus.PENDING
+                && payment.getStatus() != CheckoutPaymentStatus.UNKNOWN) return;
         payment.setProvider(PaymentProvider.PAYSTACK);
         payment.setProviderReference(providerReference);
         payment.setProviderAuthorizationUrl(authorizationUrl);
         payment.setProviderAccessCode(accessCode);
         payment.setProviderPayload(Map.of("provider", PaymentProvider.PAYSTACK.name(),
                 "channel", channel, "state", "ACCEPTED"));
+        payment.setProviderNextVerificationAt(OffsetDateTime.now().plusMinutes(2));
+        payment.setProviderLastVerificationError(null);
         checkoutPaymentRepository.saveAndFlush(payment);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void markOutcomeUnknown(UUID paymentId) {
-        CheckoutPayment payment = requirePayment(paymentId);
-        // Leave this attempt PENDING so retries cannot create another STK push.
-        // The callback URL carries paymentId and can reconcile it if Daraja
-        // accepted the request before the HTTP response timed out.
+        CheckoutPayment payment = checkoutPaymentRepository.findByIdForUpdate(paymentId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Checkout payment not found"));
+        if (payment.getStatus() != CheckoutPaymentStatus.PENDING
+                && payment.getStatus() != CheckoutPaymentStatus.UNKNOWN) return;
+        // UNKNOWN blocks a second charge until provider verification resolves it.
+        payment.setStatus(CheckoutPaymentStatus.UNKNOWN);
         payment.setProviderPayload(Map.of("provider", payment.getProvider() == null ? "UNKNOWN" : payment.getProvider().name(),
                 "state", "REQUEST_OUTCOME_UNKNOWN"));
+        payment.setProviderNextVerificationAt(OffsetDateTime.now().plusMinutes(1));
         checkoutPaymentRepository.saveAndFlush(payment);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public Optional<String> claimUnknownPaystackReference(UUID paymentId, OffsetDateTime initiatedBefore,
-                                                          OffsetDateTime checkedBefore,
-                                                          OffsetDateTime checkedAt) {
+    public void schedulePaystackVerificationRetry(UUID paymentId, String reason) {
         CheckoutPayment payment = checkoutPaymentRepository.findByIdForUpdate(paymentId).orElse(null);
         if (payment == null || payment.getProvider() != PaymentProvider.PAYSTACK
-                || payment.getStatus() != CheckoutPaymentStatus.PENDING
-                || payment.getProviderReference() == null
-                || payment.getInitiatedAt().isAfter(initiatedBefore)
-                || payment.getProviderStatusCheckedAt() != null
-                && payment.getProviderStatusCheckedAt().isAfter(checkedBefore)
-                || payment.getProviderPayload() == null
-                || !"REQUEST_OUTCOME_UNKNOWN".equals(payment.getProviderPayload().get("state"))) {
-            return Optional.empty();
-        }
-        payment.setProviderStatusCheckedAt(checkedAt);
+                || (payment.getStatus() != CheckoutPaymentStatus.PENDING
+                && payment.getStatus() != CheckoutPaymentStatus.UNKNOWN)) return;
+        int attempts = payment.getProviderVerificationAttempts() + 1;
+        payment.setProviderVerificationAttempts(attempts);
+        long delaySeconds = Math.min(21_600L, 60L << Math.min(attempts, 8));
+        payment.setProviderNextVerificationAt(OffsetDateTime.now().plusSeconds(delaySeconds));
+        payment.setProviderLastVerificationError(reason == null ? "Provider status is not final" : reason);
         checkoutPaymentRepository.saveAndFlush(payment);
-        return Optional.of(payment.getProviderReference());
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean expireUninitializedPaystackAttempt(UUID paymentId, OffsetDateTime olderThan) {
+        CheckoutPayment payment = checkoutPaymentRepository.findByIdForUpdate(paymentId).orElse(null);
+        if (payment == null || payment.getProvider() != PaymentProvider.PAYSTACK
+                || payment.getStatus() != CheckoutPaymentStatus.UNKNOWN
+                || payment.getInitiatedAt() == null || !payment.getInitiatedAt().isBefore(olderThan)
+                || payment.getProviderPayload() == null
+                || !"REQUEST_OUTCOME_UNKNOWN".equals(payment.getProviderPayload().get("state"))) return false;
+        payment.setStatus(CheckoutPaymentStatus.TIMED_OUT);
+        payment.setConfirmedAt(OffsetDateTime.now());
+        payment.setFailureReason("Paystack did not create a transaction for the unresolved initialization");
+        payment.setProviderNextVerificationAt(null);
+        payment.getCheckout().setStatus(com.example.distrobackend.Domain.enums.CheckoutStatus.PAYMENT_FAILED);
+        checkoutPaymentRepository.saveAndFlush(payment);
+        checkoutRepository.save(payment.getCheckout());
+        return true;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void markFailed(UUID paymentId, String reason) {
-        CheckoutPayment payment = requirePayment(paymentId);
+        CheckoutPayment payment = checkoutPaymentRepository.findByIdForUpdate(paymentId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Checkout payment not found"));
+        if (payment.getStatus() != CheckoutPaymentStatus.PENDING
+                && payment.getStatus() != CheckoutPaymentStatus.UNKNOWN) return;
         payment.setStatus(CheckoutPaymentStatus.FAILED);
         payment.setFailureReason(reason);
         payment.setConfirmedAt(OffsetDateTime.now());
+        payment.setProviderNextVerificationAt(null);
+        payment.getCheckout().setStatus(com.example.distrobackend.Domain.enums.CheckoutStatus.PAYMENT_FAILED);
         checkoutPaymentRepository.saveAndFlush(payment);
+        checkoutRepository.save(payment.getCheckout());
     }
 
     private CheckoutPayment requirePayment(UUID paymentId) {

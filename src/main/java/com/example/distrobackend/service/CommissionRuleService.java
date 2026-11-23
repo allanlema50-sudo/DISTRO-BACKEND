@@ -16,6 +16,7 @@ import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -34,7 +35,6 @@ public class CommissionRuleService {
     private final CommissionRuleRepository commissionRuleRepository;
     private final UserRepository userRepository;
     private final AuditLogRepository auditLogRepository;
-    private final PostgresTransactionLockService transactionLockService;
 
     @Value("${logiflow.commission.default-percent:5.00}")
     private BigDecimal defaultRatePercent;
@@ -59,9 +59,6 @@ public class CommissionRuleService {
         requirePlatformAdmin(actor);
         String currency = normalizeCurrency(request.currency());
         validateWindow(request.effectiveFrom(), request.effectiveUntil());
-        // Lock even when no matching rule exists; row locks alone cannot
-        // serialize concurrent first-time rules for a currency.
-        transactionLockService.lock("commission-rule:" + currency);
         List<CommissionRule> existingRules = commissionRuleRepository.findActiveForUpdate(currency);
         if (existingRules.stream().anyMatch(existing -> overlaps(existing, request, currency))) {
             throw new ApiException(ErrorCode.CONFLICT,
@@ -76,7 +73,13 @@ public class CommissionRuleService {
         rule.setEffectiveFrom(request.effectiveFrom());
         rule.setEffectiveUntil(request.effectiveUntil());
         rule.setCreatedBy(userRepository.getReferenceById(actor.userId()));
-        CommissionRule saved = commissionRuleRepository.saveAndFlush(rule);
+        CommissionRule saved;
+        try {
+            saved = commissionRuleRepository.saveAndFlush(rule);
+        } catch (DataIntegrityViolationException ex) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "An active commission rule already covers the requested currency, organization type and period");
+        }
         audit(actor, "COMMISSION_RULE_CREATED", saved.getId(), Map.of(
                 "currency", currency,
                 "ratePercent", saved.getRatePercent().toPlainString(),

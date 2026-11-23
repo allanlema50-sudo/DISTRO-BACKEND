@@ -183,7 +183,7 @@ public class PurchaseOrderShipmentService {
         }
     }
 
-    @Transactional
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onPurchaseOrderPaymentVerified(PurchaseOrderPaymentVerifiedEvent event) {
         if (event.checkoutPaymentId() != null) {

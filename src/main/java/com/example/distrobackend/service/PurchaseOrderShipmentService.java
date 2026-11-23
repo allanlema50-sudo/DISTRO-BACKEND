@@ -3,6 +3,7 @@ package com.example.distrobackend.service;
 import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.CheckoutItem;
 import com.example.distrobackend.Domain.entity.PurchaseOrder;
+import com.example.distrobackend.Domain.entity.CheckoutPayment;
 import com.example.distrobackend.Domain.entity.PurchaseOrderItem;
 import com.example.distrobackend.Domain.entity.PurchaseOrderShipment;
 import com.example.distrobackend.Domain.entity.PurchaseOrderShipmentReceiptLine;
@@ -64,6 +65,74 @@ public class PurchaseOrderShipmentService {
     private final StockMovementRepository stockMovementRepository;
     private final UserRepository userRepository;
     private final NotificationService notificationService;
+
+    /**
+     * Creates the existing manufacturer shipment record once a centralized
+     * checkout is authoritatively confirmed. The payment transition and all
+     * manufacturer-specific ready shipments share the caller's transaction.
+     */
+    @Transactional
+    public void markCheckoutOrdersReady(CheckoutPayment payment) {
+        if (payment == null || payment.getStatus() != com.example.distrobackend.Domain.enums.CheckoutPaymentStatus.SUCCESS
+                || payment.getCheckout() == null) {
+            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                    "Only a confirmed checkout payment can make supplier orders dispatchable");
+        }
+        List<PurchaseOrder> orders = purchaseOrderRepository.findByCheckout_Id(payment.getCheckout().getId());
+        if (orders.isEmpty()) {
+            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT, "Confirmed checkout has no supplier purchase orders");
+        }
+        for (PurchaseOrder order : orders) {
+            if (order.getStatus() != PurchaseOrderStatus.APPROVED) {
+                throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                        "Supplier purchase order is not approved for dispatch");
+            }
+            var allocation = paymentAllocationRepository.findByPurchaseOrder_Id(order.getId()).stream()
+                    .filter(candidate -> candidate.getPayment().getId().equals(payment.getId()))
+                    .findFirst().orElseThrow(() -> new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                            "Supplier purchase order has no allocation for the confirmed checkout"));
+            if (allocation.getGrossAmount() == null || allocation.getGrossAmount().compareTo(order.getTotalAmount()) != 0
+                    || !allocation.getCurrency().equalsIgnoreCase(order.getCurrency())) {
+                throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                        "Supplier allocation does not match the purchase order total");
+            }
+            Warehouse warehouse = order.getDestinationWarehouse();
+            if (warehouse == null || !warehouse.isActive()
+                    || !warehouse.getOrganization().getId().equals(order.getBuyerOrganization().getId())) {
+                throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                        "The checkout destination warehouse is unavailable");
+            }
+            PurchaseOrderShipment existing = shipmentRepository.findByPurchaseOrderId(order.getId()).orElse(null);
+            if (existing != null && existing.getStatus() != PurchaseOrderShipmentStatus.CANCELLED) continue;
+
+            for (PurchaseOrderItem item : order.getItems()) {
+                item.setDistributorOffer(resolveOffer(item, order.getBuyerOrganization(), warehouse));
+            }
+            PurchaseOrderShipment shipment = existing == null ? new PurchaseOrderShipment() : existing;
+            shipment.setPurchaseOrder(order);
+            shipment.setDestinationWarehouse(warehouse);
+            shipment.setStatus(PurchaseOrderShipmentStatus.READY_FOR_DISPATCH);
+            shipment.setCreatedBy(order.getCreatedBy());
+            shipment.setLastUpdatedBy(null);
+            shipment.setTrackingNumber(null);
+            shipment.setCarrier(null);
+            shipment.setDispatchNote(null);
+            shipment.setManufacturerNote(null);
+            shipment.setReceiptNote(null);
+            shipment.setDispatchedAt(null);
+            shipment.setDeliveredAt(null);
+            shipment.setReceivedAt(null);
+            PurchaseOrderShipment saved = shipmentRepository.save(shipment);
+            notifyOrganizationAdministrators(order.getSupplierOrganization(),
+                    "Purchase order ready for dispatch", "Payment was confirmed for purchase order "
+                            + order.getPurchaseOrderNumber() + ". The order is ready for dispatch.",
+                    NotificationPriority.HIGH, saved.getId());
+            notifyOrganizationAdministrators(order.getBuyerOrganization(),
+                    "Purchase order ready for dispatch", "Purchase order "
+                            + order.getPurchaseOrderNumber() + " is ready for dispatch.",
+                    NotificationPriority.HIGH, saved.getId());
+        }
+    }
 
     @Transactional
     public PurchaseOrderShipmentResponse create(AuthenticatedUser actor, CreateShipmentRequest request) {

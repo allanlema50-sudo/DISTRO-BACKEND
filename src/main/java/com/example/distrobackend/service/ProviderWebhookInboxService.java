@@ -51,6 +51,10 @@ public class ProviderWebhookInboxService {
         event.setCurrency(webhook.currency());
         event.setGatewayResponse(webhook.gatewayResponse());
         event.setTransferCode(webhook.transferCode());
+        event.setProviderDisputeId(webhook.disputeId());
+        event.setDisputeStatus(webhook.status());
+        event.setDisputeResolution(webhook.disputeResolution());
+        event.setDisputeDueAt(webhook.disputeDueAt());
         repository.saveAndFlush(event);
     }
 

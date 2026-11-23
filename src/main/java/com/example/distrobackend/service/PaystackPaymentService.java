@@ -167,13 +167,32 @@ public class PaystackPaymentService {
             JsonNode data = root.path("data");
             String event = root.path("event").asText("").trim();
             String reference = data.path("reference").asText("").trim();
-            if (event.isBlank() || reference.isBlank()) {
+            JsonNode disputeTransaction = data.path("transaction");
+            if (reference.isBlank() && !disputeTransaction.isMissingNode()) {
+                reference = disputeTransaction.path("reference").asText("").trim();
+            }
+            String disputeId = data.path("id").isMissingNode() ? null : data.path("id").asText();
+            boolean disputeEvent = event.startsWith("charge.dispute.");
+            if (disputeEvent && reference.isBlank() && disputeId != null) reference = disputeId;
+            if (event.isBlank() || reference.isBlank() || (disputeEvent && disputeId == null)) {
                 throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack webhook is missing event or reference");
             }
+            String dueAtValue = data.path("due_at").asText(null);
+            java.time.OffsetDateTime dueAt = null;
+            if (dueAtValue != null && !dueAtValue.isBlank()) {
+                try {
+                    dueAt = java.time.OffsetDateTime.parse(dueAtValue);
+                } catch (java.time.format.DateTimeParseException ex) {
+                    throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack dispute due_at is invalid");
+                }
+            }
             return new Webhook(event, reference, data.path("status").asText(""),
-                    data.path("amount").isNumber() ? data.path("amount").longValue() : null,
+                    data.path("amount").isNumber() ? data.path("amount").longValue()
+                            : data.path("refund_amount").isNumber() ? data.path("refund_amount").longValue() : null,
                     data.path("currency").asText(null), data.path("gateway_response").asText(null),
-                    data.path("transfer_code").asText(null));
+                    data.path("transfer_code").asText(null), disputeId,
+                    data.path("resolution").asText(null), dueAt,
+                    disputeTransaction.path("reference").asText(reference));
         } catch (IOException ex) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack webhook body is not valid JSON");
         }
@@ -466,7 +485,15 @@ public class PaystackPaymentService {
                          Long amountMinor, String currency) {}
 
     public record Webhook(String event, String reference, String status, Long amountMinor,
-                           String currency, String gatewayResponse, String transferCode) {}
+                           String currency, String gatewayResponse, String transferCode,
+                           String disputeId, String disputeResolution, java.time.OffsetDateTime disputeDueAt,
+                           String transactionReference) {
+        public Webhook(String event, String reference, String status, Long amountMinor,
+                       String currency, String gatewayResponse, String transferCode) {
+            this(event, reference, status, amountMinor, currency, gatewayResponse, transferCode,
+                    null, null, null, reference);
+        }
+    }
 
     public static class ProviderOutcomeUnknownException extends RuntimeException {
         public ProviderOutcomeUnknownException(String message, Throwable cause) {

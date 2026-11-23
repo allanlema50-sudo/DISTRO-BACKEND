@@ -26,6 +26,8 @@ public class PaystackSettlementService {
     private final SupplierSettlementRepository settlementRepository;
     private final OrganizationRepository organizationRepository;
     private final UserRepository userRepository;
+    private final PaymentDisputeRepository disputeRepository;
+    private final CheckoutPaymentRepository checkoutPaymentRepository;
 
     @Transactional
     public PayoutBeneficiaryResponse createBeneficiary(AuthenticatedUser actor,
@@ -181,9 +183,15 @@ public class PaystackSettlementService {
         if (batch.getStatus() != SettlementBatchStatus.APPROVED) {
             throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT, "Only an approved settlement batch can be executed");
         }
+        List<SupplierSettlement> batchSettlements = settlementRepository
+                .findBySettlementBatch_IdOrderByCreatedAtAsc(batchId);
+        if (batchSettlements.stream().anyMatch(this::hasUnclearedDispute)) {
+            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                    "A settlement in this batch is blocked by an unresolved or unreviewed payment dispute");
+        }
         batch.setStatus(SettlementBatchStatus.PROCESSING);
         batchRepository.save(batch);
-        for (SupplierSettlement settlement : settlementRepository.findBySettlementBatch_IdOrderByCreatedAtAsc(batchId)) {
+        for (SupplierSettlement settlement : batchSettlements) {
             executeSettlement(settlement);
         }
         refreshBatchStatus(batch);
@@ -200,6 +208,10 @@ public class PaystackSettlementService {
                 && settlement.getStatus() != SupplierSettlementStatus.REVERSED) {
             throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
                     "Only a failed or reversed settlement can be retried");
+        }
+        if (hasUnclearedDispute(settlement)) {
+            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                    "This settlement is blocked by an unresolved or unreviewed payment dispute");
         }
         executeSettlement(settlement);
         return SupplierSettlementAdminResponse.from(settlementRepository.save(settlement));
@@ -281,6 +293,17 @@ public class PaystackSettlementService {
             throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
                     "Only non-demo, unbatched pending settlements can be selected");
         }
+        if (hasUnclearedDispute(settlement)) {
+            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                    "This settlement is blocked by an unresolved or unreviewed payment dispute");
+        }
+    }
+
+    private boolean hasUnclearedDispute(SupplierSettlement settlement) {
+        UUID paymentId = settlement.getAllocation().getPayment().getId();
+        checkoutPaymentRepository.findByIdForUpdate(paymentId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Checkout payment not found"));
+        return disputeRepository.existsByPayment_IdAndClearedAtIsNull(paymentId);
     }
 
     private SettlementBatch lockBatch(UUID batchId) {

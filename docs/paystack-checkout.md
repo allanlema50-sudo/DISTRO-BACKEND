@@ -135,6 +135,29 @@ for a new Super Admin refund request; each attempt remains in the audit history.
 Partial refunds and refunds after supplier payout are not supported by this
 workflow.
 
+## Disputes
+
+Paystack `charge.dispute.create`, `charge.dispute.remind`, and
+`charge.dispute.resolve` webhooks are stored in the durable inbox and update a
+local dispute record. Super Admins can list disputes at
+`GET /api/v1/admin/financial/disputes`, filter by `PaymentDisputeStatus`, and
+record a review with `PATCH /api/v1/admin/financial/disputes/{providerDisputeId}/review`:
+
+```json
+{
+  "reviewNote": "Paystack shows the dispute resolved; evidence and delivery record reviewed.",
+  "clearForSettlement": true
+}
+```
+
+`clearForSettlement` is accepted only after Paystack reports `RESOLVED`; this
+also requires a nonblank internal review note. Until then, settlement creation,
+batch execution, and retries for the payment are blocked. The API does not
+submit evidence or resolve cases with Paystack, so time-critical evidence and
+provider decisions must still be handled through Paystack's dashboard or a
+separately approved dispute-evidence integration. A transfer already initiated
+before a dispute was received cannot be cancelled here.
+
 Transfers use the Paystack balance. The business must complete Paystack's
 transfer/KYC setup and ensure its balance and transfer approval settings are
 ready before enabling this capability.

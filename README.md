@@ -1010,6 +1010,8 @@ Settlement and payout APIs are intentionally Super Admin controlled:
 | `POST` | `/api/v1/admin/financial/webhook-events/{eventId}/retry` | `SUPER_ADMIN` | Requeue a dead-lettered event for processing |
 | `POST` | `/api/v1/admin/financial/payments/{paymentId}/refund` | `SUPER_ADMIN` | Request a full Paystack refund before picking, packing, dispatch, or supplier payout starts; JSON body: `{"reason":"Order could not be fulfilled"}` |
 | `GET` | `/api/v1/admin/financial/refunds` | `SUPER_ADMIN` | Review refund status and provider reference |
+| `GET` | `/api/v1/admin/financial/disputes?status=AWAITING_MERCHANT_FEEDBACK` | `SUPER_ADMIN` | Review Paystack disputes; supports pagination and optional status filter |
+| `PATCH` | `/api/v1/admin/financial/disputes/{providerDisputeId}/review` | `SUPER_ADMIN` | Add an internal review note; set `clearForSettlement: true` only after Paystack marks the dispute resolved |
 
 Paystack callbacks are signature-verified, stored in a durable inbox, and
 acknowledged before background processing. Raw callback bodies are not retained.
@@ -1031,6 +1033,14 @@ Paystack refund events and periodic provider verification finalize refund state;
 successful refunds reverse the original allocation ledger journals exactly
 once. Partial refunds and refunds after supplier payout require a later finance
 workflow.
+
+Paystack dispute-created, reminder and resolved events are stored as dispute
+records and surfaced to Super Admins through notifications and the disputes
+queue. Supplier settlements cannot be batched, executed or retried while a
+dispute remains uncleared. A Super Admin may clear a resolved case for
+settlement only after documenting a review note. This records internal review;
+Paystack remains responsible for provider-side dispute resolution. Transfers
+already initiated before a dispute arrives cannot be recalled by this API.
 
 Typical payment status values are `INITIATING`, `PENDING`, `CONFIRMED`,
 `RECONCILED`, `FAILED`, and `REVERSED`. A successful STK response means the
@@ -1143,9 +1153,9 @@ audit fails if the stock changed since the count or if the result would fall
 below quantities reserved for customer orders.
 
 Legacy purchase-order settlement records remain a read-only `PENDING` ledger.
-Provider-backed supplier settlement batches are available to `SUPER_ADMIN`,
-but refunds, reversals, and platform-level reconciliation reporting remain
-follow-up work.
+Provider-backed supplier settlement batches, full Paystack refunds, and dispute
+review are available to `SUPER_ADMIN`; partial refunds, post-payout reversals,
+and platform-level reconciliation reporting remain follow-up work.
 
 ### Trips, delivery, and live tracking
 
@@ -1423,7 +1433,7 @@ Known limitations to account for during integration:
 - platform settings, report, analytics, and audit-log endpoints are contract
   surfaces; settlement automation is available only through the reviewed
   Paystack workflow and remains disabled until its transfer capability is enabled;
-- payment refunds, disputes, reconciliation reports, and provider payout
+- partial payment refunds, post-payout reversals, and reconciliation reports
   reversal recovery are not exposed as APIs;
 - procurement shipment and stock-audit APIs are available, but procurement payment initiation and settlement automation remain a follow-up;
 - an M-Pesa callback requires a reachable callback URL, a configured shared secret, and provider verification;

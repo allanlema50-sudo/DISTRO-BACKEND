@@ -36,6 +36,7 @@ class CentralizedCheckoutServiceTest {
  @Mock CheckoutPaymentAttemptStore paymentAttemptStore;
  @Mock FinancialLedgerService financialLedgerService;
  @Mock PurchaseOrderShipmentService purchaseOrderShipmentService;
+ @Mock PaystackPaymentService paystackPaymentService;
  @InjectMocks CentralizedCheckoutService service;
 
  @Test void successfulDemoAllocatesFiveMillionAcrossThreeIndependentOrdersWithoutMarkingPayoutsSettled() {

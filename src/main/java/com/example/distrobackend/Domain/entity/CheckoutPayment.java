@@ -1,6 +1,7 @@
 package com.example.distrobackend.Domain.entity;
 import com.example.distrobackend.Domain.enums.PaymentMethod;
 import com.example.distrobackend.Domain.enums.CheckoutPaymentStatus;
+import com.example.distrobackend.Domain.enums.PaymentProvider;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -20,9 +21,12 @@ public class CheckoutPayment {
  @ManyToOne(fetch=FetchType.LAZY, optional=false) @JoinColumn(name="checkout_id", nullable=false) private Checkout checkout;
  @Enumerated(EnumType.STRING) @Column(name="method", nullable=false) private PaymentMethod method;
  @Enumerated(EnumType.STRING) @Column(name="status", nullable=false) private CheckoutPaymentStatus status=CheckoutPaymentStatus.PENDING;
+ @Enumerated(EnumType.STRING) @Column(name="provider", length=20) private PaymentProvider provider;
  @Column(name="amount", nullable=false, precision=14, scale=2) private BigDecimal amount;
  @Column(name="currency", nullable=false, length=3) private String currency="KES";
  @Column(name="provider_reference", unique=true, length=120) private String providerReference;
+ @Column(name="provider_authorization_url", columnDefinition="TEXT") private String providerAuthorizationUrl;
+ @Column(name="provider_access_code", length=120) private String providerAccessCode;
  @Column(name="demo", nullable=false) private boolean demo;
  @Column(name="demo_label", length=80) private String demoLabel;
  @Column(name="idempotency_key", unique=true, length=120) private String idempotencyKey;

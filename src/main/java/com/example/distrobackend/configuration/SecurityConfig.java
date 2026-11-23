@@ -52,7 +52,8 @@ public class SecurityConfig {
                                 "/api/access-requests/activate",
                                 "/api/invitations/*/accept").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/invitations/*").permitAll()
-                        .requestMatchers("/api/v1/payments/mpesa/callback", "/api/payments/mpesa/callback").permitAll()
+                        .requestMatchers("/api/v1/payments/mpesa/callback", "/api/payments/mpesa/callback",
+                                "/api/v1/checkouts/paystack/webhook").permitAll()
                         .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                         // The HTTP upgrade is unauthenticated; STOMP CONNECT is
                         // authenticated and authorized by StompChannelInterceptor.

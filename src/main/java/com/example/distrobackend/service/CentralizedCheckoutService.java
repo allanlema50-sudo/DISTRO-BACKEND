@@ -49,6 +49,7 @@ public class CentralizedCheckoutService {
     private final FinancialLedgerService financialLedgerService;
     private final PurchaseOrderShipmentService purchaseOrderShipmentService;
     private final ApplicationEventPublisher eventPublisher;
+    private final PaystackPaymentService paystackPaymentService;
     @Qualifier("darajaRestTemplate") private final RestTemplate darajaRestTemplate;
 
     @Value("${logiflow.marketplace-checkout.enabled:false}") private boolean marketplaceCheckoutEnabled;
@@ -178,13 +179,17 @@ public class CentralizedCheckoutService {
         // the same organization allowlist and non-production restrictions.
         boolean demo = Set.of("DEMO", "DEMO_MPESA", "DEMO_CARD").contains(method);
         if (demo) ensureDemoAuthorized(actor);
+        boolean paystack = method.equals("PAYSTACK") || method.startsWith("PAYSTACK_");
+        String paystackChannel = paystackChannel(method, request.channel());
         PaymentMethod paymentMethod = switch (method) {
             case "DEMO", "DEMO_MPESA", "DEMO_CARD" -> PaymentMethod.OTHER;
             case "MPESA_SANDBOX", "MPESA" -> PaymentMethod.MPESA;
+            case "PAYSTACK", "PAYSTACK_CARD", "PAYSTACK_MPESA" -> paystackMethod(paystackChannel);
+            case "PAYSTACK_PESALINK", "PAYSTACK_BANK_TRANSFER" -> PaymentMethod.OTHER;
             default -> throw new ApiException(ErrorCode.BAD_REQUEST,
-                    "method must be MPESA_SANDBOX, MPESA, DEMO, DEMO_MPESA, or DEMO_CARD");
+                    "method must be MPESA_SANDBOX, MPESA, PAYSTACK, PAYSTACK_CARD, PAYSTACK_MPESA, PAYSTACK_PESALINK, PAYSTACK_BANK_TRANSFER, DEMO, DEMO_MPESA, or DEMO_CARD");
         };
-        int mpesaAmount = demo ? 0 : requireWholeKes(checkout.getTotalAmount(), checkout.getCurrency());
+        int mpesaAmount = (!demo && !paystack) ? requireWholeKes(checkout.getTotalAmount(), checkout.getCurrency()) : 0;
         String idempotencyKey = clean(idempotencyHeader) != null ? clean(idempotencyHeader) : clean(request.idempotencyKey());
         CheckoutPaymentAttemptStore.StartResult attempt = paymentAttemptStore.start(checkoutId,
                 actor.organizationId(), paymentMethod, checkout.getTotalAmount(), checkout.getCurrency(),
@@ -195,7 +200,27 @@ public class CentralizedCheckoutService {
             checkout.setPayment(existing);
             return response(checkout);
         }
-        if (!demo) {
+        if (paystack) {
+            String reference = "LF-" + checkout.getCheckoutReference() + "-"
+                    + attempt.paymentId().toString().replace("-", "").substring(0, 12);
+            paymentAttemptStore.preparePaystack(attempt.paymentId(), reference);
+            try {
+                PaystackPaymentService.Initialization result = paystackPaymentService.initialize(
+                        reference, checkout.getTotalAmount(), checkout.getCurrency(),
+                        checkout.getCreatedBy().getEmail(), paystackChannel,
+                        attempt.paymentId().toString(), checkout.getCheckoutReference());
+                paymentAttemptStore.markPaystackAccepted(attempt.paymentId(), result.providerReference(),
+                        result.authorizationUrl(), result.accessCode(), result.channel());
+            } catch (PaystackPaymentService.ProviderOutcomeUnknownException ex) {
+                paymentAttemptStore.markOutcomeUnknown(attempt.paymentId());
+                throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED,
+                        "Paystack payment status is temporarily unknown; retry by checking the checkout status");
+            } catch (RuntimeException ex) {
+                paymentAttemptStore.markFailed(attempt.paymentId(),
+                        ex instanceof ApiException ? ex.getMessage() : "Paystack request failed");
+                throw ex;
+            }
+        } else if (!demo) {
             DarajaStkResult result;
             try {
                 result = initiateDaraja(attempt.paymentId(), checkout.getCheckoutReference(),
@@ -265,6 +290,22 @@ public class CentralizedCheckoutService {
     }
 
     private record DarajaStkResult(String checkoutRequestId, String merchantRequestId, String responseDescription) {}
+
+    private static PaymentMethod paystackMethod(String channel) {
+        return switch (channel) {
+            case "mobile_money" -> PaymentMethod.MPESA;
+            case "card" -> PaymentMethod.CARD;
+            default -> PaymentMethod.OTHER;
+        };
+    }
+
+    private static String paystackChannel(String method, String requestedChannel) {
+        if (method.equals("PAYSTACK_CARD")) return "card";
+        if (method.equals("PAYSTACK_MPESA")) return "mobile_money";
+        if (method.equals("PAYSTACK_PESALINK") || method.equals("PAYSTACK_BANK_TRANSFER")) return "bank_transfer";
+        return requestedChannel == null || requestedChannel.isBlank()
+                ? "card" : requestedChannel.trim().toLowerCase(Locale.ROOT);
+    }
 
     private static final class StkPushOutcomeUnknownException extends RuntimeException {
         private StkPushOutcomeUnknownException(Throwable cause) { super(cause); }
@@ -347,6 +388,69 @@ public class CentralizedCheckoutService {
         checkout.setStatus(CheckoutStatus.CANCELLED);
         checkoutRepository.save(checkout);
         return response(checkout);
+    }
+
+    @Transactional
+    public void processPaystackWebhook(byte[] rawBody, String signature, String legacySignature) {
+        PaystackPaymentService.Webhook webhook = paystackPaymentService.parseAndVerifyWebhook(
+                rawBody, signature, legacySignature);
+        if (!Set.of("charge.success", "charge.failed").contains(webhook.event())) return;
+
+        CheckoutPayment payment = checkoutPaymentRepository.findByProviderReferenceForUpdate(webhook.reference())
+                .orElse(null);
+        // Paystack may retry an event after an older deployment has already
+        // handled it. A reference that is not ours is acknowledged without
+        // revealing whether a payment exists.
+        if (payment == null || payment.getProvider() != com.example.distrobackend.Domain.enums.PaymentProvider.PAYSTACK) return;
+        if (payment.getStatus() != CheckoutPaymentStatus.PENDING) return;
+
+        if ("charge.success".equals(webhook.event())) {
+            if (!"success".equalsIgnoreCase(webhook.status())) {
+                payment.setStatus(CheckoutPaymentStatus.FAILED);
+                payment.setFailureReason("Paystack success event had a non-success transaction status");
+                payment.setConfirmedAt(OffsetDateTime.now());
+                payment.getCheckout().setStatus(CheckoutStatus.PAYMENT_FAILED);
+                checkoutPaymentRepository.save(payment);
+                checkoutRepository.save(payment.getCheckout());
+                return;
+            }
+            long expectedMinor = paystackMinorAmount(payment.getAmount(), payment.getCurrency());
+            if (webhook.amountMinor() == null || webhook.amountMinor() != expectedMinor
+                    || webhook.currency() == null || !payment.getCurrency().equalsIgnoreCase(webhook.currency())) {
+                payment.setStatus(CheckoutPaymentStatus.FAILED);
+                payment.setFailureReason("Paystack success amount or currency did not match the checkout");
+                payment.setConfirmedAt(OffsetDateTime.now());
+                payment.getCheckout().setStatus(CheckoutStatus.PAYMENT_FAILED);
+                checkoutPaymentRepository.save(payment);
+                checkoutRepository.save(payment.getCheckout());
+                return;
+            }
+            payment.setStatus(CheckoutPaymentStatus.SUCCESS);
+            payment.setConfirmedAt(OffsetDateTime.now());
+            payment.setFailureReason(null);
+            payment.getCheckout().setStatus(CheckoutStatus.PAID);
+            recordAllocations(payment);
+            publishPaymentVerified(payment);
+        } else {
+            payment.setStatus(CheckoutPaymentStatus.FAILED);
+            payment.setFailureReason(webhook.gatewayResponse() == null
+                    ? "Paystack reported a failed charge" : webhook.gatewayResponse());
+            payment.setConfirmedAt(OffsetDateTime.now());
+            payment.getCheckout().setStatus(CheckoutStatus.PAYMENT_FAILED);
+        }
+        checkoutPaymentRepository.save(payment);
+        checkoutRepository.save(payment.getCheckout());
+    }
+
+    private static long paystackMinorAmount(BigDecimal amount, String currency) {
+        if (amount == null || currency == null || !"KES".equalsIgnoreCase(currency)) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack checkout currency must be KES");
+        }
+        try {
+            return amount.movePointRight(2).setScale(0, java.math.RoundingMode.UNNECESSARY).longValueExact();
+        } catch (ArithmeticException ex) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack checkout amount must have at most two decimals");
+        }
     }
 
     @Transactional
@@ -578,7 +682,9 @@ public class CentralizedCheckoutService {
             case UNKNOWN -> "Payment status cannot currently be established. Do not retry until confirmation is available.";
         };
         return new CheckoutResponse.Payment(payment.getId(), checkout.getCheckoutReference(),
-                payment.isDemo() ? "DEMO" : payment.getMethod().name(), status.name(), payment.getProviderReference(),
+                payment.isDemo() ? "DEMO" : payment.getMethod().name(),
+                payment.getProvider() == null ? null : payment.getProvider().name(), status.name(), payment.getProviderReference(),
+                payment.getProviderAuthorizationUrl(), payment.getProviderAccessCode(),
                 payment.isDemo(), payment.getDemoLabel(), payment.getInitiatedAt(), payment.getConfirmedAt(),
                 payment.getUpdatedAt(), terminal, retryAllowed, message);
     }

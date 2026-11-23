@@ -17,4 +17,9 @@ public interface CheckoutPaymentRepository extends JpaRepository<CheckoutPayment
  Optional<CheckoutPayment> findByIdAndCheckout_Id(UUID paymentId, UUID checkoutId);
  Optional<CheckoutPayment> findByMpesaCheckoutRequestId(String checkoutRequestId);
  Optional<CheckoutPayment> findByIdempotencyKey(String idempotencyKey);
+ Optional<CheckoutPayment> findByProviderReference(String providerReference);
+ @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+ @org.springframework.data.jpa.repository.Query("select p from CheckoutPayment p where p.providerReference = :providerReference")
+ Optional<CheckoutPayment> findByProviderReferenceForUpdate(
+         @org.springframework.data.repository.query.Param("providerReference") String providerReference);
 }

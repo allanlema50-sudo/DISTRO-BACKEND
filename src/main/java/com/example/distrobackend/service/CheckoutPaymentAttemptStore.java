@@ -5,6 +5,7 @@ import com.example.distrobackend.Domain.entity.CheckoutPayment;
 import com.example.distrobackend.Domain.enums.CheckoutPaymentStatus;
 import com.example.distrobackend.Domain.enums.CheckoutStatus;
 import com.example.distrobackend.Domain.enums.PaymentMethod;
+import com.example.distrobackend.Domain.enums.PaymentProvider;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.repository.CheckoutPaymentRepository;
@@ -63,6 +64,7 @@ public class CheckoutPaymentAttemptStore {
         payment.setCurrency(currency);
         payment.setDemo(demo);
         payment.setDemoLabel(demoLabel);
+        payment.setProvider(demo ? PaymentProvider.DEMO : null);
         payment.setIdempotencyKey(idempotencyKey);
         payment.setProviderReference(demo ? "DEMO-PENDING-" + UUID.randomUUID() : null);
         payment.setInitiatedAt(OffsetDateTime.now());
@@ -77,10 +79,34 @@ public class CheckoutPaymentAttemptStore {
     public void markAccepted(UUID paymentId, String checkoutRequestId, String merchantRequestId,
                              String responseDescription) {
         CheckoutPayment payment = requirePayment(paymentId);
+        payment.setProvider(PaymentProvider.DARAJA);
         payment.setMpesaCheckoutRequestId(checkoutRequestId);
         payment.setMpesaMerchantRequestId(merchantRequestId);
         payment.setProviderReference(checkoutRequestId);
         payment.setProviderPayload(Map.of("responseDescription", responseDescription));
+        checkoutPaymentRepository.saveAndFlush(payment);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void preparePaystack(UUID paymentId, String providerReference) {
+        CheckoutPayment payment = requirePayment(paymentId);
+        payment.setProvider(PaymentProvider.PAYSTACK);
+        payment.setProviderReference(providerReference);
+        payment.setProviderPayload(Map.of("provider", PaymentProvider.PAYSTACK.name(), "state", "INITIALIZATION_STARTED"));
+        checkoutPaymentRepository.saveAndFlush(payment);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void markPaystackAccepted(UUID paymentId, String providerReference,
+                                     String authorizationUrl, String accessCode,
+                                     String channel) {
+        CheckoutPayment payment = requirePayment(paymentId);
+        payment.setProvider(PaymentProvider.PAYSTACK);
+        payment.setProviderReference(providerReference);
+        payment.setProviderAuthorizationUrl(authorizationUrl);
+        payment.setProviderAccessCode(accessCode);
+        payment.setProviderPayload(Map.of("provider", PaymentProvider.PAYSTACK.name(),
+                "channel", channel, "state", "ACCEPTED"));
         checkoutPaymentRepository.saveAndFlush(payment);
     }
 
@@ -90,7 +116,8 @@ public class CheckoutPaymentAttemptStore {
         // Leave this attempt PENDING so retries cannot create another STK push.
         // The callback URL carries paymentId and can reconcile it if Daraja
         // accepted the request before the HTTP response timed out.
-        payment.setProviderPayload(Map.of("state", "REQUEST_OUTCOME_UNKNOWN"));
+        payment.setProviderPayload(Map.of("provider", payment.getProvider() == null ? "UNKNOWN" : payment.getProvider().name(),
+                "state", "REQUEST_OUTCOME_UNKNOWN"));
         checkoutPaymentRepository.saveAndFlush(payment);
     }
 

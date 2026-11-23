@@ -1,10 +1,11 @@
 # Paystack checkout integration
 
 This branch adds Paystack as a provider for the existing distributor
-marketplace checkout. It does not replace the internal ledger and it does not
-execute supplier payouts. A successful Paystack payment creates the same
+marketplace checkout and the reviewed supplier payout workflow. It does not
+replace the internal ledger. A successful Paystack payment creates the same
 allocations and pending supplier settlement records as a verified M-Pesa
-checkout.
+checkout; a separate Super Admin workflow can later execute eligible supplier
+settlements through Paystack Transfers.
 
 ## Configuration
 
@@ -12,12 +13,17 @@ Keep these values in Render or another secret manager, not in Git:
 
 ```dotenv
 PAYSTACK_ENABLED=true
+PAYSTACK_TRANSFERS_ENABLED=false
 PAYSTACK_MODE=test
 PAYSTACK_BASE_URL=https://api.paystack.co
 PAYSTACK_SECRET_KEY=sk_test_...
 PAYSTACK_WEBHOOK_SECRET=whsec_...
 PAYSTACK_CALLBACK_URL=https://your-frontend.example/payments/paystack/complete
 PAYSTACK_RECONCILIATION_SCAN_MS=60000
+PAYSTACK_SETTLEMENT_RECONCILIATION_SCAN_MS=60000
+PAYSTACK_SETTLEMENT_RECONCILIATION_BATCH_SIZE=100
+PAYSTACK_SETTLEMENT_RECONCILIATION_INITIAL_DELAY_MS=300000
+PAYSTACK_SETTLEMENT_RECONCILIATION_REPEAT_DELAY_MS=300000
 ```
 
 The application refuses to start with Paystack enabled unless the secret key
@@ -88,3 +94,47 @@ endpoint from the frontend. Paystack must be able to reach it over HTTPS.
 Provider verification is still required before production launch. Confirm the
 Paystack account supports the channels and currency needed by LogiFlow, and
 complete the provider's business/KYC review before using live keys.
+
+## Supplier settlement flow
+
+Transfers are independently disabled by default. Enabling collection does not
+enable payouts. After Paystack approves transfers, set
+`PAYSTACK_TRANSFERS_ENABLED=true` and complete the following workflow:
+
+1. An organization administrator submits a beneficiary through
+   `POST /api/v1/finance/beneficiaries`. LogiFlow sends the account details to
+   Paystack and retains only the provider recipient code and a masked account.
+2. A Super Admin reviews the beneficiary. Only an `ACTIVE` beneficiary can be
+   attached to a settlement.
+3. A Super Admin creates and approves a settlement batch. The API refuses
+   demo, already batched, unpaid, or beneficiary-less settlements.
+4. A Super Admin executes the approved batch. Each transfer keeps one stable
+   reference. If the API response is ambiguous, LogiFlow does not start a new
+   transfer. A scheduled reconciliation job verifies that same reference with
+   Paystack, updates the settlement from the provider's verified status, or
+   marks it failed if Paystack confirms no transfer exists. Operators can then
+   retry a definitively failed transfer only with its original reference.
+5. Signed `transfer.success`, `transfer.failed`, and `transfer.reversed`
+   webhooks also update the settlement and batch status. The reconciliation
+   job provides recovery if a webhook is delayed or lost.
+
+Paystack checkout attempts whose initialization response is ambiguous are
+verified by their stored transaction reference as well. While verification is
+still pending, the attempt remains unresolved and the buyer must not start a
+second payment. A confirmed success or failure is applied through the same
+idempotent processing path as a webhook. A reference that Paystack confirms is
+absent is timed out, allowing the buyer to try again.
+
+Checkout payment verification cadence is controlled by
+`PAYSTACK_RECONCILIATION_SCAN_MS`. Supplier transfer reconciliation has separate
+settings: `PAYSTACK_SETTLEMENT_RECONCILIATION_SCAN_MS`,
+`PAYSTACK_SETTLEMENT_RECONCILIATION_BATCH_SIZE`,
+`PAYSTACK_SETTLEMENT_RECONCILIATION_INITIAL_DELAY_MS`, and
+`PAYSTACK_SETTLEMENT_RECONCILIATION_REPEAT_DELAY_MS`. The default initial and
+repeat delays are five minutes. Provider timeouts remain unresolved and are
+queried again; they never trigger a transfer under a new reference. Transfer
+reconciliation runs only when `PAYSTACK_TRANSFERS_ENABLED=true`.
+
+Transfers use the Paystack balance. The business must complete Paystack's
+transfer/KYC setup and ensure its balance and transfer approval settings are
+ready before enabling this capability.

@@ -2,6 +2,8 @@ package com.example.distrobackend.controller;
 import com.example.distrobackend.dto.*;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.service.CentralizedCheckoutService;
+import com.example.distrobackend.service.PaystackPaymentService;
+import com.example.distrobackend.service.PaystackSettlementService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -17,6 +19,8 @@ import java.util.UUID;
 @PreAuthorize("hasAnyRole('DISTRIBUTOR_ADMIN','DISTRIBUTOR_STAFF')") @RequiredArgsConstructor
 public class CheckoutController {
  private final CentralizedCheckoutService checkoutService;
+ private final PaystackPaymentService paystackPaymentService;
+ private final PaystackSettlementService paystackSettlementService;
  @org.springframework.web.bind.annotation.PostMapping("/mpesa/callback")
  @PreAuthorize("permitAll()")
  @io.swagger.v3.oas.annotations.security.SecurityRequirements
@@ -28,7 +32,13 @@ public class CheckoutController {
          @RequestHeader(value="Paystack-Signature", required=false) String signature,
          @RequestHeader(value="X-Paystack-Signature", required=false) String legacySignature,
          @RequestBody byte[] rawBody) {
-  checkoutService.processPaystackWebhook(rawBody, signature, legacySignature);
+  com.example.distrobackend.service.PaystackPaymentService.Webhook webhook =
+          paystackPaymentService.parseAndVerifyWebhook(rawBody, signature, legacySignature);
+  if (webhook.event().startsWith("transfer.")) {
+   paystackSettlementService.processPaystackWebhook(webhook);
+  } else {
+   checkoutService.processPaystackWebhook(webhook);
+  }
   return org.springframework.http.ResponseEntity.ok().build();
  }
  @PostMapping @ResponseStatus(HttpStatus.CREATED)

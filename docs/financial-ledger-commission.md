@@ -55,6 +55,10 @@ Set `organizationType` to `null` for a global rule. Rules may not overlap for th
 
 ## What is deliberately not included yet
 
-The ledger is an internal record, not a payout integration. The next finance work must add provider beneficiary/KYC onboarding, payout instructions, settlement batches and approvals, retries, refunds, disputes, provider webhooks, and reconciliation. Until those are implemented and the provider contract is approved, `SupplierSettlement` remains an internal pending record and no organization receives an automatic payout.
+The settlement branch adds Paystack beneficiary onboarding, Super Admin-reviewed
+batches, retry-safe transfer references, and signed transfer webhook handling.
+`PAYSTACK_TRANSFERS_ENABLED` remains separate from collection and defaults to
+false. Refunds, disputes, provider reconciliation reports, and a durable
+outbox/worker for deferred transfer attempts remain follow-up work.
 
 No Tingg, M-Pesa, PesaLink, card, or bank API key is created by this branch. Provider credentials must be added later as deployment secrets, never committed to `.env.example` or source control.

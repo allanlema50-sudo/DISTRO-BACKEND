@@ -996,8 +996,23 @@ that handles real payments.
 
 Paystack checkout setup, request fields, webhook handling, and deployment
 variables are documented in [`docs/paystack-checkout.md`](docs/paystack-checkout.md).
-Paystack initialization and webhook handling are provider-backed, but supplier
-payouts are still not automated.
+Paystack initialization, signed webhooks, and Super Admin-controlled supplier
+payout execution are provider-backed. Transfers remain disabled until the
+Paystack account has been approved for payouts and the deployment enables them.
+
+Settlement and payout APIs are intentionally Super Admin controlled:
+
+| Method | Endpoint | Access | Purpose / integration note |
+|---|---|---|---|
+| `POST` | `/api/v1/finance/beneficiaries` | Manufacturer/distributor admin | Submit a Paystack mobile-money or bank beneficiary; raw account details are not returned or retained by LogiFlow |
+| `GET` | `/api/v1/finance/beneficiaries` | Organization admin | List the organization’s payout beneficiaries and review status |
+| `GET` | `/api/v1/admin/financial/beneficiaries` | `SUPER_ADMIN` | Review all beneficiaries |
+| `PATCH` | `/api/v1/admin/financial/beneficiaries/{beneficiaryId}/review` | `SUPER_ADMIN` | Approve or reject a beneficiary |
+| `GET` | `/api/v1/admin/financial/settlements` | `SUPER_ADMIN` | List pending or failed supplier settlements |
+| `POST` | `/api/v1/admin/financial/settlement-batches` | `SUPER_ADMIN` | Create a batch from eligible pending settlements |
+| `POST` | `/api/v1/admin/financial/settlement-batches/{batchId}/approve` | `SUPER_ADMIN` | Approve the batch before any payout is attempted |
+| `POST` | `/api/v1/admin/financial/settlement-batches/{batchId}/execute` | `SUPER_ADMIN` | Initiate Paystack transfers for the approved batch |
+| `POST` | `/api/v1/admin/financial/settlements/{settlementId}/retry` | `SUPER_ADMIN` | Retry a failed or reversed transfer with its existing provider reference |
 
 Typical payment status values are `INITIATING`, `PENDING`, `CONFIRMED`,
 `RECONCILED`, `FAILED`, and `REVERSED`. A successful STK response means the
@@ -1063,10 +1078,10 @@ product. If it is omitted, shipment creation requires exactly one matching
 active offer in the selected destination warehouse.
 
 Shipment creation is intentionally gated on both `APPROVED` purchase-order
-status and a `SETTLED` procurement settlement. The current settlement routes
-are read-only and do not initiate money transfers; until settlement processing
-is implemented, an operator or a future payment service must record settlement
-through the controlled procurement payment workflow.
+status and a `SETTLED` procurement settlement. The provider-backed marketplace
+checkout settlement workflow is documented in the financial section below;
+legacy procurement settlement routes remain read-only until they are connected
+to that workflow.
 
 Shipment request bodies (JSON):
 
@@ -1109,9 +1124,10 @@ but only an organization administrator can apply the variance. Applying an
 audit fails if the stock changed since the count or if the result would fall
 below quantities reserved for customer orders.
 
-Purchase-order settlements are currently a read-only `PENDING` ledger. Payment
-reconciliation, refunds, reversals, and platform-level settlement reporting are
-not part of the current integration surface.
+Legacy purchase-order settlement records remain a read-only `PENDING` ledger.
+Provider-backed supplier settlement batches are available to `SUPER_ADMIN`,
+but refunds, reversals, and platform-level reconciliation reporting remain
+follow-up work.
 
 ### Trips, delivery, and live tracking
 
@@ -1387,9 +1403,10 @@ Completed and available for frontend/mobile integration:
 Known limitations to account for during integration:
 
 - platform settings, report, analytics, and audit-log endpoints are contract
-  surfaces; audit-log ingestion and settlement automation remain separate
-  follow-up capabilities;
-- payment refunds, reversals, reconciliation reports, and provider payout settlement processing are not exposed as APIs;
+  surfaces; settlement automation is available only through the reviewed
+  Paystack workflow and remains disabled until its transfer capability is enabled;
+- payment refunds, disputes, reconciliation reports, and provider payout
+  reversal recovery are not exposed as APIs;
 - procurement shipment and stock-audit APIs are available, but procurement payment initiation and settlement automation remain a follow-up;
 - an M-Pesa callback requires a reachable callback URL, a configured shared secret, and provider verification;
 - the catalog/order model currently represents distributor offers as stock items, so customers order distributor offer IDs.

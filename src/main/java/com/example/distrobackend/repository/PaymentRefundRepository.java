@@ -17,6 +17,7 @@ import java.util.List;
 public interface PaymentRefundRepository extends JpaRepository<PaymentRefund, UUID> {
     Optional<PaymentRefund> findTopByPayment_IdOrderByCreatedAtDescIdDesc(UUID paymentId);
     Optional<PaymentRefund> findByProviderReference(String reference);
+    List<PaymentRefund> findByPayment_IdInOrderByCreatedAtDesc(java.util.Collection<UUID> paymentIds);
     Page<PaymentRefund> findAllByOrderByCreatedAtDesc(Pageable pageable);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)

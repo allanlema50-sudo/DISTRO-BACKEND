@@ -158,6 +158,19 @@ provider decisions must still be handled through Paystack's dashboard or a
 separately approved dispute-evidence integration. A transfer already initiated
 before a dispute was received cannot be cancelled here.
 
+## Internal finance reconciliation report
+
+`GET /api/v1/admin/financial/reconciliation-report?from=<ISO-8601>&to=<ISO-8601>`
+returns paginated Paystack checkout records for a required window of at most 31
+days (maximum page size 100). Each record checks that allocations sum to the
+payment amount, capture journals exist and balance, supplier settlement rows
+exist, processed refunds agree with the payment status, and disputes have been
+reviewed before payout. A non-empty `issues` array identifies records needing
+attention.
+
+This report reconciles LogiFlow's own stored data. It does not yet import or
+compare Paystack's transaction export or bank settlement statement.
+
 Transfers use the Paystack balance. The business must complete Paystack's
 transfer/KYC setup and ensure its balance and transfer approval settings are
 ready before enabling this capability.

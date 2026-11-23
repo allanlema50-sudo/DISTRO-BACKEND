@@ -21,6 +21,8 @@ public interface PaymentDisputeRepository extends JpaRepository<PaymentDispute, 
 
     Optional<PaymentDispute> findByProviderDisputeId(String providerDisputeId);
 
+    java.util.List<PaymentDispute> findByPayment_IdIn(java.util.Collection<UUID> paymentIds);
+
     boolean existsByPayment_IdAndClearedAtIsNull(UUID paymentId);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)

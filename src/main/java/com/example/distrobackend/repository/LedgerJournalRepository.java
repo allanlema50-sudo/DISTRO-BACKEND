@@ -15,6 +15,10 @@ public interface LedgerJournalRepository extends JpaRepository<LedgerJournal, UU
     Optional<LedgerJournal> findBySourceTypeAndSourceIdAndEventType(String sourceType, UUID sourceId,
                                                                       String eventType);
 
+    @EntityGraph(attributePaths = "entries")
+    java.util.List<LedgerJournal> findBySourceTypeAndSourceIdInAndEventTypeIn(
+            String sourceType, java.util.Collection<UUID> sourceIds, java.util.Collection<String> eventTypes);
+
     @EntityGraph(attributePaths = {"entries", "entries.account", "entries.account.organization"})
     @Query("select j from LedgerJournal j order by j.createdAt desc, j.id desc")
     Page<LedgerJournal> findAllDetailed(Pageable pageable);

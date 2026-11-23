@@ -25,6 +25,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class FinancialLedgerService {
     private static final String CAPTURE_EVENT = "PAYMENT_CAPTURED";
+    private static final String REFUND_EVENT = "PAYMENT_REFUNDED";
 
     private final LedgerAccountRepository accountRepository;
     private final LedgerJournalRepository journalRepository;
@@ -76,6 +77,35 @@ public class FinancialLedgerService {
         assertBalanced(journal);
         journalRepository.save(journal);
         return breakdown;
+    }
+
+    @Transactional
+    public void recordRefund(String sourceType, UUID sourceId) {
+        LedgerJournal capture = journalRepository
+                .findBySourceTypeAndSourceIdAndEventType(sourceType, sourceId, CAPTURE_EVENT)
+                .orElseThrow(() -> new ApiException(ErrorCode.CONFLICT, "Original captured ledger entry was not found"));
+        if (journalRepository.findBySourceTypeAndSourceIdAndEventType(sourceType, sourceId, REFUND_EVENT).isPresent()) {
+            return;
+        }
+        LedgerJournal reversal = new LedgerJournal();
+        reversal.setSourceType(sourceType);
+        reversal.setSourceId(sourceId);
+        reversal.setEventType(REFUND_EVENT);
+        reversal.setCurrency(capture.getCurrency());
+        reversal.setDescription("Reversal of captured payment allocation");
+        reversal.setSimulated(false);
+        for (LedgerEntry original : capture.getEntries()) {
+            LedgerEntry entry = new LedgerEntry();
+            entry.setAccount(original.getAccount());
+            entry.setDirection(original.getDirection() == LedgerEntryDirection.CREDIT
+                    ? LedgerEntryDirection.DEBIT : LedgerEntryDirection.CREDIT);
+            entry.setAmount(original.getAmount());
+            entry.setCurrency(original.getCurrency());
+            entry.setDescription("Refund reversal: " + original.getDescription());
+            reversal.addEntry(entry);
+        }
+        assertBalanced(reversal);
+        journalRepository.save(reversal);
     }
 
     @Transactional(readOnly = true)

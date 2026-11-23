@@ -346,6 +346,46 @@ public class PaystackPaymentService {
                 "Paystack transfer verification failed"), true);
     }
 
+    public Refund createRefund(String reference, String transactionReference, BigDecimal amount,
+                               String currency, String customerNote, String merchantNote) {
+        requireEnabled();
+        if (reference == null || !reference.matches("[A-Za-z0-9_-]{8,64}")) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack refund reference is invalid");
+        }
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("transaction", transactionReference);
+        body.put("amount", toMinorAmount(amount, currency));
+        body.put("currency", currency.toUpperCase(Locale.ROOT));
+        body.put("reference", reference);
+        body.put("customer_note", customerNote);
+        body.put("merchant_note", merchantNote);
+        JsonNode data = postJson("/refund", body, "Paystack rejected the refund request").path("data");
+        String returnedReference = data.path("reference").asText("");
+        String status = data.path("status").asText("");
+        if (!reference.equalsIgnoreCase(returnedReference) || status.isBlank()) {
+            throw new ProviderOutcomeUnknownException("Paystack returned an incomplete refund response", null);
+        }
+        return new Refund(returnedReference, data.path("id").asText(null), status,
+                data.path("amount").isNumber() ? data.path("amount").longValue() : null,
+                data.path("currency").asText(null));
+    }
+
+    public Refund verifyRefund(String reference) {
+        requireEnabled();
+        JsonNode root = getJson("/refund?reference=" + encodePath(reference),
+                "Paystack refund verification failed");
+        JsonNode refunds = root.path("data");
+        if (!refunds.isArray()) throw new ProviderOutcomeUnknownException("Paystack refund response was incomplete", null);
+        for (JsonNode refund : refunds) {
+            if (reference.equalsIgnoreCase(refund.path("reference").asText(""))) {
+                return new Refund(reference, refund.path("id").asText(null), refund.path("status").asText(""),
+                        refund.path("amount").isNumber() ? refund.path("amount").longValue() : null,
+                        refund.path("currency").asText(null));
+            }
+        }
+        throw new ProviderOutcomeUnknownException("Paystack has not returned the refund reference yet", null);
+    }
+
     private Verification verification(JsonNode root, boolean transfer) {
         JsonNode data = root.path("data");
         String reference = data.path("reference").asText("");
@@ -421,6 +461,9 @@ public class PaystackPaymentService {
 
     public record Verification(String reference, String status, Long amountMinor, String currency,
                                String gatewayResponse, String transferCode) {}
+
+    public record Refund(String reference, String providerRefundId, String status,
+                         Long amountMinor, String currency) {}
 
     public record Webhook(String event, String reference, String status, Long amountMinor,
                            String currency, String gatewayResponse, String transferCode) {}

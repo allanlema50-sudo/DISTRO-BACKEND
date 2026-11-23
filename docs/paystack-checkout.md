@@ -119,6 +119,22 @@ PAYMENT_RECONCILIATION_POLL_INTERVAL_MS=60000
 PAYMENT_RECONCILIATION_BATCH_SIZE=25
 ```
 
+## Refunds
+
+Only a Super Admin can request a full refund for a successful, non-demo Paystack
+checkout. The API refuses the request if any distributor settlement is already
+batched or paid. Paystack's refund reference is stable, callback events are
+handled through the durable inbox, and the reconciliation worker checks pending
+refunds when a callback is delayed. A processed refund reverses each original
+allocation journal once. The checkout enters `REFUND_PENDING` while Paystack
+processes the request, which pauses warehouse fulfilment. A confirmed refund
+cancels still-unpicked purchase orders and releases their stock reservations.
+Requests are rejected once picking, packing, dispatch, or supplier payout has
+started. If Paystack definitively rejects a refund, the payment becomes eligible
+for a new Super Admin refund request; each attempt remains in the audit history.
+Partial refunds and refunds after supplier payout are not supported by this
+workflow.
+
 Transfers use the Paystack balance. The business must complete Paystack's
 transfer/KYC setup and ensure its balance and transfer approval settings are
 ready before enabling this capability.

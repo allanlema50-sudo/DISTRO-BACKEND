@@ -48,6 +48,7 @@ public class CentralizedCheckoutService {
     private final CheckoutPaymentAttemptStore paymentAttemptStore;
     private final FinancialLedgerService financialLedgerService;
     private final PurchaseOrderShipmentService purchaseOrderShipmentService;
+    private final PurchaseOrderShipmentRepository purchaseOrderShipmentRepository;
     private final ApplicationEventPublisher eventPublisher;
     private final PaystackPaymentService paystackPaymentService;
     @Qualifier("darajaRestTemplate") private final RestTemplate darajaRestTemplate;
@@ -658,6 +659,81 @@ public class CentralizedCheckoutService {
         }
     }
 
+    /**
+     * Marks a checkout as refund-pending only while every supplier order is still
+     * cancellable. The status change blocks payment-gated picking/packing while
+     * Paystack processes the refund.
+     */
+    @Transactional
+    public void prepareRefund(CheckoutPayment payment) {
+        Checkout checkout = payment.getCheckout();
+        for (PurchaseOrder listed : purchaseOrderRepository.findByCheckout_Id(checkout.getId()).stream()
+                .sorted(Comparator.comparing(PurchaseOrder::getId)).toList()) {
+            PurchaseOrder order = purchaseOrderRepository.findByIdForUpdate(listed.getId())
+                    .flatMap(locked -> purchaseOrderRepository.findByIdWithItems(locked.getId()))
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Purchase order not found"));
+            if (order.getStatus() != PurchaseOrderStatus.SUBMITTED
+                    && order.getStatus() != PurchaseOrderStatus.APPROVED) {
+                throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                        "Refund is unavailable after supplier-order fulfilment has started");
+            }
+            if (order.getItems().stream().anyMatch(item -> item.getPickedQuantity() > 0
+                    || item.getPackedQuantity() > 0)) {
+                throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                        "Refund is unavailable after warehouse picking or packing has started");
+            }
+            purchaseOrderShipmentRepository.findByPurchaseOrderIdForUpdate(order.getId()).ifPresent(shipment -> {
+                if (shipment.getStatus() != PurchaseOrderShipmentStatus.AWAITING_PICKING
+                        && shipment.getStatus() != PurchaseOrderShipmentStatus.CANCELLED) {
+                    throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                            "Refund is unavailable after shipment dispatch has started");
+                }
+            });
+        }
+        payment.setStatus(CheckoutPaymentStatus.REFUND_PENDING);
+        checkout.setStatus(CheckoutStatus.REFUND_PENDING);
+    }
+
+    /** Cancels still-unpicked supplier orders and releases their reservations after provider confirmation. */
+    @Transactional
+    public void completeRefund(CheckoutPayment payment) {
+        Checkout checkout = payment.getCheckout();
+        for (PurchaseOrder listed : purchaseOrderRepository.findByCheckout_Id(checkout.getId()).stream()
+                .sorted(Comparator.comparing(PurchaseOrder::getId)).toList()) {
+            PurchaseOrder order = purchaseOrderRepository.findByIdForUpdate(listed.getId())
+                    .flatMap(locked -> purchaseOrderRepository.findByIdWithItems(locked.getId()))
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Purchase order not found"));
+            if (order.getItems().stream().anyMatch(item -> item.getPickedQuantity() > 0
+                    || item.getPackedQuantity() > 0)) {
+                throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                        "Cannot finalize refund after warehouse fulfilment started");
+            }
+            purchaseOrderShipmentRepository.findByPurchaseOrderIdForUpdate(order.getId()).ifPresent(shipment -> {
+                if (shipment.getStatus() != PurchaseOrderShipmentStatus.AWAITING_PICKING
+                        && shipment.getStatus() != PurchaseOrderShipmentStatus.CANCELLED) {
+                    throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                            "Cannot finalize refund after shipment dispatch started");
+                }
+                shipment.setStatus(PurchaseOrderShipmentStatus.CANCELLED);
+            });
+            if (order.isStockReserved()) {
+                order.getItems().forEach(item -> {
+                    StockItem stock = stockItemRepository.findByIdAndOrganizationIdForUpdate(
+                                    item.getStockItem().getId(), order.getSupplierOrganization().getId())
+                            .orElseThrow(() -> new ApiException(ErrorCode.STOCK_NOT_FOUND));
+                    if (stock.getReservedQuantity() < item.getQuantity()) {
+                        throw new ApiException(ErrorCode.CONFLICT,
+                                "Reserved stock is inconsistent during refund");
+                    }
+                    stock.setReservedQuantity(stock.getReservedQuantity() - item.getQuantity());
+                });
+                order.setStockReserved(false);
+            }
+            order.setStatus(PurchaseOrderStatus.CANCELLED);
+            purchaseOrderRepository.save(order);
+        }
+    }
+
     private CheckoutResponse response(Checkout checkout) {
         CheckoutPayment payment = checkout.getPayment();
         CheckoutResponse.Payment paymentResponse = payment == null ? null : paymentResponse(checkout, payment);
@@ -672,13 +748,16 @@ public class CentralizedCheckoutService {
 
     private CheckoutResponse.Payment paymentResponse(Checkout checkout, CheckoutPayment payment) {
         CheckoutPaymentStatus status = payment.getStatus();
-        boolean terminal = status == CheckoutPaymentStatus.SUCCESS || status == CheckoutPaymentStatus.FAILED
+        boolean terminal = status == CheckoutPaymentStatus.SUCCESS || status == CheckoutPaymentStatus.REFUNDED
+                || status == CheckoutPaymentStatus.FAILED
                 || status == CheckoutPaymentStatus.CANCELLED || status == CheckoutPaymentStatus.TIMED_OUT;
         boolean retryAllowed = status == CheckoutPaymentStatus.FAILED || status == CheckoutPaymentStatus.CANCELLED
                 || status == CheckoutPaymentStatus.TIMED_OUT;
         String message = switch (status) {
             case PENDING -> "Payment is awaiting provider confirmation.";
             case SUCCESS -> "Payment confirmed.";
+            case REFUND_PENDING -> "Refund is being processed; fulfillment is paused.";
+            case REFUNDED -> "Payment was refunded.";
             case FAILED -> "Payment failed. You can try another payment method.";
             case CANCELLED -> "Payment was cancelled. You can try another payment method.";
             case TIMED_OUT -> "Payment attempt timed out. Retry is available after the provider confirmed the outcome.";

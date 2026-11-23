@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class PaystackReconciliationJob {
     private final PaystackReconciliationService reconciliationService;
+    private final PaymentRefundService refundService;
 
     @Value("${app.payments.reconciliation-batch-size:25}")
     private int batchSize;
@@ -20,5 +21,6 @@ public class PaystackReconciliationJob {
                 .forEach(reconciliationService::reconcilePayment);
         reconciliationService.claimTransfers(safeBatchSize)
                 .forEach(reconciliationService::reconcileTransfer);
+        refundService.claimDue(safeBatchSize).forEach(refundService::reconcile);
     }
 }

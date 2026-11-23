@@ -1016,6 +1016,11 @@ by SHA-256 fingerprint. Processing retries use bounded exponential delays and
 move to `DEAD_LETTER` after the configured attempt limit; interrupted worker
 claims are recovered after the processing timeout.
 
+Paystack also verifies pending transactions and transfers periodically when a
+webhook is delayed or missing. These provider checks are bounded per run and
+back off after unresolved responses or provider errors; only final provider
+statuses update payment or settlement state.
+
 Typical payment status values are `INITIATING`, `PENDING`, `CONFIRMED`,
 `RECONCILED`, `FAILED`, and `REVERSED`. A successful STK response means the
 request was accepted, not that the order has been paid; poll the status endpoint

@@ -35,6 +35,8 @@ public class CheckoutPayment {
  @Column(name="failure_reason", columnDefinition="TEXT") private String failureReason;
  @JdbcTypeCode(SqlTypes.JSON) @Column(name="provider_payload", columnDefinition="jsonb") private Map<String,Object> providerPayload;
  @Column(name="initiated_at", nullable=false) private OffsetDateTime initiatedAt;
+ @Column(name="next_reconciliation_at") private OffsetDateTime nextReconciliationAt;
+ @Column(name="reconciliation_attempts", nullable=false) private int reconciliationAttempts;
  @Column(name="confirmed_at") private OffsetDateTime confirmedAt;
  @CreationTimestamp @Column(name="created_at", nullable=false, updatable=false) private OffsetDateTime createdAt;
  @UpdateTimestamp @Column(name="updated_at", nullable=false) private OffsetDateTime updatedAt;

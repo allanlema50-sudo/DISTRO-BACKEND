@@ -107,6 +107,18 @@ PAYMENT_WEBHOOK_PROCESSING_TIMEOUT=5m
 Only the parsed event fields and payload fingerprint are retained; raw callback
 bodies and signatures are not stored.
 
+The scheduled reconciliation job checks pending Paystack transactions and
+processing transfers through the provider's server-side verification APIs.
+Requests are bounded per run and each unresolved record gets an increasing
+retry delay, so one provider outage does not keep the same oldest records at
+the front of every scan. Only provider-final statuses are applied; ongoing,
+pending, processing, and queued statuses remain eligible for a later check.
+
+```dotenv
+PAYMENT_RECONCILIATION_POLL_INTERVAL_MS=60000
+PAYMENT_RECONCILIATION_BATCH_SIZE=25
+```
+
 Transfers use the Paystack balance. The business must complete Paystack's
 transfer/KYC setup and ensure its balance and transfer approval settings are
 ready before enabling this capability.

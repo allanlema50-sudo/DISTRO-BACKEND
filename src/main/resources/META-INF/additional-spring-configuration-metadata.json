@@ -57,5 +57,6 @@
     ,{ "name": "app.payments.webhook-max-attempts", "type": "java.lang.Integer", "description": "Maximum automatic processing attempts before a provider webhook event enters dead letter." }
     ,{ "name": "app.payments.webhook-processing-batch-size", "type": "java.lang.Integer", "description": "Maximum provider webhook events processed in one scheduled run." }
     ,{ "name": "app.payments.webhook-processing-timeout", "type": "java.time.Duration", "description": "After this duration, interrupted webhook processing claims become eligible for recovery." }
+    ,{ "name": "app.payments.reconciliation-batch-size", "type": "java.lang.Integer", "description": "Maximum Paystack payment and transfer records reconciled in one scheduled run." }
   ]
 }

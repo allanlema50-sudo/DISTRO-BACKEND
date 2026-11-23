@@ -14,6 +14,12 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface SupplierSettlementRepository extends JpaRepository<SupplierSettlement, UUID> {
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from SupplierSettlement s where s.provider = com.example.distrobackend.Domain.enums.PaymentProvider.PAYSTACK "
+            + "and s.status = com.example.distrobackend.Domain.enums.SupplierSettlementStatus.PROCESSING "
+            + "and (s.nextReconciliationAt is null or s.nextReconciliationAt <= :now) order by s.lastAttemptAt asc")
+    List<SupplierSettlement> lockDuePaystackReconciliation(@Param("now") java.time.OffsetDateTime now,
+                                                           org.springframework.data.domain.Pageable pageable);
     List<SupplierSettlement> findBySupplierOrganization_IdOrderByCreatedAtDesc(UUID supplierId);
     Optional<SupplierSettlement> findByAllocation_Id(UUID allocationId);
     Page<SupplierSettlement> findByStatusOrderByCreatedAtAsc(SupplierSettlementStatus status, Pageable pageable);

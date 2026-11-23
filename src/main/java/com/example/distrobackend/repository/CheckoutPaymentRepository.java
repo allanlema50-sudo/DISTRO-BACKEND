@@ -6,7 +6,17 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.Lock;
+import jakarta.persistence.LockModeType;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 public interface CheckoutPaymentRepository extends JpaRepository<CheckoutPayment, UUID> {
+ @Lock(LockModeType.PESSIMISTIC_WRITE)
+ @Query("select p from CheckoutPayment p where p.provider = com.example.distrobackend.Domain.enums.PaymentProvider.PAYSTACK "
+         + "and p.status = com.example.distrobackend.Domain.enums.CheckoutPaymentStatus.PENDING "
+         + "and (p.nextReconciliationAt is null or p.nextReconciliationAt <= :now) order by p.initiatedAt asc")
+ List<CheckoutPayment> lockDuePaystackReconciliation(@Param("now") OffsetDateTime now, Pageable pageable);
  @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
  @org.springframework.data.jpa.repository.Query("select p from CheckoutPayment p where p.id = :id")
  Optional<CheckoutPayment> findByIdForUpdate(@org.springframework.data.repository.query.Param("id") UUID id);

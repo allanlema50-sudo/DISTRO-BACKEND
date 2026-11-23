@@ -105,14 +105,12 @@ public class StockService {
         if (pageable == null || pageable.isUnpaged()) return pageable;
         org.springframework.data.domain.Sort sort = pageable.getSort();
         if (sort.isUnsorted()) {
-            sort = org.springframework.data.domain.Sort.sort(StockItem.class)
-                    .by(StockItem::getName).ascending();
+            sort = org.springframework.data.domain.Sort.by(StockItem::getName).ascending();
         }
         // Always append the typed identifier order so equal-name rows have a
         // deterministic page boundary. Spring Data's typed Sort avoids string
         // property references that can silently drift from the entity model.
-        sort = sort.and(org.springframework.data.domain.Sort.sort(StockItem.class)
-                .by(StockItem::getId).ascending());
+        sort = sort.and(org.springframework.data.domain.Sort.by(StockItem::getId).ascending());
         return org.springframework.data.domain.PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), sort);
     }
     @Transactional(readOnly = true)

@@ -3,7 +3,6 @@ package com.example.distrobackend.service;
 import com.example.distrobackend.Domain.entity.*;
 import com.example.distrobackend.Domain.enums.LedgerAccountType;
 import com.example.distrobackend.Domain.enums.LedgerEntryDirection;
-import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;

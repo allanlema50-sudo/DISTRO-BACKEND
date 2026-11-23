@@ -1,10 +1,11 @@
 # Paystack checkout integration
 
 This branch adds Paystack as a provider for the existing distributor
-marketplace checkout. It does not replace the internal ledger and it does not
-execute supplier payouts. A successful Paystack payment creates the same
+marketplace checkout and the reviewed supplier payout workflow. It does not
+replace the internal ledger. A successful Paystack payment creates the same
 allocations and pending supplier settlement records as a verified M-Pesa
-checkout.
+checkout; a separate Super Admin workflow can later execute eligible supplier
+settlements through Paystack Transfers.
 
 ## Configuration
 
@@ -12,6 +13,7 @@ Keep these values in Render or another secret manager, not in Git:
 
 ```dotenv
 PAYSTACK_ENABLED=true
+PAYSTACK_TRANSFERS_ENABLED=false
 PAYSTACK_BASE_URL=https://api.paystack.co
 PAYSTACK_SECRET_KEY=sk_test_...
 PAYSTACK_WEBHOOK_SECRET=whsec_...
@@ -69,3 +71,26 @@ endpoint from the frontend. Paystack must be able to reach it over HTTPS.
 Provider verification is still required before production launch. Confirm the
 Paystack account supports the channels and currency needed by LogiFlow, and
 complete the provider's business/KYC review before using live keys.
+
+## Supplier settlement flow
+
+Transfers are independently disabled by default. Enabling collection does not
+enable payouts. After Paystack approves transfers, set
+`PAYSTACK_TRANSFERS_ENABLED=true` and complete the following workflow:
+
+1. An organization administrator submits a beneficiary through
+   `POST /api/v1/finance/beneficiaries`. LogiFlow sends the account details to
+   Paystack and retains only the provider recipient code and a masked account.
+2. A Super Admin reviews the beneficiary. Only an `ACTIVE` beneficiary can be
+   attached to a settlement.
+3. A Super Admin creates and approves a settlement batch. The API refuses
+   demo, already batched, unpaid, or beneficiary-less settlements.
+4. A Super Admin executes the approved batch. Each transfer has one stable
+   reference, so an ambiguous provider response is not retried with a new
+   transfer and cannot double-credit a beneficiary.
+5. Signed `transfer.success`, `transfer.failed`, and `transfer.reversed`
+   webhooks update the settlement and batch status.
+
+Transfers use the Paystack balance. The business must complete Paystack's
+transfer/KYC setup and ensure its balance and transfer approval settings are
+ready before enabling this capability.

@@ -392,8 +392,11 @@ public class CentralizedCheckoutService {
 
     @Transactional
     public void processPaystackWebhook(byte[] rawBody, String signature, String legacySignature) {
-        PaystackPaymentService.Webhook webhook = paystackPaymentService.parseAndVerifyWebhook(
-                rawBody, signature, legacySignature);
+        processPaystackWebhook(paystackPaymentService.parseAndVerifyWebhook(rawBody, signature, legacySignature));
+    }
+
+    @Transactional
+    public void processPaystackWebhook(PaystackPaymentService.Webhook webhook) {
         if (!Set.of("charge.success", "charge.failed").contains(webhook.event())) return;
 
         CheckoutPayment payment = checkoutPaymentRepository.findByProviderReferenceForUpdate(webhook.reference())

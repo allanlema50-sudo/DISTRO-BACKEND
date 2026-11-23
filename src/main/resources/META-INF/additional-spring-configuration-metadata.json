@@ -49,6 +49,7 @@
     { "name": "mpesa.connect-timeout", "type": "java.time.Duration", "description": "M-Pesa connection timeout." },
     { "name": "mpesa.read-timeout", "type": "java.time.Duration", "description": "M-Pesa read timeout." }
     ,{ "name": "paystack.enabled", "type": "java.lang.Boolean", "description": "Enable Paystack hosted checkout and webhook processing." }
+    ,{ "name": "paystack.transfers-enabled", "type": "java.lang.Boolean", "description": "Enable Paystack beneficiary creation and supplier transfers separately from collection." }
     ,{ "name": "paystack.base-url", "type": "java.lang.String", "description": "Paystack API base URL; production uses https://api.paystack.co." }
     ,{ "name": "paystack.secret-key", "type": "java.lang.String", "description": "Paystack server-side secret key." }
     ,{ "name": "paystack.webhook-secret", "type": "java.lang.String", "description": "Paystack webhook signing secret." }

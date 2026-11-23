@@ -1,6 +1,27 @@
 package com.example.distrobackend.repository;
 import com.example.distrobackend.Domain.entity.SupplierSettlement;
-import java.util.List;
-import java.util.UUID;
+import com.example.distrobackend.Domain.enums.SupplierSettlementStatus;
+import jakarta.persistence.LockModeType;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
-public interface SupplierSettlementRepository extends JpaRepository<SupplierSettlement, UUID> { List<SupplierSettlement> findBySupplierOrganization_IdOrderByCreatedAtDesc(UUID supplierId); java.util.Optional<SupplierSettlement> findByAllocation_Id(UUID allocationId); }
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+public interface SupplierSettlementRepository extends JpaRepository<SupplierSettlement, UUID> {
+    List<SupplierSettlement> findBySupplierOrganization_IdOrderByCreatedAtDesc(UUID supplierId);
+    Optional<SupplierSettlement> findByAllocation_Id(UUID allocationId);
+    Page<SupplierSettlement> findByStatusOrderByCreatedAtAsc(SupplierSettlementStatus status, Pageable pageable);
+    List<SupplierSettlement> findBySettlementBatch_IdOrderByCreatedAtAsc(UUID batchId);
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from SupplierSettlement s where s.id = :id")
+    Optional<SupplierSettlement> findByIdForUpdate(@Param("id") UUID id);
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from SupplierSettlement s where s.payoutReference = :reference")
+    Optional<SupplierSettlement> findByPayoutReferenceForUpdate(@Param("reference") String reference);
+}

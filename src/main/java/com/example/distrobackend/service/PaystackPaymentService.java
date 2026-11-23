@@ -2,6 +2,7 @@ package com.example.distrobackend.service;
 
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
+import com.example.distrobackend.Domain.enums.PayoutMethod;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -38,12 +39,14 @@ import java.util.regex.Pattern;
 public class PaystackPaymentService {
     private static final String PAYSTACK_HOST = "api.paystack.co";
     private static final Pattern REFERENCE = Pattern.compile("^[A-Za-z0-9.=_-]{1,120}$");
+    private static final Pattern TRANSFER_REFERENCE = Pattern.compile("^[a-z0-9_-]{16,50}$");
     private static final Pattern HEX_SIGNATURE = Pattern.compile("^[0-9a-fA-F]{128}$");
     private static final long WEBHOOK_TOLERANCE_SECONDS = 300;
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
     private final boolean enabled;
+    private final boolean transfersEnabled;
     private final String baseUrl;
     private final String secretKey;
     private final String webhookSecret;
@@ -53,6 +56,7 @@ public class PaystackPaymentService {
             @Qualifier("darajaRestTemplate") RestTemplate restTemplate,
             ObjectMapper objectMapper,
             @Value("${paystack.enabled:false}") boolean enabled,
+            @Value("${paystack.transfers-enabled:false}") boolean transfersEnabled,
             @Value("${paystack.base-url:https://api.paystack.co}") String baseUrl,
             @Value("${paystack.secret-key:}") String secretKey,
             @Value("${paystack.webhook-secret:}") String webhookSecret,
@@ -60,6 +64,7 @@ public class PaystackPaymentService {
         this.restTemplate = restTemplate;
         this.objectMapper = objectMapper;
         this.enabled = enabled;
+        this.transfersEnabled = transfersEnabled;
         this.baseUrl = trimTrailingSlash(baseUrl);
         this.secretKey = secretKey == null ? "" : secretKey.trim();
         this.webhookSecret = webhookSecret == null ? "" : webhookSecret.trim();
@@ -68,6 +73,9 @@ public class PaystackPaymentService {
 
     @PostConstruct
     void validateConfiguration() {
+        if (transfersEnabled && !enabled) {
+            throw new IllegalStateException("PAYSTACK_ENABLED must be true when PAYSTACK_TRANSFERS_ENABLED=true");
+        }
         if (!enabled) return;
         validateProviderHost();
         if (secretKey.isBlank()) {
@@ -164,7 +172,8 @@ public class PaystackPaymentService {
             }
             return new Webhook(event, reference, data.path("status").asText(""),
                     data.path("amount").isNumber() ? data.path("amount").longValue() : null,
-                    data.path("currency").asText(null), data.path("gateway_response").asText(null));
+                    data.path("currency").asText(null), data.path("gateway_response").asText(null),
+                    data.path("transfer_code").asText(null));
         } catch (IOException ex) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack webhook body is not valid JSON");
         }
@@ -248,6 +257,13 @@ public class PaystackPaymentService {
         validateProviderHost();
     }
 
+    private void requireTransfersEnabled() {
+        requireEnabled();
+        if (!transfersEnabled) {
+            throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "Paystack transfers are disabled");
+        }
+    }
+
     private void validateProviderHost() {
         try {
             URI uri = URI.create(baseUrl);
@@ -276,10 +292,80 @@ public class PaystackPaymentService {
         return result;
     }
 
+    public Recipient createRecipient(PayoutMethod method, String accountName, String accountNumber,
+                                     String bankCode, String currency, String email) {
+        requireTransfersEnabled();
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("type", method == PayoutMethod.MOBILE_MONEY ? "mobile_money" : "kepss");
+        body.put("name", accountName);
+        body.put("account_number", accountNumber);
+        body.put("currency", currency.toUpperCase(Locale.ROOT));
+        if (bankCode != null && !bankCode.isBlank()) body.put("bank_code", bankCode.trim());
+        if (email != null && !email.isBlank()) body.put("email", email.trim());
+        JsonNode data = postJson("/transferrecipient", body, "Paystack recipient creation failed");
+        String recipientCode = data.path("data").path("recipient_code").asText("");
+        if (recipientCode.isBlank()) {
+            throw new ProviderOutcomeUnknownException("Paystack returned no recipient code", null);
+        }
+        return new Recipient(recipientCode);
+    }
+
+    public Transfer initiateTransfer(String reference, BigDecimal amount, String currency,
+                                     String recipientCode, String reason) {
+        requireTransfersEnabled();
+        if (!TRANSFER_REFERENCE.matcher(reference).matches()) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Settlement transfer reference is invalid");
+        }
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("source", "balance");
+        body.put("amount", toMinorAmount(amount, currency));
+        body.put("currency", currency.toUpperCase(Locale.ROOT));
+        body.put("recipient", recipientCode);
+        body.put("reference", reference);
+        body.put("reason", reason);
+        JsonNode data = postJson("/transfer", body, "Paystack transfer creation failed");
+        JsonNode transfer = data.path("data");
+        String returnedReference = transfer.path("reference").asText(reference);
+        String status = transfer.path("status").asText("");
+        String transferCode = transfer.path("transfer_code").asText(null);
+        if (returnedReference.isBlank() || status.isBlank()) {
+            throw new ProviderOutcomeUnknownException("Paystack returned an incomplete transfer response", null);
+        }
+        return new Transfer(returnedReference, transferCode, status);
+    }
+
+    private JsonNode postJson(String path, Map<String, Object> body, String rejectionMessage) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(secretKey);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<String> response;
+        try {
+            response = restTemplate.exchange(URI.create(baseUrl + path), HttpMethod.POST,
+                    new HttpEntity<>(body, headers), String.class);
+        } catch (HttpStatusCodeException ex) {
+            throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, rejectionMessage);
+        } catch (RestClientException ex) {
+            throw new ProviderOutcomeUnknownException("Paystack request outcome is unknown", ex);
+        }
+        try {
+            JsonNode root = response.getBody() == null ? null : objectMapper.readTree(response.getBody());
+            if (root == null || !root.path("status").asBoolean(false)) {
+                throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, rejectionMessage);
+            }
+            return root;
+        } catch (IOException ex) {
+            throw new ProviderOutcomeUnknownException("Paystack returned invalid JSON", ex);
+        }
+    }
+
     public record Initialization(String providerReference, String authorizationUrl, String accessCode, String channel) {}
 
+    public record Recipient(String recipientCode) {}
+
+    public record Transfer(String reference, String transferCode, String status) {}
+
     public record Webhook(String event, String reference, String status, Long amountMinor,
-                           String currency, String gatewayResponse) {}
+                           String currency, String gatewayResponse, String transferCode) {}
 
     public static class ProviderOutcomeUnknownException extends RuntimeException {
         public ProviderOutcomeUnknownException(String message, Throwable cause) {

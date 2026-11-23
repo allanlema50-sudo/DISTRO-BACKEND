@@ -44,6 +44,7 @@ public class PaystackPaymentService {
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
     private final boolean enabled;
+    private final String mode;
     private final String baseUrl;
     private final String secretKey;
     private final String webhookSecret;
@@ -53,6 +54,7 @@ public class PaystackPaymentService {
             @Qualifier("darajaRestTemplate") RestTemplate restTemplate,
             ObjectMapper objectMapper,
             @Value("${paystack.enabled:false}") boolean enabled,
+            @Value("${paystack.mode:test}") String mode,
             @Value("${paystack.base-url:https://api.paystack.co}") String baseUrl,
             @Value("${paystack.secret-key:}") String secretKey,
             @Value("${paystack.webhook-secret:}") String webhookSecret,
@@ -60,6 +62,7 @@ public class PaystackPaymentService {
         this.restTemplate = restTemplate;
         this.objectMapper = objectMapper;
         this.enabled = enabled;
+        this.mode = mode == null ? "" : mode.trim().toUpperCase(Locale.ROOT);
         this.baseUrl = trimTrailingSlash(baseUrl);
         this.secretKey = secretKey == null ? "" : secretKey.trim();
         this.webhookSecret = webhookSecret == null ? "" : webhookSecret.trim();
@@ -70,8 +73,16 @@ public class PaystackPaymentService {
     void validateConfiguration() {
         if (!enabled) return;
         validateProviderHost();
+        String expectedKeyPrefix = switch (mode) {
+            case "TEST" -> "sk_test_";
+            case "LIVE" -> "sk_live_";
+            default -> throw new IllegalStateException("PAYSTACK_MODE must be TEST or LIVE");
+        };
         if (secretKey.isBlank()) {
             throw new IllegalStateException("PAYSTACK_SECRET_KEY must be set when PAYSTACK_ENABLED=true");
+        }
+        if (!secretKey.startsWith(expectedKeyPrefix)) {
+            throw new IllegalStateException("PAYSTACK_SECRET_KEY does not match PAYSTACK_MODE=" + mode);
         }
         if (webhookSecret.isBlank()) {
             throw new IllegalStateException("PAYSTACK_WEBHOOK_SECRET must be set when PAYSTACK_ENABLED=true");

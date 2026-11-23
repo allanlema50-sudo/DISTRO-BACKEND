@@ -12,6 +12,7 @@ Keep these values in Render or another secret manager, not in Git:
 
 ```dotenv
 PAYSTACK_ENABLED=true
+PAYSTACK_MODE=test
 PAYSTACK_BASE_URL=https://api.paystack.co
 PAYSTACK_SECRET_KEY=sk_test_...
 PAYSTACK_WEBHOOK_SECRET=whsec_...
@@ -20,9 +21,13 @@ PAYSTACK_RECONCILIATION_SCAN_MS=60000
 ```
 
 The application refuses to start with Paystack enabled unless the secret key
-and webhook signing secret are present. The API host is restricted to
-`https://api.paystack.co`. Use test keys until the full payment and settlement
-workflow has been accepted.
+and webhook signing secret are present. `PAYSTACK_MODE=test` requires an
+`sk_test_` key, while `PAYSTACK_MODE=live` requires an `sk_live_` key. The API
+host is restricted to `https://api.paystack.co`; Paystack selects test or live
+transactions from the key. Test mode is suitable for an isolated staging
+deployment and database. Do not run test transactions against production data:
+the backend still records a successful test webhook as paid and starts normal
+fulfilment.
 
 ## Checkout flow
 
@@ -45,6 +50,12 @@ workflow has been accepted.
    initialization whose outcome was unknown and whose reference remains absent
    for ten minutes is timed out; the backend never returned its checkout URL to
    the buyer. Verified failed or abandoned attempts also become terminal.
+
+`PAYSTACK_CALLBACK_URL` is only a browser redirect for the user experience; a
+user reaching it does not prove payment. The backend changes payment state
+from signed webhooks and server-side verification. Direct `MPESA` checkout
+uses Daraja, while `PAYSTACK_MPESA` uses Paystack's mobile-money channel. Each
+payment attempt selects one provider; do not start both for the same checkout.
 
 Example payment request:
 

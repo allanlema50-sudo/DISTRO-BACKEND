@@ -985,12 +985,19 @@ idempotent ledger, but it does not yet execute supplier payouts.
 | `PATCH` | `/api/v1/admin/payments/{paymentId}/status` | `SUPER_ADMIN` | Mark an unsettled payment failed with a reason; cannot forge confirmation or manually reverse a payment |
 | `GET` | `/api/v1/payments/{orderId}/status` | Customer owner or distributor organization | Read persisted payment status |
 | `POST` | `/api/v1/payments/mpesa/callback` | M-Pesa gateway only | Public HTTP route; requires `X-Mpesa-Callback-Secret` and provider verification |
+| `POST` | `/api/v1/checkouts/{checkoutId}/payment` | Distributor admin/staff | Start Paystack hosted checkout with `method: PAYSTACK` and a supported `channel`; response contains the authorization URL |
+| `POST` | `/api/v1/checkouts/paystack/webhook` | Paystack gateway only | Public signed webhook; backend verifies the raw body and never trusts frontend payment confirmation |
 
 Payment initiation requires valid Daraja configuration. The callback URL must
 be reachable by Safaricom/Daraja; a localhost URL is not reachable from the
 provider. Callback confirmation also requires the shared secret and provider
 result verification. Never disable callback verification in an environment
 that handles real payments.
+
+Paystack checkout setup, request fields, webhook handling, and deployment
+variables are documented in [`docs/paystack-checkout.md`](docs/paystack-checkout.md).
+Paystack initialization and webhook handling are provider-backed, but supplier
+payouts are still not automated.
 
 Typical payment status values are `INITIATING`, `PENDING`, `CONFIRMED`,
 `RECONCILED`, `FAILED`, and `REVERSED`. A successful STK response means the
@@ -1382,7 +1389,7 @@ Known limitations to account for during integration:
 - platform settings, report, analytics, and audit-log endpoints are contract
   surfaces; audit-log ingestion and settlement automation remain separate
   follow-up capabilities;
-- payment refunds, reversals, reconciliation reports, and settlement processing are not exposed as APIs;
+- payment refunds, reversals, reconciliation reports, and provider payout settlement processing are not exposed as APIs;
 - procurement shipment and stock-audit APIs are available, but procurement payment initiation and settlement automation remain a follow-up;
 - an M-Pesa callback requires a reachable callback URL, a configured shared secret, and provider verification;
 - the catalog/order model currently represents distributor offers as stock items, so customers order distributor offer IDs.

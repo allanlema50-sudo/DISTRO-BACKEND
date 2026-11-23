@@ -3,9 +3,12 @@ package com.example.distrobackend.controller;
 import com.example.distrobackend.dto.PurchaseOrderDecisionRequest;
 import com.example.distrobackend.dto.PurchaseOrderResponse;
 import com.example.distrobackend.dto.PurchaseOrderSettlementResponse;
+import com.example.distrobackend.dto.PickPurchaseOrderItemRequest;
+import com.example.distrobackend.dto.PackPurchaseOrderRequest;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.service.PurchaseOrderService;
 import com.example.distrobackend.service.CentralizedCheckoutService;
+import com.example.distrobackend.service.PurchaseOrderShipmentService;
 import com.example.distrobackend.dto.SupplierFinancialStatusResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -16,6 +19,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -32,6 +36,7 @@ public class ManufacturerPurchaseOrderController {
 
     private final PurchaseOrderService purchaseOrderService;
     private final CentralizedCheckoutService centralizedCheckoutService;
+    private final PurchaseOrderShipmentService purchaseOrderShipmentService;
 
     @GetMapping
     public Page<PurchaseOrderResponse> list(
@@ -43,6 +48,27 @@ public class ManufacturerPurchaseOrderController {
     @GetMapping("/{purchaseOrderId}")
     public PurchaseOrderResponse get(@AuthenticationPrincipal AuthenticatedUser actor,
                                      @PathVariable UUID purchaseOrderId) {
+        return purchaseOrderService.getForManufacturer(actor, purchaseOrderId);
+    }
+
+    @PatchMapping("/{purchaseOrderId}/warehouse/pick")
+    public PurchaseOrderResponse pick(@AuthenticationPrincipal AuthenticatedUser actor,
+                                      @PathVariable UUID purchaseOrderId,
+                                      @Valid @RequestBody PickPurchaseOrderItemRequest request) {
+        return purchaseOrderService.pickManufacturerItem(actor, purchaseOrderId, request);
+    }
+
+    @PatchMapping("/{purchaseOrderId}/warehouse/pack")
+    public PurchaseOrderResponse pack(@AuthenticationPrincipal AuthenticatedUser actor,
+                                      @PathVariable UUID purchaseOrderId,
+                                      @Valid @RequestBody PackPurchaseOrderRequest request) {
+        return purchaseOrderService.packManufacturerOrder(actor, purchaseOrderId, request);
+    }
+
+    @PostMapping("/{purchaseOrderId}/fulfilment/retry")
+    public PurchaseOrderResponse retryFulfilment(@AuthenticationPrincipal AuthenticatedUser actor,
+                                                  @PathVariable UUID purchaseOrderId) {
+        purchaseOrderShipmentService.retryCheckoutFulfilment(actor, purchaseOrderId);
         return purchaseOrderService.getForManufacturer(actor, purchaseOrderId);
     }
 

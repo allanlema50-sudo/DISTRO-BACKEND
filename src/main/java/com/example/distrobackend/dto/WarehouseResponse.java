@@ -19,7 +19,10 @@ public record WarehouseResponse(
         long staffCount,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,
-        long version
+        long version,
+        Double latitude,
+        Double longitude,
+        String locationDescription
 ) {
     public static WarehouseResponse from(Warehouse warehouse, long stockUnits, long staffCount) {
         return new WarehouseResponse(
@@ -36,6 +39,9 @@ public record WarehouseResponse(
                 staffCount,
                 warehouse.getCreatedAt(),
                 warehouse.getUpdatedAt(),
-                warehouse.getVersion());
+                warehouse.getVersion(),
+                warehouse.getLatitude(),
+                warehouse.getLongitude(),
+                warehouse.getLocationDescription());
     }
 }

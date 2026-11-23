@@ -16,6 +16,8 @@ import com.example.distrobackend.Exception.ResourceNotFoundException;
 import com.example.distrobackend.dto.CreateStockItemRequest;
 import com.example.distrobackend.dto.ProductResponse;
 import com.example.distrobackend.dto.StockAdjustmentRequest;
+import com.example.distrobackend.dto.CreateStockIntakeRequest;
+import com.example.distrobackend.dto.StockIntakeResponse;
 import com.example.distrobackend.dto.StockItemResponse;
 import com.example.distrobackend.dto.StockMovementResponse;
 import com.example.distrobackend.dto.CreateRestockRequest;
@@ -178,6 +180,83 @@ public class StockService {
     @Transactional(readOnly = true)
     public StockItemResponse get(AuthenticatedUser user, UUID id) {
         return StockItemResponse.from(findItem(user, id));
+    }
+
+    @Transactional
+    public StockItemResponse assignWarehouse(AuthenticatedUser user, UUID stockItemId, UUID warehouseId) {
+        Organization manufacturer = organization(user);
+        if (manufacturer.getType() != Organizationtype.MANUFACTURER) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED, "Only manufacturers can assign source products to warehouses");
+        }
+        StockItem item = stockItemRepository.findByIdAndOrganizationIdForUpdateWithWarehouse(
+                        stockItemId, manufacturer.getId())
+                .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.STOCK_ITEM_NOT_FOUND));
+        if (item.getSourceStockItem() != null) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Distributor offers use their configured warehouse");
+        }
+        Warehouse warehouse = warehouseRepository.findByIdAndOrganization_IdForUpdate(
+                        warehouseId, manufacturer.getId())
+                .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.NOT_FOUND, "Warehouse not found"));
+        if (!warehouse.isActive()) throw new ApiException(ErrorCode.CONFLICT, "The selected warehouse is inactive");
+        if (item.getWarehouse() != null && !item.getWarehouse().getId().equals(warehouseId)) {
+            throw new ApiException(ErrorCode.CONFLICT, "Stock already belongs to another warehouse");
+        }
+        item.setWarehouse(warehouse);
+        return StockItemResponse.from(stockItemRepository.saveAndFlush(item));
+    }
+
+    @Transactional
+    public StockIntakeResponse receiveProductionStock(AuthenticatedUser user, UUID stockItemId,
+                                                       CreateStockIntakeRequest request) {
+        Organization manufacturer = organization(user);
+        if (manufacturer.getType() != Organizationtype.MANUFACTURER) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED, "Only manufacturers can record production stock intake");
+        }
+        StockItem item = stockItemRepository.findByIdAndOrganizationIdForUpdateWithWarehouse(
+                        stockItemId, manufacturer.getId())
+                .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.STOCK_ITEM_NOT_FOUND));
+        if (item.getSourceStockItem() != null || item.getWarehouse() == null || !item.getWarehouse().isActive()) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "Production intake requires a manufacturer product assigned to an active warehouse");
+        }
+        String key = request.idempotencyKey().trim();
+        var prior = stockMovementRepository.findByStockItem_IdAndIdempotencyKey(stockItemId, key);
+        if (prior.isPresent()) {
+            StockMovement movement = prior.get();
+            if (movement.getMovementType() != StockMovementType.STOCK_INTAKE
+                    || movement.getQuantityDelta() != request.quantity()
+                    || !request.sourceReference().trim().equals(movement.getExternalReference())) {
+                throw new ApiException(ErrorCode.CONFLICT,
+                        "The idempotency key was already used for a different stock intake");
+            }
+            return intakeResponse(item, movement, request.quantity());
+        }
+        int newQuantity;
+        try {
+            newQuantity = Math.addExact(item.getQuantityOnHand(), request.quantity());
+        } catch (ArithmeticException ex) {
+            throw new ApiException(ErrorCode.INVALID_STOCK_ADJUSTMENT,
+                    "Stock intake exceeds the supported quantity range");
+        }
+        item.setQuantityOnHand(newQuantity);
+        stockItemRepository.save(item);
+        StockMovement movement = new StockMovement();
+        movement.setStockItem(item);
+        movement.setMovementType(StockMovementType.STOCK_INTAKE);
+        movement.setQuantityDelta(request.quantity());
+        movement.setReferenceType("PRODUCTION_RECEIPT");
+        movement.setExternalReference(request.sourceReference().trim());
+        movement.setIdempotencyKey(key);
+        movement.setPerformedBy(userRepository.getReferenceById(user.userId()));
+        movement.setNote(trimToNull(request.note()));
+        movement = stockMovementRepository.saveAndFlush(movement);
+        return intakeResponse(item, movement, request.quantity());
+    }
+
+    private StockIntakeResponse intakeResponse(StockItem item, StockMovement movement, int intakeQuantity) {
+        return new StockIntakeResponse(movement.getId(), item.getId(),
+                item.getWarehouse().getId(), intakeQuantity, item.getQuantityOnHand(),
+                item.getReservedQuantity(), item.getAvailableQuantity(), movement.getExternalReference(), "RECORDED");
     }
 
     @Transactional

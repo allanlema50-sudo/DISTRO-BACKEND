@@ -51,6 +51,18 @@ private UUID id;
     @Column(name = "note", columnDefinition = "TEXT")
     private String note;
 
+    @Column(name = "idempotency_key", length = 100)
+    private String idempotencyKey;
+
+    @Column(name = "external_reference", length = 150)
+    private String externalReference;
+
+    @Column(name = "location_quantity_delta")
+    private Integer locationQuantityDelta;
+
+    @Column(name = "reservation_quantity_delta")
+    private Integer reservationQuantityDelta;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;

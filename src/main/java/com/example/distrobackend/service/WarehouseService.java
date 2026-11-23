@@ -46,6 +46,10 @@ public class WarehouseService {
         warehouse.setName(request.name().trim());
         warehouse.setAddress(trimToNull(request.address()));
         warehouse.setCity(request.city().trim());
+        validateCoordinates(request.latitude(), request.longitude());
+        warehouse.setLatitude(request.latitude());
+        warehouse.setLongitude(request.longitude());
+        warehouse.setLocationDescription(trimToNull(request.locationDescription()));
         warehouse.setPostalCode(trimToNull(request.postalCode()));
         warehouse.setSiteManager(request.siteManager().trim());
         warehouse.setActive(true);
@@ -76,7 +80,9 @@ public class WarehouseService {
         Warehouse warehouse = findOwnedWarehouse(user, warehouseId);
         checkVersion(warehouse, request.version());
         if (request.name() == null && request.address() == null && request.city() == null
-                && request.postalCode() == null && request.siteManager() == null) {
+                && request.postalCode() == null && request.siteManager() == null
+                && request.latitude() == null && request.longitude() == null
+                && request.locationDescription() == null) {
             throw new ApiException(ErrorCode.BAD_REQUEST,
                     "At least one warehouse field is required");
         }
@@ -98,6 +104,16 @@ public class WarehouseService {
         if (request.siteManager() != null) {
             if (request.siteManager().isBlank()) throw new ApiException(ErrorCode.BAD_REQUEST, "Site manager cannot be blank");
             warehouse.setSiteManager(request.siteManager().trim());
+        }
+        if (request.latitude() != null || request.longitude() != null) {
+            Double latitude = request.latitude() == null ? warehouse.getLatitude() : request.latitude();
+            Double longitude = request.longitude() == null ? warehouse.getLongitude() : request.longitude();
+            validateCoordinates(latitude, longitude);
+            warehouse.setLatitude(latitude);
+            warehouse.setLongitude(longitude);
+        }
+        if (request.locationDescription() != null) {
+            warehouse.setLocationDescription(trimToNull(request.locationDescription()));
         }
         return toResponse(warehouseRepository.saveAndFlush(warehouse));
     }
@@ -171,5 +187,15 @@ public class WarehouseService {
         if (value == null) return null;
         String trimmed = value.trim();
         return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private static void validateCoordinates(Double latitude, Double longitude) {
+        if ((latitude == null) != (longitude == null)) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    "Warehouse latitude and longitude must be provided together");
+        }
+        if (latitude != null && (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180)) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Warehouse coordinates are outside valid ranges");
+        }
     }
 }

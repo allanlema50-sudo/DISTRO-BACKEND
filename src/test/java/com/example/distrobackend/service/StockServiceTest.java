@@ -12,6 +12,7 @@ import com.example.distrobackend.dto.StockAdjustmentRequest;
 import com.example.distrobackend.dto.StockItemResponse;
 import com.example.distrobackend.dto.CreateRestockRequest;
 import com.example.distrobackend.dto.CreateDistributorOfferRequest;
+import com.example.distrobackend.dto.CreateStockIntakeRequest;
 import com.example.distrobackend.dto.UpdateDistributorOfferRequest;
 import com.example.distrobackend.repository.WarehouseRepository;
 import com.example.distrobackend.repository.OrganizationRepository;
@@ -384,6 +385,38 @@ class StockServiceTest {
                 .isInstanceOf(ApiException.class)
                 .hasMessage("An offer cannot be activated while its warehouse is inactive");
         verify(stockItemRepository, never()).save(any(StockItem.class));
+    }
+
+    @Test
+    void manufacturerProductionIntakeAddsStockAndIsIdempotent() {
+        var manufacturer = organization(organizationId, Organizationtype.MANUFACTURER);
+        user = new AuthenticatedUser(UUID.randomUUID(), UserRole.MANUFACTURER_STAFF, organizationId,
+                Organizationtype.MANUFACTURER, Instant.now().plusSeconds(60));
+        StockItem item = itemWithQuantity(8);
+        item.setOrganization(manufacturer);
+        Warehouse warehouse = new Warehouse();
+        warehouse.setId(UUID.randomUUID());
+        warehouse.setActive(true);
+        item.setWarehouse(warehouse);
+        when(organizationRepository.findById(organizationId)).thenReturn(java.util.Optional.of(manufacturer));
+        when(stockItemRepository.findByIdAndOrganizationIdForUpdateWithWarehouse(stockItemId, organizationId))
+                .thenReturn(java.util.Optional.of(item));
+        when(stockMovementRepository.findByStockItem_IdAndIdempotencyKey(stockItemId, "batch-7"))
+                .thenReturn(java.util.Optional.empty());
+        when(stockMovementRepository.saveAndFlush(any(StockMovement.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        var result = stockService.receiveProductionStock(user, stockItemId,
+                new CreateStockIntakeRequest(5, "batch-7", "PROD-2026-007", "Finished goods"));
+
+        assertThat(result.quantityOnHand()).isEqualTo(13);
+        assertThat(result.availableQuantity()).isEqualTo(13);
+        assertThat(item.getQuantityOnHand()).isEqualTo(13);
+        verify(stockMovementRepository).saveAndFlush(org.mockito.ArgumentMatchers.argThat(movement ->
+                movement.getMovementType() == StockMovementType.STOCK_INTAKE
+                        && movement.getQuantityDelta() == 5
+                        && "PROD-2026-007".equals(movement.getExternalReference())
+                        && "batch-7".equals(movement.getIdempotencyKey())));
     }
 
     private static com.example.distrobackend.Domain.entity.Organization organization(

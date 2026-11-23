@@ -1,10 +1,12 @@
 package com.example.distrobackend.controller;
 
 import com.example.distrobackend.dto.CreateStockItemRequest;
+import com.example.distrobackend.dto.CreateStockIntakeRequest;
 import com.example.distrobackend.dto.CreateRestockRequest;
 import com.example.distrobackend.dto.RestockRequestResponse;
 import com.example.distrobackend.dto.StockAdjustmentRequest;
 import com.example.distrobackend.dto.StockItemResponse;
+import com.example.distrobackend.dto.StockIntakeResponse;
 import com.example.distrobackend.dto.StockMovementResponse;
 import com.example.distrobackend.dto.PutAwayStockRequest;
 import com.example.distrobackend.dto.StockLocationResponse;
@@ -43,7 +45,7 @@ public class StockController {
     private final StockLocationService stockLocationService;
 
     @GetMapping("/items/{stockItemId}/locations")
-    @PreAuthorize("hasAnyRole('DISTRIBUTOR_ADMIN','DISTRIBUTOR_STAFF') and @tenantAccess.hasOrganization(authentication)")
+    @PreAuthorize("hasAnyRole('MANUFACTURER_ADMIN','MANUFACTURER_STAFF','DISTRIBUTOR_ADMIN','DISTRIBUTOR_STAFF') and @tenantAccess.hasOrganization(authentication)")
     public java.util.List<StockLocationResponse> locations(
             @AuthenticationPrincipal AuthenticatedUser user,
             @PathVariable UUID stockItemId) {
@@ -51,12 +53,29 @@ public class StockController {
     }
 
     @PostMapping("/items/{stockItemId}/locations")
-    @PreAuthorize("hasAnyRole('DISTRIBUTOR_ADMIN','DISTRIBUTOR_STAFF') and @tenantAccess.hasOrganization(authentication)")
+    @PreAuthorize("hasAnyRole('MANUFACTURER_ADMIN','MANUFACTURER_STAFF','DISTRIBUTOR_ADMIN','DISTRIBUTOR_STAFF') and @tenantAccess.hasOrganization(authentication)")
     public StockLocationResponse putAway(
             @AuthenticationPrincipal AuthenticatedUser user,
             @PathVariable UUID stockItemId,
             @Valid @RequestBody PutAwayStockRequest request) {
         return stockLocationService.putAway(user, stockItemId, request);
+    }
+
+    @PostMapping("/items/{id}/warehouse/{warehouseId}")
+    @PreAuthorize("hasAnyRole('MANUFACTURER_ADMIN','MANUFACTURER_STAFF') and @tenantAccess.hasOrganization(authentication)")
+    public StockItemResponse assignWarehouse(
+            @AuthenticationPrincipal AuthenticatedUser user,
+            @PathVariable UUID id, @PathVariable UUID warehouseId) {
+        return stockService.assignWarehouse(user, id, warehouseId);
+    }
+
+    @PostMapping("/items/{id}/intakes")
+    @PreAuthorize("hasAnyRole('MANUFACTURER_ADMIN','MANUFACTURER_STAFF') and @tenantAccess.hasOrganization(authentication)")
+    public StockIntakeResponse intake(
+            @AuthenticationPrincipal AuthenticatedUser user,
+            @PathVariable UUID id,
+            @Valid @RequestBody CreateStockIntakeRequest request) {
+        return stockService.receiveProductionStock(user, id, request);
     }
 
     @PostMapping("/audits")

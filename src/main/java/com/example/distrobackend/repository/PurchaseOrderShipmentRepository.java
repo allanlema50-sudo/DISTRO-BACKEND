@@ -50,6 +50,11 @@ public interface PurchaseOrderShipmentRepository extends JpaRepository<PurchaseO
     Page<PurchaseOrderShipment> findByPurchaseOrder_SupplierOrganization_IdOrderByCreatedAtDesc(
             UUID organizationId, Pageable pageable);
 
+    @EntityGraph(attributePaths = {"purchaseOrder", "purchaseOrder.buyerOrganization",
+            "purchaseOrder.supplierOrganization", "destinationWarehouse", "originWarehouse"})
+    Page<PurchaseOrderShipment> findByPurchaseOrder_SupplierOrganization_IdAndStatusOrderByCreatedAtDesc(
+            UUID organizationId, PurchaseOrderShipmentStatus status, Pageable pageable);
+
     boolean existsByPurchaseOrder_Id(UUID purchaseOrderId);
 
     long countByStatus(PurchaseOrderShipmentStatus status);

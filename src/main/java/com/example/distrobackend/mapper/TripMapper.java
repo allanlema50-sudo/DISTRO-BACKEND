@@ -33,7 +33,14 @@ public class TripMapper {
                         new TripLocation(stop.getLocationName(), stop.getLocationAddress(),
                                 stop.getLocationLat(), stop.getLocationLng()), stop.getStatus(), stop.getEtaLabel(),
                         stop.getDistanceFromPreviousKm(), stop.getOrder() == null ? null : stop.getOrder().getOrderNumber(),
-                        stop.getContactName(), stop.getContactPhone())).toList();
+                        stop.getContactName(), stop.getContactPhone(),
+                        stop.getPurchaseOrderShipmentGroup() == null ? null
+                                : stop.getPurchaseOrderShipmentGroup().getId(),
+                        stop.getPurchaseOrderShipmentGroup() == null ? null
+                                : stop.getPurchaseOrderShipmentGroup().getShipmentReference(),
+                        stop.getPurchaseOrderShipmentGroup() == null ? List.of()
+                                : stop.getPurchaseOrderShipmentGroup().getShipments().stream()
+                                    .map(shipment -> shipment.getPurchaseOrder().getPurchaseOrderNumber()).toList())).toList();
         return new TripResponse(trip.getId().toString(), trip.getTripNumber(), trip.getTripType(), trip.getStatus(),
                 trip.getRider() == null ? null : trip.getRider().getId(),
                 trip.getVehicle() == null ? null : trip.getVehicle().getId(), origin, stops, items,

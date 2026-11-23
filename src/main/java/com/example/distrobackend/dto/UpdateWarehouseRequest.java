@@ -10,5 +10,13 @@ public record UpdateWarehouseRequest(
         @Size(max = 60) String city,
         @Size(max = 20) String postalCode,
         @Size(max = 80) String siteManager,
-        @NotNull Long version
-) {}
+        @NotNull Long version,
+        Double latitude,
+        Double longitude,
+        @Size(max = 500) String locationDescription
+) {
+    public UpdateWarehouseRequest(String name, String address, String city, String postalCode,
+                                  String siteManager, Long version) {
+        this(name, address, city, postalCode, siteManager, version, null, null, null);
+    }
+}

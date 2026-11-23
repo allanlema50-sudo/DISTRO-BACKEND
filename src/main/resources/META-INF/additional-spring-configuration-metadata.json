@@ -54,5 +54,8 @@
     ,{ "name": "paystack.secret-key", "type": "java.lang.String", "description": "Paystack server-side secret key." }
     ,{ "name": "paystack.webhook-secret", "type": "java.lang.String", "description": "Paystack webhook signing secret." }
     ,{ "name": "paystack.callback-url", "type": "java.lang.String", "description": "Optional Paystack browser redirect URL." }
+    ,{ "name": "app.payments.webhook-max-attempts", "type": "java.lang.Integer", "description": "Maximum automatic processing attempts before a provider webhook event enters dead letter." }
+    ,{ "name": "app.payments.webhook-processing-batch-size", "type": "java.lang.Integer", "description": "Maximum provider webhook events processed in one scheduled run." }
+    ,{ "name": "app.payments.webhook-processing-timeout", "type": "java.time.Duration", "description": "After this duration, interrupted webhook processing claims become eligible for recovery." }
   ]
 }

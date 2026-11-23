@@ -1006,6 +1006,15 @@ Settlement and payout APIs are intentionally Super Admin controlled:
 | `POST` | `/api/v1/admin/financial/settlement-batches/{batchId}/approve` | `SUPER_ADMIN` | Approve the batch before any payout is attempted |
 | `POST` | `/api/v1/admin/financial/settlement-batches/{batchId}/execute` | `SUPER_ADMIN` | Initiate Paystack transfers for the approved batch |
 | `POST` | `/api/v1/admin/financial/settlements/{settlementId}/retry` | `SUPER_ADMIN` | Retry a failed or reversed transfer with its existing provider reference |
+| `GET` | `/api/v1/admin/financial/webhook-events?status=DEAD_LETTER` | `SUPER_ADMIN` | Inspect provider webhook processing state and failure reason |
+| `POST` | `/api/v1/admin/financial/webhook-events/{eventId}/retry` | `SUPER_ADMIN` | Requeue a dead-lettered event for processing |
+
+Paystack callbacks are signature-verified, stored in a durable inbox, and
+acknowledged before background processing. Raw callback bodies are not retained.
+Duplicate payloads are deduplicated
+by SHA-256 fingerprint. Processing retries use bounded exponential delays and
+move to `DEAD_LETTER` after the configured attempt limit; interrupted worker
+claims are recovered after the processing timeout.
 
 Typical payment status values are `INITIATING`, `PENDING`, `CONFIRMED`,
 `RECONCILED`, `FAILED`, and `REVERSED`. A successful STK response means the

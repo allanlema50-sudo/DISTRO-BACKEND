@@ -88,8 +88,24 @@ enable payouts. After Paystack approves transfers, set
 4. A Super Admin executes the approved batch. Each transfer has one stable
    reference, so an ambiguous provider response is not retried with a new
    transfer and cannot double-credit a beneficiary.
-5. Signed `transfer.success`, `transfer.failed`, and `transfer.reversed`
-   webhooks update the settlement and batch status.
+5. Webhooks are signature-verified and persisted before acknowledgement. A
+   bounded background worker processes charge and `transfer.success`,
+   `transfer.failed`, and `transfer.reversed` events.
+6. Events are deduplicated by payload fingerprint and retried with increasing
+   delays. After the configured attempt limit, Super Admins can inspect the
+   `DEAD_LETTER` event and manually requeue it through the admin API.
+
+Webhook processing settings:
+
+```dotenv
+PAYMENT_WEBHOOK_POLL_INTERVAL_MS=2000
+PAYMENT_WEBHOOK_MAX_ATTEMPTS=8
+PAYMENT_WEBHOOK_BATCH_SIZE=25
+PAYMENT_WEBHOOK_PROCESSING_TIMEOUT=5m
+```
+
+Only the parsed event fields and payload fingerprint are retained; raw callback
+bodies and signatures are not stored.
 
 Transfers use the Paystack balance. The business must complete Paystack's
 transfer/KYC setup and ensure its balance and transfer approval settings are

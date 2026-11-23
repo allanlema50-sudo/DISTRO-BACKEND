@@ -45,6 +45,7 @@ public class CentralizedCheckoutService {
     private final UserRepository userRepository;
     private final PurchaseOrderService purchaseOrderService;
     private final CheckoutPaymentAttemptStore paymentAttemptStore;
+    private final PurchaseOrderShipmentService purchaseOrderShipmentService;
     @Qualifier("darajaRestTemplate") private final RestTemplate darajaRestTemplate;
 
     @Value("${logiflow.marketplace-checkout.enabled:false}") private boolean marketplaceCheckoutEnabled;
@@ -357,7 +358,7 @@ public class CentralizedCheckoutService {
                 || callback.getMerchantRequestId() == null || callback.getResultCode() == null) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Invalid M-Pesa checkout callback");
         }
-        CheckoutPayment payment = checkoutPaymentRepository.findById(paymentId)
+        CheckoutPayment payment = checkoutPaymentRepository.findByIdForUpdate(paymentId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Checkout payment not found"));
         if (payment.getStatus() != CheckoutPaymentStatus.PENDING) return;
         if (payment.getMpesaCheckoutRequestId() != null
@@ -407,6 +408,7 @@ public class CentralizedCheckoutService {
             if (receipt != null && suppliedSecret != null && !suppliedSecret.isBlank()) payment.setProviderReference(receipt);
             else payment.setProviderReference(callback.getCheckoutRequestId());
             checkout.setStatus(CheckoutStatus.PAID); recordAllocations(payment);
+            purchaseOrderShipmentService.markCheckoutOrdersReady(payment);
         } else { payment.setStatus(callback.getResultCode()==1032 ? CheckoutPaymentStatus.CANCELLED : CheckoutPaymentStatus.FAILED); payment.setFailureReason(callback.getResultDesc()); checkout.setStatus(CheckoutStatus.PAYMENT_FAILED); }
         checkoutPaymentRepository.save(payment); checkoutRepository.save(checkout);
     }
@@ -451,6 +453,8 @@ public class CentralizedCheckoutService {
         if (!demoEnabled) return;
         OffsetDateTime cutoff = OffsetDateTime.now().minusSeconds(confirmationDelaySeconds);
         for (CheckoutPayment payment : checkoutPaymentRepository.findByDemoTrueAndStatusAndInitiatedAtBefore(CheckoutPaymentStatus.PENDING, cutoff)) {
+            payment = checkoutPaymentRepository.findByIdForUpdate(payment.getId()).orElse(null);
+            if (payment == null || payment.getStatus() != CheckoutPaymentStatus.PENDING) continue;
             Checkout checkout = payment.getCheckout();
             String outcome = demoOutcome.toUpperCase(Locale.ROOT);
             payment.setProviderReference("DEMO-" + UUID.randomUUID().toString().toUpperCase(Locale.ROOT));
@@ -461,6 +465,7 @@ public class CentralizedCheckoutService {
                     payment.setStatus(CheckoutPaymentStatus.SUCCESS);
                     checkout.setStatus(CheckoutStatus.PAID);
                     recordAllocations(payment);
+                    purchaseOrderShipmentService.markCheckoutOrdersReady(payment);
                     checkoutStatus = CheckoutStatus.PAID;
                 }
                 case "FAILED" -> { payment.setStatus(CheckoutPaymentStatus.FAILED); checkoutStatus = CheckoutStatus.PAYMENT_FAILED; }

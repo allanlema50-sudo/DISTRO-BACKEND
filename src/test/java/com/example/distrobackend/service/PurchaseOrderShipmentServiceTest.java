@@ -1,6 +1,9 @@
 package com.example.distrobackend.service;
 
 import com.example.distrobackend.Domain.entity.Organization;
+import com.example.distrobackend.Domain.entity.Checkout;
+import com.example.distrobackend.Domain.entity.CheckoutPayment;
+import com.example.distrobackend.Domain.entity.PaymentAllocation;
 import com.example.distrobackend.Domain.entity.PurchaseOrder;
 import com.example.distrobackend.Domain.entity.PurchaseOrderSettlement;
 import com.example.distrobackend.Domain.entity.PurchaseOrderItem;
@@ -57,8 +60,59 @@ class PurchaseOrderShipmentServiceTest {
     @Mock private StockMovementRepository stockMovementRepository;
     @Mock private UserRepository userRepository;
     @Mock private NotificationService notificationService;
+    @Mock private com.example.distrobackend.repository.PaymentAllocationRepository paymentAllocationRepository;
+    @Mock private com.example.distrobackend.repository.CheckoutItemRepository checkoutItemRepository;
 
     @InjectMocks private PurchaseOrderShipmentService shipmentService;
+
+    @Test
+    void confirmedCheckoutCreatesManufacturerSpecificReadyShipment() {
+        UUID checkoutId = UUID.randomUUID();
+        UUID buyerId = UUID.randomUUID();
+        UUID supplierId = UUID.randomUUID();
+        UUID poId = UUID.randomUUID();
+        Organization buyer = organization(buyerId, Organizationtype.DISTRIBUTOR);
+        Organization supplier = organization(supplierId, Organizationtype.MANUFACTURER);
+        Warehouse warehouse = new Warehouse();
+        warehouse.setId(UUID.randomUUID());
+        warehouse.setOrganization(buyer);
+        warehouse.setActive(true);
+        PurchaseOrder order = new PurchaseOrder();
+        order.setId(poId);
+        order.setStatus(PurchaseOrderStatus.APPROVED);
+        order.setBuyerOrganization(buyer);
+        order.setSupplierOrganization(supplier);
+        order.setDestinationWarehouse(warehouse);
+        order.setTotalAmount(new BigDecimal("120.00"));
+        order.setCurrency("KES");
+        order.setCreatedBy(new User());
+        Checkout checkout = new Checkout();
+        checkout.setId(checkoutId);
+        order.setCheckout(checkout);
+        CheckoutPayment payment = new CheckoutPayment();
+        payment.setId(UUID.randomUUID());
+        payment.setCheckout(checkout);
+        payment.setStatus(com.example.distrobackend.Domain.enums.CheckoutPaymentStatus.SUCCESS);
+        PaymentAllocation allocation = new PaymentAllocation();
+        allocation.setPayment(payment);
+        allocation.setGrossAmount(new BigDecimal("120.00"));
+        allocation.setCurrency("KES");
+        when(purchaseOrderRepository.findByCheckout_Id(checkoutId)).thenReturn(List.of(order));
+        when(paymentAllocationRepository.findByPurchaseOrder_Id(poId)).thenReturn(List.of(allocation));
+        when(shipmentRepository.findByPurchaseOrderId(poId)).thenReturn(Optional.empty());
+        when(shipmentRepository.save(any(PurchaseOrderShipment.class))).thenAnswer(call -> call.getArgument(0));
+        when(userRepository.findByOrganization_IdAndRole(any(), any(), any()))
+                .thenReturn(org.springframework.data.domain.Page.empty());
+
+        shipmentService.markCheckoutOrdersReady(payment);
+
+        org.mockito.ArgumentCaptor<PurchaseOrderShipment> captor =
+                org.mockito.ArgumentCaptor.forClass(PurchaseOrderShipment.class);
+        verify(shipmentRepository).save(captor.capture());
+        assertThat(captor.getValue().getStatus()).isEqualTo(PurchaseOrderShipmentStatus.READY_FOR_DISPATCH);
+        assertThat(captor.getValue().getPurchaseOrder()).isSameAs(order);
+        assertThat(captor.getValue().getDestinationWarehouse()).isSameAs(warehouse);
+    }
 
     @Test
     void shipmentCannotBeCreatedBeforeSettlement() {

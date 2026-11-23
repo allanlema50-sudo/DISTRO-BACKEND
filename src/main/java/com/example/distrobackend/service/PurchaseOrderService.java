@@ -296,7 +296,16 @@ public class PurchaseOrderService {
                 purchaseOrder.getDestinationWarehouse() == null ? null : purchaseOrder.getDestinationWarehouse().getId(),
                 checkoutPayment == null ? "PENDING" : checkoutPayment.getStatus().name(),
                 checkoutPayment != null && checkoutPayment.isDemo(),
-                checkoutPayment == null ? null : checkoutPayment.getProviderReference());
+                checkoutPayment == null ? null : checkoutPayment.getProviderReference(),
+                checkoutPayment == null ? "PENDING" : checkoutPayment.getStatus().name(),
+                checkoutPayment == null ? null : (checkoutPayment.isDemo() ? "DEMO" : checkoutPayment.getMethod().name()),
+                checkoutPayment == null || checkoutPayment.getStatus() != com.example.distrobackend.Domain.enums.CheckoutPaymentStatus.SUCCESS
+                        ? BigDecimal.ZERO : checkoutPayment.getAmount(),
+                checkoutPayment == null ? null : checkoutPayment.getConfirmedAt(),
+                checkoutPayment != null && checkoutPayment.getStatus() == com.example.distrobackend.Domain.enums.CheckoutPaymentStatus.SUCCESS
+                        && purchaseOrder.getStatus() == PurchaseOrderStatus.APPROVED ? "READY_FOR_DISPATCH" : "PAYMENT_PENDING",
+                checkoutPayment != null && checkoutPayment.getStatus() == com.example.distrobackend.Domain.enums.CheckoutPaymentStatus.SUCCESS
+                        && purchaseOrder.getStatus() == PurchaseOrderStatus.APPROVED);
     }
 
     private String displayName(Organization organization) {

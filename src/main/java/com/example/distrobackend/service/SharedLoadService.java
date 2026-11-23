@@ -18,7 +18,6 @@ import java.util.UUID;
 public class SharedLoadService {
     private final SharedLoadRepository loads;
     private final TripRepository trips;
-    private final OrganizationRepository organizations;
     private final UserRepository users;
     private final SharedLoadConfirmationRepository confirmations;
 

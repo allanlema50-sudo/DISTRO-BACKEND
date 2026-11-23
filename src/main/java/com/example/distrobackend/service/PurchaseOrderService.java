@@ -50,7 +50,6 @@ public class PurchaseOrderService {
     private final NotificationService notificationService;
     private final ProductAuthorizationService productAuthorizationService;
     private final DistributorProductAuthorizationRepository authorizationRepository;
-    private final com.example.distrobackend.repository.CheckoutPaymentRepository checkoutPaymentRepository;
 
     @Transactional
     public PurchaseOrderResponse create(AuthenticatedUser actor, CreatePurchaseOrderRequest request) {

@@ -716,16 +716,6 @@ public class TripService {
                 .stream().map(t -> TripResponse.from(t, aggregateItems(t))).toList();
     }
 
-    private Trip getOrganizationTrip(AuthenticatedUser actor, UUID tripId) {
-        Trip trip = tripRepository.findById(tripId)
-                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Trip not found"));
-        if (actor == null || actor.organizationId() == null || trip.getOrganization() == null
-                || !actor.organizationId().equals(trip.getOrganization().getId())) {
-            throw new ApiException(ErrorCode.ACCESS_DENIED);
-        }
-        return trip;
-    }
-
     private Trip getOrganizationTripForUpdate(AuthenticatedUser actor, UUID tripId) {
         if (actor == null) {
             throw new ApiException(ErrorCode.ACCESS_DENIED);

@@ -19,13 +19,13 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/v1/admin/drivers")
+@RequestMapping("/api/v1/admin/drivers/{driverId}")
 @RequiredArgsConstructor
 public class AdminDriverController {
     private final DriverService driverService;
 
     @PreAuthorize("hasRole('SUPER_ADMIN')")
-    @PatchMapping("/{driverId}/approval")
+    @PatchMapping("/approval")
     public DriverResponse updateApproval(@AuthenticationPrincipal AuthenticatedUser actor,
                                          @PathVariable UUID driverId,
                                          @Valid @RequestBody DriverApprovalRequest request) {
@@ -33,14 +33,14 @@ public class AdminDriverController {
     }
 
     @PreAuthorize("hasRole('SUPER_ADMIN')")
-    @PostMapping("/{driverId}/login-email")
+    @PostMapping("/login-email")
     public DriverResponse sendLoginEmail(@AuthenticationPrincipal AuthenticatedUser actor,
                                          @PathVariable UUID driverId) {
         return driverService.sendLoginEmail(actor, driverId);
     }
 
     @PreAuthorize("hasRole('SUPER_ADMIN')")
-    @PatchMapping("/{driverId}/profile-change")
+    @PatchMapping("/profile-change")
     public DriverResponse reviewProfileChange(@AuthenticationPrincipal AuthenticatedUser actor,
                                               @PathVariable UUID driverId,
                                               @Valid @RequestBody DriverProfileChangeDecisionRequest request) {

@@ -274,7 +274,7 @@ public class UserService {
 
     @Transactional
     public CustomerAddressResponse updateMyAddress(UUID userId, UUID addressId, CustomerAddressRequest request) {
-        User user = requireCustomerForUpdate(userId);
+        requireCustomerForUpdate(userId);
         CustomerAddress address = customerAddressRepository.findByIdAndUser_Id(addressId, userId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Address not found"));
         validateCoordinates(request.latitude(), request.longitude());

@@ -9,7 +9,6 @@ import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.service.PaymentService;
 import com.example.distrobackend.service.callbackhandling;
 import com.example.distrobackend.service.PaymentAdministrationService;
-import com.example.distrobackend.service.PurchaseOrderService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -19,7 +18,6 @@ import org.springframework.web.bind.annotation.*;
 import io.swagger.v3.oas.annotations.security.SecurityRequirements;
 
 import java.util.UUID;
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
 @RestController

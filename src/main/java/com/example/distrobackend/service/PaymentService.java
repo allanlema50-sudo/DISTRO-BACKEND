@@ -63,10 +63,8 @@ public class PaymentService {
     private final OrderService orderService;
     private final RestTemplate darajaRestTemplate;
     private final FinancialLedgerService financialLedgerService;
-    @Autowired(required = false)
-    private PurchaseOrderShipmentService purchaseOrderShipmentService;
-    @Autowired(required = false)
-    private ApplicationEventPublisher eventPublisher;
+    private final PurchaseOrderShipmentService purchaseOrderShipmentService;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Autowired
     public PaymentService(PaymentRepository paymentRepository,
@@ -75,7 +73,9 @@ public class PaymentService {
                           OrderRepository orderRepository,
                           OrderService orderService,
                           RestTemplate darajaRestTemplate,
-                          FinancialLedgerService financialLedgerService) {
+                          FinancialLedgerService financialLedgerService,
+                          PurchaseOrderShipmentService purchaseOrderShipmentService,
+                          ApplicationEventPublisher eventPublisher) {
         this.paymentRepository = paymentRepository;
         this.purchaseOrderRepository = purchaseOrderRepository;
         this.settlementRepository = settlementRepository;
@@ -83,6 +83,8 @@ public class PaymentService {
         this.orderService = orderService;
         this.darajaRestTemplate = darajaRestTemplate;
         this.financialLedgerService = financialLedgerService;
+        this.purchaseOrderShipmentService = purchaseOrderShipmentService;
+        this.eventPublisher = eventPublisher;
     }
 
     /** Compatibility constructor for existing customer-order unit fixtures. */
@@ -90,7 +92,8 @@ public class PaymentService {
                           OrderRepository orderRepository,
                           OrderService orderService,
                           RestTemplate darajaRestTemplate) {
-        this(paymentRepository, null, null, orderRepository, orderService, darajaRestTemplate, null);
+        this(paymentRepository, null, null, orderRepository, orderService, darajaRestTemplate,
+                null, null, null);
     }
 
     @Value("${mpesa.base-url}")

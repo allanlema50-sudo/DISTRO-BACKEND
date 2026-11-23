@@ -15,7 +15,6 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -49,7 +48,7 @@ public class CentralizedCheckoutService {
     private final CheckoutPaymentAttemptStore paymentAttemptStore;
     private final FinancialLedgerService financialLedgerService;
     private final PurchaseOrderShipmentService purchaseOrderShipmentService;
-    @Autowired(required = false) private ApplicationEventPublisher eventPublisher;
+    private final ApplicationEventPublisher eventPublisher;
     @Qualifier("darajaRestTemplate") private final RestTemplate darajaRestTemplate;
 
     @Value("${logiflow.marketplace-checkout.enabled:false}") private boolean marketplaceCheckoutEnabled;

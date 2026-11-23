@@ -20,6 +20,22 @@ CREATE TABLE commission_rules (
 CREATE INDEX idx_commission_rules_lookup
     ON commission_rules(currency, organization_type, active, effective_from);
 
+ALTER TABLE purchase_orders
+    ADD COLUMN fulfilment_recovery_attempts INTEGER NOT NULL DEFAULT 0,
+    ADD COLUMN fulfilment_next_recovery_at TIMESTAMPTZ,
+    ADD COLUMN fulfilment_last_recovery_error TEXT;
+
+-- PostgreSQL enforces non-overlapping active windows under concurrent writes.
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+
+ALTER TABLE commission_rules
+    ADD CONSTRAINT ex_commission_rules_no_active_overlap
+    EXCLUDE USING gist (
+        currency WITH =,
+        (COALESCE(organization_type::text, 'GLOBAL')) WITH =,
+        tstzrange(effective_from, effective_until, '[)') WITH &&
+    ) WHERE (active);
+
 CREATE TABLE ledger_accounts (
     id UUID PRIMARY KEY,
     account_type VARCHAR(40) NOT NULL,
@@ -42,6 +58,7 @@ CREATE TABLE ledger_journals (
     source_type VARCHAR(50) NOT NULL,
     source_id UUID NOT NULL,
     event_type VARCHAR(50) NOT NULL,
+    commission_rule_id UUID REFERENCES commission_rules(id),
     currency VARCHAR(3) NOT NULL,
     description TEXT NOT NULL,
     simulated BOOLEAN NOT NULL DEFAULT FALSE,

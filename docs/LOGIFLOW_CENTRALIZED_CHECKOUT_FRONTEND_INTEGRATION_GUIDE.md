@@ -2,7 +2,7 @@
 
 ## Payment methods
 
-The distributor centralized checkout is served under `/api/v1/checkouts`. Create the checkout using the distributor cart, then initiate payment against that checkout. Use `MPESA_SANDBOX` for Daraja sandbox STK Push. Use `DEMO`, `DEMO_MPESA`, or `DEMO_CARD` only for a simulated payment in an explicitly enabled non-production environment.
+The distributor centralized checkout is served under `/api/v1/checkouts`. Create the checkout using the distributor cart, then initiate payment against that checkout. Use `MPESA_SANDBOX` for Daraja sandbox STK Push. Use `DEMO`, `DEMO_MPESA`, or `DEMO_CARD` only for a simulated payment in an explicitly enabled, organization-allowlisted environment.
 
 DEMO uses the backend's existing scheduled simulator. The client can initiate a pending payment, but cannot choose its outcome or report success. The server applies the configured outcome after the configured delay, then runs the existing checkout confirmation and allocation workflow. Successful DEMO allocations and supplier settlement records remain marked simulated; supplier settlements remain `PENDING`. DEMO does not contact Daraja or transfer money. Responses identify the payment as `DEMO — NO MONEY TRANSFERRED`.
 
@@ -34,7 +34,7 @@ LOGIFLOW_DEMO_PAYMENT_OUTCOME=SUCCESS
 LOGIFLOW_DEMO_PAYMENT_DELAY_SECONDS=3
 ```
 
-Keep the production service on its production profile and leave `LOGIFLOW_DEMO_PAYMENTS_ENABLED` unset or set to `false`. Never use the production database for the staging service. If the allowed distributor organization changes, update the UUID allowlist and redeploy. A missing DEMO enable flag produces `503 PAYMENT_NOT_CONFIGURED` with “DEMO checkout payment is disabled”; a buyer outside the allowlist receives an authorization failure.
+Keep `LOGIFLOW_DEMO_PAYMENTS_ENABLED=false` unless a controlled test is explicitly required. Never use the production database for a demo test. If the flag is enabled, update the UUID allowlist and redeploy; a missing flag produces `503 PAYMENT_NOT_CONFIGURED` with “DEMO checkout payment is disabled”, while a buyer outside the allowlist receives an authorization failure.
 
 Deployment steps:
 

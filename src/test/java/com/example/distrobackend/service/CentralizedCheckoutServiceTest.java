@@ -97,7 +97,7 @@ class CentralizedCheckoutServiceTest {
   assertThat(result.payment().providerReference()).startsWith("DEMO-PENDING-");
   assertThat(checkout.getPayment().getStatus()).isEqualTo(CheckoutPaymentStatus.PENDING);
  }
- @Test void enabledDemoAllowsTheProductionProfileWhenAnOrganizationIsAllowlisted() {
+ @Test void enabledDemoCanRunWhenExplicitlyEnabledAndAllowlisted() {
   ReflectionTestUtils.setField(service,"demoEnabled",true);
   ReflectionTestUtils.setField(service,"demoOrganizationIds",UUID.randomUUID().toString());
   ReflectionTestUtils.setField(service,"demoOutcome","SUCCESS");

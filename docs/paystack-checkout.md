@@ -185,3 +185,11 @@ the backend.
 Transfers use the Paystack balance. The business must complete Paystack's
 transfer/KYC setup and ensure its balance and transfer approval settings are
 ready before enabling this capability.
+
+Each settlement retry receives a new provider reference and a durable attempt
+record. `GET /api/v1/admin/financial/settlements/{settlementId}/attempts`
+shows the attempt number, Paystack reference and transfer code, outcome,
+timestamps, and failure reason to Super Admins. Late callbacks update their
+matching attempt; a failure callback for an older attempt cannot overwrite the
+state of a newer retry. Ledger payout and reversal journals are keyed to the
+attempt number so a reversal cannot reverse a different retry's payout.

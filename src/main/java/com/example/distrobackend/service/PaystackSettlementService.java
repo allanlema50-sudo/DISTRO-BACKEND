@@ -29,6 +29,7 @@ public class PaystackSettlementService {
     private final PaymentDisputeRepository disputeRepository;
     private final CheckoutPaymentRepository checkoutPaymentRepository;
     private final FinancialLedgerService financialLedgerService;
+    private final SupplierPayoutAttemptRepository payoutAttemptRepository;
 
     @Transactional
     public PayoutBeneficiaryResponse createBeneficiary(AuthenticatedUser actor,
@@ -111,6 +112,21 @@ public class PaystackSettlementService {
         SupplierSettlementStatus requested = status == null ? SupplierSettlementStatus.PENDING : status;
         return settlementRepository.findByStatusOrderByCreatedAtAsc(requested, pageable)
                 .map(SupplierSettlementAdminResponse::from);
+    }
+
+    @Transactional(readOnly = true)
+    public Page<SupplierPayoutAttemptResponse> listPayoutAttempts(AuthenticatedUser actor,
+                                                                  UUID settlementId,
+                                                                  Pageable pageable) {
+        requirePlatformAdmin(actor);
+        if (!settlementRepository.existsById(settlementId)) {
+            throw new ApiException(ErrorCode.NOT_FOUND, "Supplier settlement not found");
+        }
+        int page = Math.max(0, pageable.getPageNumber());
+        int size = Math.max(1, Math.min(pageable.getPageSize(), 100));
+        return payoutAttemptRepository.findBySettlement_IdOrderByAttemptNumberDesc(
+                        settlementId, org.springframework.data.domain.PageRequest.of(page, size))
+                .map(SupplierPayoutAttemptResponse::from);
     }
 
     @Transactional
@@ -221,15 +237,41 @@ public class PaystackSettlementService {
     @Transactional
     public void processPaystackWebhook(PaystackPaymentService.Webhook webhook) {
         if (!Set.of("transfer.success", "transfer.failed", "transfer.reversed").contains(webhook.event())) return;
-        SupplierSettlement settlement = settlementRepository.findByPayoutReferenceForUpdate(webhook.reference())
+        SupplierPayoutAttempt attempt = payoutAttemptRepository
+                .findByProviderReferenceForUpdate(webhook.reference()).orElse(null);
+        if (attempt == null) return;
+        SupplierSettlement settlement = settlementRepository.findByIdForUpdate(attempt.getSettlement().getId())
                 .orElse(null);
-        if (settlement == null || settlement.getProvider() != PaymentProvider.PAYSTACK) return;
-        if (webhook.transferCode() != null) settlement.setProviderTransferCode(webhook.transferCode());
-        if (webhook.amountMinor() != null && webhook.currency() != null) {
-            long expected = webhookAmount(settlement.getAmount(), settlement.getCurrency());
-            if (webhook.amountMinor() != expected || !settlement.getCurrency().equalsIgnoreCase(webhook.currency())) {
-                settlement.setStatus(SupplierSettlementStatus.FAILED);
-                settlement.setFailureReason("Paystack transfer amount or currency mismatch");
+        if (settlement == null) return;
+        if (settlement.getProvider() != PaymentProvider.PAYSTACK) return;
+        if (("transfer.success".equals(webhook.event())
+                && attempt.getStatus() == SupplierPayoutAttemptStatus.SUCCEEDED)
+                || ("transfer.failed".equals(webhook.event())
+                && attempt.getStatus() == SupplierPayoutAttemptStatus.FAILED)
+                || ("transfer.reversed".equals(webhook.event())
+                && attempt.getStatus() == SupplierPayoutAttemptStatus.REVERSED)) {
+            return;
+        }
+        if (webhook.transferCode() != null) {
+            attempt.setProviderTransferCode(webhook.transferCode());
+            settlement.setProviderTransferCode(webhook.transferCode());
+        }
+        if (webhook.amountMinor() != null || webhook.currency() != null) {
+            long expected = webhookAmount(attempt.getAmount(), attempt.getCurrency());
+            if (webhook.amountMinor() == null || webhook.currency() == null
+                    || webhook.amountMinor() != expected || !attempt.getCurrency().equalsIgnoreCase(webhook.currency())) {
+                if (attempt.getStatus() == SupplierPayoutAttemptStatus.SUCCEEDED
+                        || attempt.getStatus() == SupplierPayoutAttemptStatus.REVERSED) return;
+                attempt.setStatus(SupplierPayoutAttemptStatus.OUTCOME_UNKNOWN);
+                attempt.setFailureReason("Paystack transfer amount or currency mismatch; manual reconciliation required");
+                attempt.setCompletedAt(OffsetDateTime.now());
+                payoutAttemptRepository.save(attempt);
+                if (attempt.getAttemptNumber() == settlement.getPayoutAttempts()
+                        && settlement.getStatus() != SupplierSettlementStatus.SETTLED) {
+                    settlement.setStatus(SupplierSettlementStatus.PROCESSING);
+                    settlement.setFailureReason(attempt.getFailureReason());
+                    settlement.setNextReconciliationAt(OffsetDateTime.now().plusMinutes(1));
+                }
                 settlementRepository.save(settlement);
                 refreshBatchStatus(settlement.getSettlementBatch());
                 return;
@@ -237,24 +279,44 @@ public class PaystackSettlementService {
         }
         switch (webhook.event()) {
             case "transfer.success" -> {
-                financialLedgerService.recordSupplierPayout(settlement);
+                if (attempt.getStatus() == SupplierPayoutAttemptStatus.REVERSED) return;
+                financialLedgerService.recordSupplierPayout(settlement, attempt.getAttemptNumber());
+                attempt.setStatus(SupplierPayoutAttemptStatus.SUCCEEDED);
+                attempt.setCompletedAt(OffsetDateTime.now());
+                attempt.setFailureReason(null);
                 settlement.setStatus(SupplierSettlementStatus.SETTLED);
                 settlement.setSettledAt(OffsetDateTime.now());
                 settlement.setFailureReason(null);
+                settlement.setNextReconciliationAt(null);
             }
             case "transfer.failed" -> {
-                settlement.setStatus(SupplierSettlementStatus.FAILED);
-                settlement.setFailureReason(webhook.gatewayResponse() == null
-                        ? "Paystack reported a failed transfer" : webhook.gatewayResponse());
+                if (attempt.getStatus() != SupplierPayoutAttemptStatus.SUCCEEDED
+                        && attempt.getStatus() != SupplierPayoutAttemptStatus.REVERSED) {
+                    attempt.setStatus(SupplierPayoutAttemptStatus.FAILED);
+                    attempt.setCompletedAt(OffsetDateTime.now());
+                    attempt.setFailureReason(webhook.gatewayResponse() == null
+                            ? "Paystack reported a failed transfer" : webhook.gatewayResponse());
+                    if (attempt.getAttemptNumber() == settlement.getPayoutAttempts()
+                            && settlement.getStatus() != SupplierSettlementStatus.SETTLED) {
+                        settlement.setStatus(SupplierSettlementStatus.FAILED);
+                        settlement.setFailureReason(attempt.getFailureReason());
+                    }
+                }
             }
             case "transfer.reversed" -> {
-                financialLedgerService.recordSupplierPayout(settlement);
-                financialLedgerService.recordSupplierPayoutReversal(settlement);
-                settlement.setStatus(SupplierSettlementStatus.REVERSED);
-                settlement.setFailureReason("Paystack reversed the transfer");
+                financialLedgerService.recordSupplierPayout(settlement, attempt.getAttemptNumber());
+                financialLedgerService.recordSupplierPayoutReversal(settlement, attempt.getAttemptNumber());
+                attempt.setStatus(SupplierPayoutAttemptStatus.REVERSED);
+                attempt.setCompletedAt(OffsetDateTime.now());
+                attempt.setFailureReason("Paystack reversed the transfer");
+                if (attempt.getAttemptNumber() == settlement.getPayoutAttempts()) {
+                    settlement.setStatus(SupplierSettlementStatus.REVERSED);
+                    settlement.setFailureReason(attempt.getFailureReason());
+                }
             }
             default -> { return; }
         }
+        payoutAttemptRepository.save(attempt);
         settlementRepository.save(settlement);
         refreshBatchStatus(settlement.getSettlementBatch());
     }
@@ -267,27 +329,59 @@ public class PaystackSettlementService {
             settlement.setFailureReason("No active payout beneficiary is attached");
             return;
         }
+        int attemptNumber = Math.toIntExact(payoutAttemptRepository
+                .findTopBySettlement_IdOrderByAttemptNumberDesc(settlement.getId())
+                .map(previous -> (long) previous.getAttemptNumber() + 1).orElse(1L));
+        String reference = "lfp_" + settlement.getId().toString().replace("-", "") + "_" + attemptNumber;
+        OffsetDateTime now = OffsetDateTime.now();
+        SupplierPayoutAttempt attempt = new SupplierPayoutAttempt();
+        attempt.setSettlement(settlement);
+        attempt.setAttemptNumber(attemptNumber);
+        attempt.setProviderReference(reference);
+        attempt.setStatus(SupplierPayoutAttemptStatus.PROCESSING);
+        attempt.setAmount(settlement.getAmount());
+        attempt.setCurrency(settlement.getCurrency());
+        attempt.setStartedAt(now);
+        attempt = payoutAttemptRepository.saveAndFlush(attempt);
+        settlement.setPayoutReference(reference);
         settlement.setStatus(SupplierSettlementStatus.PROCESSING);
-        settlement.setPayoutAttempts(settlement.getPayoutAttempts() + 1);
-        settlement.setLastAttemptAt(OffsetDateTime.now());
+        settlement.setPayoutAttempts(attemptNumber);
+        settlement.setLastAttemptAt(now);
+        settlement.setNextReconciliationAt(now.plusMinutes(1));
         try {
             PaystackPaymentService.Transfer transfer = paystackPaymentService.initiateTransfer(
-                    settlement.getPayoutReference(), settlement.getAmount(), settlement.getCurrency(),
+                    attempt.getProviderReference(), settlement.getAmount(), settlement.getCurrency(),
                     settlement.getBeneficiary().getProviderRecipientCode(),
                     "LogiFlow supplier settlement " + settlement.getId());
+            attempt.setProviderTransferCode(transfer.transferCode());
             settlement.setProviderTransferCode(transfer.transferCode());
             settlement.setFailureReason(null);
             if ("success".equalsIgnoreCase(transfer.status())) {
-                financialLedgerService.recordSupplierPayout(settlement);
+                financialLedgerService.recordSupplierPayout(settlement, attemptNumber);
+                attempt.setStatus(SupplierPayoutAttemptStatus.SUCCEEDED);
+                attempt.setCompletedAt(OffsetDateTime.now());
                 settlement.setStatus(SupplierSettlementStatus.SETTLED);
                 settlement.setSettledAt(OffsetDateTime.now());
+                settlement.setNextReconciliationAt(null);
+            } else if ("failed".equalsIgnoreCase(transfer.status())) {
+                attempt.setStatus(SupplierPayoutAttemptStatus.FAILED);
+                attempt.setFailureReason("Paystack reported a failed transfer");
+                attempt.setCompletedAt(OffsetDateTime.now());
+                settlement.setStatus(SupplierSettlementStatus.FAILED);
+                settlement.setFailureReason(attempt.getFailureReason());
             }
         } catch (PaystackPaymentService.ProviderOutcomeUnknownException ex) {
+            attempt.setStatus(SupplierPayoutAttemptStatus.OUTCOME_UNKNOWN);
+            attempt.setFailureReason("Paystack transfer outcome is unknown; reconciliation is required");
             settlement.setFailureReason("Paystack transfer outcome is unknown; reconciliation is required");
         } catch (ApiException ex) {
+            attempt.setStatus(SupplierPayoutAttemptStatus.FAILED);
+            attempt.setFailureReason(ex.getMessage());
+            attempt.setCompletedAt(OffsetDateTime.now());
             settlement.setStatus(SupplierSettlementStatus.FAILED);
             settlement.setFailureReason(ex.getMessage());
         }
+        payoutAttemptRepository.save(attempt);
         settlementRepository.save(settlement);
     }
 

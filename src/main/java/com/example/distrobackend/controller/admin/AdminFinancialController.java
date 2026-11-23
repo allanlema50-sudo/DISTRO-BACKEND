@@ -8,6 +8,7 @@ import com.example.distrobackend.dto.PayoutBeneficiaryResponse;
 import com.example.distrobackend.dto.ReviewPayoutBeneficiaryRequest;
 import com.example.distrobackend.dto.SettlementBatchResponse;
 import com.example.distrobackend.dto.SupplierSettlementAdminResponse;
+import com.example.distrobackend.dto.SupplierPayoutAttemptResponse;
 import com.example.distrobackend.dto.ProviderWebhookEventResponse;
 import com.example.distrobackend.dto.CreatePaymentRefundRequest;
 import com.example.distrobackend.dto.PaymentRefundResponse;
@@ -107,6 +108,14 @@ public class AdminFinancialController {
             @RequestParam(required = false) SupplierSettlementStatus status,
             Pageable pageable) {
         return paystackSettlementService.listSettlements(actor, status, pageable);
+    }
+
+    @GetMapping("/settlements/{settlementId}/attempts")
+    public Page<SupplierPayoutAttemptResponse> payoutAttempts(
+            @AuthenticationPrincipal AuthenticatedUser actor,
+            @PathVariable UUID settlementId,
+            Pageable pageable) {
+        return paystackSettlementService.listPayoutAttempts(actor, settlementId, pageable);
     }
 
     @GetMapping("/settlement-batches")

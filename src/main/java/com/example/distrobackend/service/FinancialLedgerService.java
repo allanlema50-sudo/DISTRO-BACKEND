@@ -109,26 +109,17 @@ public class FinancialLedgerService {
     }
 
     @Transactional
-    public void recordSupplierPayout(SupplierSettlement settlement) {
+    public void recordSupplierPayout(SupplierSettlement settlement, int attemptNumber) {
         if (settlement == null || settlement.getId() == null || settlement.getAmount() == null
-                || settlement.getAmount().signum() <= 0 || settlement.getSupplierOrganization() == null) {
+                || settlement.getAmount().signum() <= 0 || settlement.getSupplierOrganization() == null
+                || attemptNumber <= 0) {
             throw new ApiException(ErrorCode.BAD_REQUEST,
                     "A valid supplier settlement is required for ledger posting");
         }
         String sourceType = "SUPPLIER_SETTLEMENT";
-        java.util.List<LedgerJournal> history = journalRepository
-                .findBySourceTypeAndSourceIdOrderByCreatedAtAsc(sourceType, settlement.getId());
-        java.util.Set<String> reversedEvents = history.stream().map(LedgerJournal::getEventType)
-                .filter(event -> event.startsWith("PAYOUT_REVERSED_"))
-                .collect(java.util.stream.Collectors.toSet());
-        java.util.List<LedgerJournal> payoutEvents = history.stream()
-                .filter(journal -> journal.getEventType().startsWith("PAYOUT_SETTLED_"))
-                .toList();
-        boolean hasOpenPayout = payoutEvents.stream().anyMatch(journal -> !reversedEvents.contains(
-                journal.getEventType().replace("PAYOUT_SETTLED_", "PAYOUT_REVERSED_")));
-        if (hasOpenPayout) return;
-
-        int attempt = payoutEvents.size() + 1;
+        String eventType = "PAYOUT_SETTLED_" + attemptNumber;
+        if (journalRepository.findBySourceTypeAndSourceIdAndEventType(sourceType, settlement.getId(), eventType)
+                .isPresent()) return;
         String currency = normalizeCurrency(settlement.getCurrency());
         LedgerAccount payable = organizationAccount(LedgerAccountType.ORGANIZATION_PAYABLE, currency,
                 settlement.getSupplierOrganization());
@@ -136,7 +127,7 @@ public class FinancialLedgerService {
         LedgerJournal payout = new LedgerJournal();
         payout.setSourceType(sourceType);
         payout.setSourceId(settlement.getId());
-        payout.setEventType("PAYOUT_SETTLED_" + attempt);
+        payout.setEventType(eventType);
         payout.setCurrency(currency);
         payout.setDescription("Confirmed supplier payout " + safeReference(settlement.getPayoutReference()));
         payout.setSimulated(false);
@@ -149,25 +140,21 @@ public class FinancialLedgerService {
     }
 
     @Transactional
-    public void recordSupplierPayoutReversal(SupplierSettlement settlement) {
-        if (settlement == null || settlement.getId() == null) {
+    public void recordSupplierPayoutReversal(SupplierSettlement settlement, int attemptNumber) {
+        if (settlement == null || settlement.getId() == null || attemptNumber <= 0) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "A supplier settlement is required for payout reversal");
         }
-        java.util.List<LedgerJournal> history = journalRepository
-                .findBySourceTypeAndSourceIdOrderByCreatedAtAsc("SUPPLIER_SETTLEMENT", settlement.getId());
-        java.util.Set<String> reversedEvents = history.stream().map(LedgerJournal::getEventType)
-                .filter(event -> event.startsWith("PAYOUT_REVERSED_"))
-                .collect(java.util.stream.Collectors.toSet());
-        LedgerJournal payout = history.stream()
-                .filter(journal -> journal.getEventType().startsWith("PAYOUT_SETTLED_"))
-                .filter(journal -> !reversedEvents.contains(journal.getEventType()
-                        .replace("PAYOUT_SETTLED_", "PAYOUT_REVERSED_")))
-                .reduce((first, second) -> second).orElse(null);
+        String payoutEvent = "PAYOUT_SETTLED_" + attemptNumber;
+        String reversalEvent = "PAYOUT_REVERSED_" + attemptNumber;
+        if (journalRepository.findBySourceTypeAndSourceIdAndEventType(
+                "SUPPLIER_SETTLEMENT", settlement.getId(), reversalEvent).isPresent()) return;
+        LedgerJournal payout = journalRepository.findBySourceTypeAndSourceIdAndEventType(
+                "SUPPLIER_SETTLEMENT", settlement.getId(), payoutEvent).orElse(null);
         if (payout == null) return;
         LedgerJournal reversal = new LedgerJournal();
         reversal.setSourceType("SUPPLIER_SETTLEMENT");
         reversal.setSourceId(settlement.getId());
-        reversal.setEventType(payout.getEventType().replace("PAYOUT_SETTLED_", "PAYOUT_REVERSED_"));
+        reversal.setEventType(reversalEvent);
         reversal.setCurrency(payout.getCurrency());
         reversal.setDescription("Reversal of confirmed supplier payout "
                 + safeReference(settlement.getPayoutReference()));

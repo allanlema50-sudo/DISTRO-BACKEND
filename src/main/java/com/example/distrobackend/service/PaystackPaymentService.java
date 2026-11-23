@@ -118,6 +118,9 @@ public class PaystackPaymentService {
                     URI.create(baseUrl + "/transaction/initialize"), HttpMethod.POST,
                     new HttpEntity<>(body, headers), String.class);
         } catch (HttpStatusCodeException ex) {
+            if (ex.getStatusCode().is5xxServerError() || ex.getStatusCode().value() == 408) {
+                throw new ProviderOutcomeUnknownException("Paystack initialization outcome is unknown", ex);
+            }
             throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED,
                     "Paystack rejected the payment initialization request");
         } catch (RestClientException ex) {
@@ -139,7 +142,8 @@ public class PaystackPaymentService {
         String providerReference = data.path("reference").asText("");
         String authorizationUrl = data.path("authorization_url").asText("");
         String accessCode = data.path("access_code").asText("");
-        if (providerReference.isBlank() || authorizationUrl.isBlank() || accessCode.isBlank()) {
+        if (providerReference.isBlank() || !reference.equals(providerReference)
+                || authorizationUrl.isBlank() || accessCode.isBlank()) {
             throw new ProviderOutcomeUnknownException("Paystack returned an incomplete initialization response", null);
         }
         return new Initialization(providerReference, authorizationUrl, accessCode, normalizedChannel);
@@ -167,6 +171,42 @@ public class PaystackPaymentService {
                     data.path("currency").asText(null), data.path("gateway_response").asText(null));
         } catch (IOException ex) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack webhook body is not valid JSON");
+        }
+    }
+
+    public Verification verifyTransaction(String reference) {
+        requireEnabled();
+        if (reference == null || !REFERENCE.matcher(reference).matches()) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack payment reference is invalid");
+        }
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(secretKey);
+        ResponseEntity<String> response;
+        try {
+            response = restTemplate.exchange(URI.create(baseUrl + "/transaction/verify/" + reference),
+                    HttpMethod.GET, new HttpEntity<>(headers), String.class);
+        } catch (HttpStatusCodeException ex) {
+            if (ex.getStatusCode().value() == 404) {
+                return new Verification(reference, "not_found", null, null);
+            }
+            throw new ProviderOutcomeUnknownException("Paystack verification request failed", ex);
+        } catch (RestClientException ex) {
+            throw new ProviderOutcomeUnknownException("Paystack verification outcome is unknown", ex);
+        }
+
+        try {
+            JsonNode root = response.getBody() == null ? null : objectMapper.readTree(response.getBody());
+            JsonNode data = root == null ? null : root.path("data");
+            if (root == null || !root.path("status").asBoolean(false) || data == null || data.isMissingNode()) {
+                throw new ProviderOutcomeUnknownException("Paystack returned an incomplete verification response", null);
+            }
+            String verifiedReference = data.path("reference").asText("");
+            String status = data.path("status").asText("").trim().toLowerCase(Locale.ROOT);
+            Long amount = data.path("amount").canConvertToLong() ? data.path("amount").longValue() : null;
+            String verifiedCurrency = data.path("currency").asText(null);
+            return new Verification(verifiedReference, status, amount, verifiedCurrency);
+        } catch (IOException ex) {
+            throw new ProviderOutcomeUnknownException("Paystack returned invalid verification data", ex);
         }
     }
 
@@ -280,6 +320,8 @@ public class PaystackPaymentService {
 
     public record Webhook(String event, String reference, String status, Long amountMinor,
                            String currency, String gatewayResponse) {}
+
+    public record Verification(String reference, String status, Long amountMinor, String currency) {}
 
     public static class ProviderOutcomeUnknownException extends RuntimeException {
         public ProviderOutcomeUnknownException(String message, Throwable cause) {

@@ -26,6 +26,8 @@ import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.http.*;
 import java.nio.charset.StandardCharsets;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 import java.time.format.DateTimeFormatter;
 import java.time.ZoneId;
 import java.util.Base64;
@@ -203,8 +205,10 @@ public class CentralizedCheckoutService {
         if (paystack) {
             String reference = "LF-" + checkout.getCheckoutReference() + "-"
                     + attempt.paymentId().toString().replace("-", "").substring(0, 12);
-            paymentAttemptStore.preparePaystack(attempt.paymentId(), reference);
+            boolean providerRequestStarted = false;
             try {
+                paymentAttemptStore.preparePaystack(attempt.paymentId(), reference);
+                providerRequestStarted = true;
                 PaystackPaymentService.Initialization result = paystackPaymentService.initialize(
                         reference, checkout.getTotalAmount(), checkout.getCurrency(),
                         checkout.getCreatedBy().getEmail(), paystackChannel,
@@ -214,15 +218,20 @@ public class CentralizedCheckoutService {
             } catch (PaystackPaymentService.ProviderOutcomeUnknownException ex) {
                 paymentAttemptStore.markOutcomeUnknown(attempt.paymentId());
                 throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED,
-                        "Paystack payment status is temporarily unknown; retry by checking the checkout status");
+                        "Paystack payment status is being verified; do not start another payment attempt");
             } catch (RuntimeException ex) {
-                paymentAttemptStore.markFailed(attempt.paymentId(),
-                        ex instanceof ApiException ? ex.getMessage() : "Paystack request failed");
+                if (!providerRequestStarted || ex instanceof ApiException) {
+                    paymentAttemptStore.markFailed(attempt.paymentId(),
+                            ex instanceof ApiException ? ex.getMessage() : "Paystack attempt could not be prepared");
+                } else {
+                    paymentAttemptStore.markOutcomeUnknown(attempt.paymentId());
+                }
                 throw ex;
             }
         } else if (!demo) {
             DarajaStkResult result;
             try {
+                paymentAttemptStore.prepareDaraja(attempt.paymentId());
                 result = initiateDaraja(attempt.paymentId(), checkout.getCheckoutReference(),
                         request.phoneNumber(), mpesaAmount);
             } catch (StkPushOutcomeUnknownException ex) {
@@ -260,7 +269,8 @@ public class CentralizedCheckoutService {
         String timestamp = java.time.LocalDateTime.now(ZoneId.of("Africa/Nairobi")).format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
         String password = Base64.getEncoder().encodeToString((mpesaShortcode + mpesaPasskey + timestamp).getBytes(StandardCharsets.UTF_8));
         String callbackUrl = org.springframework.web.util.UriComponentsBuilder.fromUriString(mpesaCheckoutCallbackUrl)
-                .queryParam("paymentId", paymentId).build().encode().toUriString();
+                .queryParam("paymentId", paymentId)
+                .queryParam("callbackToken", mpesaCallbackToken(paymentId)).build().encode().toUriString();
         Map<String,Object> body = Map.ofEntries(
                 Map.entry("BusinessShortCode", mpesaShortcode), Map.entry("Password", password),
                 Map.entry("Timestamp", timestamp), Map.entry("TransactionType", "CustomerPayBillOnline"),
@@ -329,7 +339,7 @@ public class CentralizedCheckoutService {
             default -> null;
         };
         if (expectedHost == null || mpesaConsumerKey.isBlank() || mpesaConsumerSecret.isBlank()
-                || mpesaShortcode.isBlank() || mpesaPasskey.isBlank()) {
+                || mpesaShortcode.isBlank() || mpesaPasskey.isBlank() || mpesaCallbackSecret.isBlank()) {
             throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "M-Pesa is not configured for a supported Daraja environment");
         }
         requireDarajaEndpoint(mpesaAuthUrl, expectedHost, "MPESA_AUTH_URL");
@@ -362,6 +372,28 @@ public class CentralizedCheckoutService {
         }
     }
 
+    private String mpesaCallbackToken(UUID paymentId) {
+        try {
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(mpesaCallbackSecret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            byte[] token = mac.doFinal(("logiflow-mpesa-callback:" + paymentId).getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(token);
+        } catch (Exception ex) {
+            throw new IllegalStateException("Unable to sign M-Pesa callback URL", ex);
+        }
+    }
+
+    private boolean validMpesaCallbackToken(UUID paymentId, String suppliedToken) {
+        if (suppliedToken == null || suppliedToken.isBlank() || mpesaCallbackSecret.isBlank()) return false;
+        try {
+            byte[] expected = HexFormat.of().parseHex(mpesaCallbackToken(paymentId));
+            byte[] supplied = HexFormat.of().parseHex(suppliedToken.trim());
+            return java.security.MessageDigest.isEqual(expected, supplied);
+        } catch (IllegalArgumentException ex) {
+            return false;
+        }
+    }
+
     
     @Transactional
     public CheckoutResponse cancel(AuthenticatedUser actor, UUID checkoutId) {
@@ -374,9 +406,11 @@ public class CentralizedCheckoutService {
         if (payment != null) checkout.setPayment(payment);
         if (payment != null && payment.getStatus() == CheckoutPaymentStatus.SUCCESS)
             throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT, "Checkout payment is no longer pending");
-        if (payment != null && payment.getStatus() == CheckoutPaymentStatus.PENDING && !payment.isDemo()) {
+        if (payment != null && !payment.isDemo()
+                && (payment.getStatus() == CheckoutPaymentStatus.PENDING
+                || payment.getStatus() == CheckoutPaymentStatus.UNKNOWN)) {
             throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
-                    "An M-Pesa request may already be processing; wait for provider confirmation before cancelling");
+                    "A provider payment may still complete; wait for provider confirmation before cancelling");
         }
         if (payment != null && payment.getStatus() == CheckoutPaymentStatus.PENDING) {
             payment.setStatus(CheckoutPaymentStatus.CANCELLED);
@@ -402,7 +436,8 @@ public class CentralizedCheckoutService {
         // handled it. A reference that is not ours is acknowledged without
         // revealing whether a payment exists.
         if (payment == null || payment.getProvider() != com.example.distrobackend.Domain.enums.PaymentProvider.PAYSTACK) return;
-        if (payment.getStatus() != CheckoutPaymentStatus.PENDING) return;
+        if (payment.getStatus() != CheckoutPaymentStatus.PENDING
+                && payment.getStatus() != CheckoutPaymentStatus.UNKNOWN) return;
 
         if ("charge.success".equals(webhook.event())) {
             if (!"success".equalsIgnoreCase(webhook.status())) {
@@ -442,6 +477,47 @@ public class CentralizedCheckoutService {
         checkoutRepository.save(payment.getCheckout());
     }
 
+    @Transactional
+    public boolean applyPaystackVerification(UUID paymentId, String requestedReference,
+                                            PaystackPaymentService.Verification verification) {
+        CheckoutPayment payment = checkoutPaymentRepository.findByIdForUpdate(paymentId).orElse(null);
+        if (payment == null || payment.getProvider() != PaymentProvider.PAYSTACK
+                || (payment.getStatus() != CheckoutPaymentStatus.PENDING
+                && payment.getStatus() != CheckoutPaymentStatus.UNKNOWN)) return true;
+        if (!Objects.equals(payment.getProviderReference(), requestedReference)
+                || !Objects.equals(requestedReference, verification.reference())) {
+            throw new IllegalStateException("Paystack verification reference did not match the stored attempt");
+        }
+        String status = verification.status() == null ? "" : verification.status().toLowerCase(Locale.ROOT);
+        if ("success".equals(status)) {
+            long expectedMinor = paystackMinorAmount(payment.getAmount(), payment.getCurrency());
+            if (verification.amountMinor() == null || verification.amountMinor() != expectedMinor
+                    || verification.currency() == null
+                    || !payment.getCurrency().equalsIgnoreCase(verification.currency())) {
+                throw new IllegalStateException("Verified Paystack amount or currency did not match the checkout");
+            }
+            payment.setStatus(CheckoutPaymentStatus.SUCCESS);
+            payment.setConfirmedAt(OffsetDateTime.now());
+            payment.setFailureReason(null);
+            payment.setProviderNextVerificationAt(null);
+            payment.setProviderLastVerificationError(null);
+            payment.getCheckout().setStatus(CheckoutStatus.PAID);
+            recordAllocations(payment);
+            publishPaymentVerified(payment);
+        } else if (Set.of("failed", "abandoned").contains(status)) {
+            payment.setStatus(CheckoutPaymentStatus.FAILED);
+            payment.setConfirmedAt(OffsetDateTime.now());
+            payment.setFailureReason("Paystack verification reported " + status);
+            payment.setProviderNextVerificationAt(null);
+            payment.getCheckout().setStatus(CheckoutStatus.PAYMENT_FAILED);
+        } else {
+            return false;
+        }
+        checkoutPaymentRepository.save(payment);
+        checkoutRepository.save(payment.getCheckout());
+        return true;
+    }
+
     private static long paystackMinorAmount(BigDecimal amount, String currency) {
         if (amount == null || currency == null || !"KES".equalsIgnoreCase(currency)) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack checkout currency must be KES");
@@ -454,11 +530,15 @@ public class CentralizedCheckoutService {
     }
 
     @Transactional
-    public void processMpesaCallback(UUID paymentId, String suppliedSecret,
+    public void processMpesaCallback(UUID paymentId, String callbackToken, String suppliedSecret,
                                      com.example.distrobackend.dto.mpesa.MpesaCallbackRequest request) {
         // Daraja callbacks do not provide a configurable custom header. If a
         // shared-secret header is supplied, validate it; otherwise authenticate
         // the provider request and outcome through Daraja's STK query API.
+        boolean signedCallback = paymentId != null && validMpesaCallbackToken(paymentId, callbackToken);
+        if (paymentId == null) {
+            throw new ApiException(ErrorCode.UNAUTHENTICATED, "Invalid M-Pesa callback credentials");
+        }
         if (suppliedSecret != null && !suppliedSecret.isBlank()
                 && (mpesaCallbackSecret.isBlank() || !java.security.MessageDigest.isEqual(
                 mpesaCallbackSecret.getBytes(StandardCharsets.UTF_8), suppliedSecret.getBytes(StandardCharsets.UTF_8)))) {
@@ -471,7 +551,15 @@ public class CentralizedCheckoutService {
         }
         CheckoutPayment payment = checkoutPaymentRepository.findByIdForUpdate(paymentId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Checkout payment not found"));
-        if (payment.getStatus() != CheckoutPaymentStatus.PENDING) return;
+        if (payment.getProvider() != PaymentProvider.DARAJA || payment.isDemo()) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED, "M-Pesa callbacks can only settle Daraja payment attempts");
+        }
+        if (!signedCallback && (payment.getMpesaCheckoutRequestId() == null
+                || payment.getMpesaMerchantRequestId() == null)) {
+            throw new ApiException(ErrorCode.UNAUTHENTICATED, "Invalid M-Pesa callback credentials");
+        }
+        if (payment.getStatus() != CheckoutPaymentStatus.PENDING
+                && payment.getStatus() != CheckoutPaymentStatus.UNKNOWN) return;
         if (payment.getMpesaCheckoutRequestId() != null
                 && !payment.getMpesaCheckoutRequestId().equals(callback.getCheckoutRequestId())) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "M-Pesa checkout request correlation failed");
@@ -513,7 +601,13 @@ public class CentralizedCheckoutService {
             String amount=null, receipt=null;
             if(callback.getCallbackMetadata()!=null && callback.getCallbackMetadata().getItem()!=null) for(var item:callback.getCallbackMetadata().getItem()) { if("Amount".equals(item.getName())) amount=String.valueOf(item.getValue()); if("MpesaReceiptNumber".equals(item.getName())) receipt=String.valueOf(item.getValue()); }
             int expectedAmount = requireWholeKes(payment.getAmount(), payment.getCurrency());
-            if (amount == null || new BigDecimal(amount).compareTo(BigDecimal.valueOf(expectedAmount)) != 0) {
+            // Daraja STK Query normally returns the result and request IDs but
+            // not the amount. Prefer a query amount if Safaricom supplies one;
+            // otherwise use callback metadata only after the signed callback
+            // URL and provider query have authenticated this exact attempt.
+            Object queriedAmount = verifiedBody.get("Amount");
+            String settledAmount = queriedAmount == null ? amount : String.valueOf(queriedAmount);
+            if (settledAmount == null || new BigDecimal(settledAmount).compareTo(BigDecimal.valueOf(expectedAmount)) != 0) {
                 throw new ApiException(ErrorCode.BAD_REQUEST, "M-Pesa success amount does not match checkout");
             }
             payment.setStatus(CheckoutPaymentStatus.SUCCESS);

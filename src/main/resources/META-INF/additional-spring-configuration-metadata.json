@@ -54,5 +54,6 @@
     ,{ "name": "paystack.secret-key", "type": "java.lang.String", "description": "Paystack server-side secret key." }
     ,{ "name": "paystack.webhook-secret", "type": "java.lang.String", "description": "Paystack webhook signing secret." }
     ,{ "name": "paystack.callback-url", "type": "java.lang.String", "description": "Optional Paystack browser redirect URL." }
+    ,{ "name": "paystack.reconciliation-scan-ms", "type": "java.lang.Long", "description": "Interval in milliseconds for verifying unresolved Paystack checkout payments." }
   ]
 }

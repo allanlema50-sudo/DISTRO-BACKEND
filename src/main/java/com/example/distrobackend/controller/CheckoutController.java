@@ -20,7 +20,7 @@ public class CheckoutController {
  @org.springframework.web.bind.annotation.PostMapping("/mpesa/callback")
  @PreAuthorize("permitAll()")
  @io.swagger.v3.oas.annotations.security.SecurityRequirements
- public org.springframework.http.ResponseEntity<String> mpesaCallback(@RequestParam UUID paymentId,@RequestHeader(value="X-Mpesa-Callback-Secret",required=false) String secret,@RequestBody com.example.distrobackend.dto.mpesa.MpesaCallbackRequest callback){checkoutService.processMpesaCallback(paymentId,secret,callback);return org.springframework.http.ResponseEntity.ok("{\"ResultCode\":0,\"ResultDesc\":\"Accepted\"}");}
+ public org.springframework.http.ResponseEntity<String> mpesaCallback(@RequestParam UUID paymentId,@RequestParam(value="callbackToken",required=false) String callbackToken,@RequestHeader(value="X-Mpesa-Callback-Secret",required=false) String secret,@RequestBody com.example.distrobackend.dto.mpesa.MpesaCallbackRequest callback){checkoutService.processMpesaCallback(paymentId,callbackToken,secret,callback);return org.springframework.http.ResponseEntity.ok("{\"ResultCode\":0,\"ResultDesc\":\"Accepted\"}");}
  @org.springframework.web.bind.annotation.PostMapping(value="/paystack/webhook", consumes=org.springframework.http.MediaType.APPLICATION_JSON_VALUE)
  @PreAuthorize("permitAll()")
  @io.swagger.v3.oas.annotations.security.SecurityRequirements

@@ -16,6 +16,7 @@ PAYSTACK_BASE_URL=https://api.paystack.co
 PAYSTACK_SECRET_KEY=sk_test_...
 PAYSTACK_WEBHOOK_SECRET=whsec_...
 PAYSTACK_CALLBACK_URL=https://your-frontend.example/payments/paystack/complete
+PAYSTACK_RECONCILIATION_SCAN_MS=60000
 ```
 
 The application refuses to start with Paystack enabled unless the secret key
@@ -37,6 +38,13 @@ workflow has been accepted.
    currency, and processes the event idempotently.
 6. Only `charge.success` creates allocations and marks the checkout paid.
    Failed or mismatched events never release stock or create a payable amount.
+7. If the initialization response or webhook is missed, a scheduled verifier
+   checks Paystack by the server-generated reference. It accepts only a verified
+   matching amount, currency, and reference. Unresolved attempts remain blocked
+   from starting another charge and are retried with backoff. A Paystack
+   initialization whose outcome was unknown and whose reference remains absent
+   for ten minutes is timed out; the backend never returned its checkout URL to
+   the buyer. Verified failed or abandoned attempts also become terminal.
 
 Example payment request:
 

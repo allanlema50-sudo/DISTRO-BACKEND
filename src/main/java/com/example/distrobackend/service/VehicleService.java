@@ -5,7 +5,6 @@ import com.example.distrobackend.Domain.entity.Vehicle;
 import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Domain.enums.VehicleStatus;
 import com.example.distrobackend.Domain.enums.TripStatus;
-import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.dto.CreateVehicleRequest;
@@ -81,9 +80,6 @@ public class VehicleService {
         }
         Organization organization = organizationRepository.findById(organizationId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Organization not found"));
-        if (organization.getType() != Organizationtype.DISTRIBUTOR) {
-            throw new ApiException(ErrorCode.BAD_REQUEST, "Vehicles must belong to a distributor organization");
-        }
         String registration = normalizeRegistration(request.registrationNumber());
         if (vehicleRepository.existsByOrganization_IdAndRegistrationNumberIgnoreCase(organizationId, registration)) {
             throw new ApiException(ErrorCode.CONFLICT, "A vehicle with this registration already exists");
@@ -189,10 +185,6 @@ public class VehicleService {
                 && actor.role() != UserRole.DISTRIBUTOR_ADMIN
                 && actor.role() != UserRole.DISTRIBUTOR_STAFF)) {
             throw new ApiException(ErrorCode.ACCESS_DENIED);
-        }
-        if (actor.organizationType() != Organizationtype.DISTRIBUTOR) {
-            throw new ApiException(ErrorCode.ACCESS_DENIED,
-                    "Fleet vehicles are available only to distributor organizations");
         }
         return actor.organizationId();
     }

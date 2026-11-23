@@ -70,6 +70,10 @@ public class TripStop {
     @JoinColumn(name = "stock_item_id")
     private StockItem stockItem;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "purchase_order_shipment_group_id")
+    private PurchaseOrderShipmentGroup purchaseOrderShipmentGroup;
+
     @Column(name = "restock_quantity")
     private Integer restockQuantity;
 

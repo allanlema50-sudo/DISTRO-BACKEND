@@ -52,6 +52,15 @@ public class Warehouse {
     @Column(name = "city", length = 60)
     private String city;
 
+    @Column(name = "latitude")
+    private Double latitude;
+
+    @Column(name = "longitude")
+    private Double longitude;
+
+    @Column(name = "location_description", length = 500)
+    private String locationDescription;
+
     @Column(name = "postal_code", length = 20)
     private String postalCode;
 

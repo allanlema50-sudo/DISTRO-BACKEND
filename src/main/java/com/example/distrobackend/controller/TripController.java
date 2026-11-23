@@ -82,6 +82,10 @@ public class TripController {
             throw new ApiException(ErrorCode.ACCESS_DENIED, "Role not authorized to create trips");
         }
 
+        if (body.hasNonNull("vehicleId") && body.has("manufacturerShipmentGroupIds")) {
+            return tripService.createManufacturerShipmentTrip(me,
+                    read(body, ManufacturerShipmentTripRequest.class));
+        }
         if (body.hasNonNull("vehicleId") && body.has("shipmentIds")) {
             return tripService.createFreightTrip(me, read(body, FreightTripRequest.class));
         }

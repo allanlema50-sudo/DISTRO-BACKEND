@@ -10,6 +10,8 @@ import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.dto.PutAwayStockRequest;
 import com.example.distrobackend.repository.StockItemRepository;
 import com.example.distrobackend.repository.StockLocationRepository;
+import com.example.distrobackend.repository.StockMovementRepository;
+import com.example.distrobackend.repository.UserRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -30,6 +32,8 @@ import static org.mockito.Mockito.when;
 class StockLocationServiceTest {
     @Mock private StockItemRepository stockItemRepository;
     @Mock private StockLocationRepository stockLocationRepository;
+    @Mock private StockMovementRepository stockMovementRepository;
+    @Mock private UserRepository userRepository;
     @InjectMocks private StockLocationService service;
 
     @Test

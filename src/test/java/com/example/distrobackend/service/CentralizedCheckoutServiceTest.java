@@ -35,6 +35,7 @@ class CentralizedCheckoutServiceTest {
  @Mock PurchaseOrderService purchaseOrderService;
  @Mock CheckoutPaymentAttemptStore paymentAttemptStore;
  @Mock FinancialLedgerService financialLedgerService;
+ @Mock PurchaseOrderShipmentService purchaseOrderShipmentService;
  @InjectMocks CentralizedCheckoutService service;
 
  @Test void successfulDemoAllocatesFiveMillionAcrossThreeIndependentOrdersWithoutMarkingPayoutsSettled() {
@@ -44,6 +45,7 @@ class CentralizedCheckoutServiceTest {
   Checkout checkout=new Checkout(); checkout.setId(UUID.randomUUID()); checkout.setTotalAmount(new BigDecimal("5000000.00")); checkout.setCurrency("KES");
   CheckoutPayment payment=new CheckoutPayment(); payment.setId(UUID.randomUUID()); payment.setCheckout(checkout); payment.setAmount(checkout.getTotalAmount()); payment.setCurrency("KES"); payment.setStatus(CheckoutPaymentStatus.PENDING); payment.setDemo(true); payment.setInitiatedAt(OffsetDateTime.now().minusMinutes(1));
   when(checkoutPaymentRepository.findByDemoTrueAndStatusAndInitiatedAtBefore(eq(CheckoutPaymentStatus.PENDING),any())).thenReturn(List.of(payment));
+  when(checkoutPaymentRepository.findByIdForUpdate(payment.getId())).thenReturn(java.util.Optional.of(payment));
   List<PurchaseOrder> orders=List.of(order(checkout,"1000000.00"),order(checkout,"1500000.00"),order(checkout,"2500000.00"));
   when(purchaseOrderRepository.findByCheckout_Id(checkout.getId())).thenReturn(orders);
   when(allocationRepository.save(any(PaymentAllocation.class))).thenAnswer(invocation->invocation.getArgument(0));

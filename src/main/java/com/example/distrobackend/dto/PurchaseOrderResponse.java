@@ -28,5 +28,12 @@ public record PurchaseOrderResponse(
         UUID destinationWarehouseId,
         String checkoutPaymentStatus,
         boolean checkoutPaymentDemo,
-        String checkoutPaymentReference
+        String checkoutPaymentReference,
+        String paymentStatus,
+        String paymentProvider,
+        BigDecimal paidAmount,
+        OffsetDateTime paymentConfirmedAt,
+        String fulfilmentStatus,
+        boolean dispatchEligible,
+        int packageCount
 ) {}

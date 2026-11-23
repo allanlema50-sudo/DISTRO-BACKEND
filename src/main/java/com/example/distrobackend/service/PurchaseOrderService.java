@@ -4,11 +4,14 @@ import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.PurchaseOrder;
 import com.example.distrobackend.Domain.entity.PurchaseOrderItem;
 import com.example.distrobackend.Domain.entity.PurchaseOrderSettlement;
+import com.example.distrobackend.Domain.enums.PurchaseOrderShipmentStatus;
 import com.example.distrobackend.Domain.entity.StockItem;
+import com.example.distrobackend.Domain.entity.StockMovement;
 import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.PurchaseOrderStatus;
 import com.example.distrobackend.Domain.enums.ProductPublicationStatus;
 import com.example.distrobackend.Domain.enums.SettlementStatus;
+import com.example.distrobackend.Domain.enums.StockMovementType;
 import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Domain.enums.NotificationPriority;
 import com.example.distrobackend.Domain.enums.NotificationType;
@@ -19,10 +22,14 @@ import com.example.distrobackend.dto.PurchaseOrderDecisionRequest;
 import com.example.distrobackend.dto.PurchaseOrderItemResponse;
 import com.example.distrobackend.dto.PurchaseOrderResponse;
 import com.example.distrobackend.dto.PurchaseOrderSettlementResponse;
+import com.example.distrobackend.dto.PickPurchaseOrderItemRequest;
+import com.example.distrobackend.dto.PackPurchaseOrderRequest;
 import com.example.distrobackend.repository.OrganizationRepository;
 import com.example.distrobackend.repository.PurchaseOrderRepository;
 import com.example.distrobackend.repository.PurchaseOrderSettlementRepository;
+import com.example.distrobackend.repository.PurchaseOrderShipmentRepository;
 import com.example.distrobackend.repository.StockItemRepository;
+import com.example.distrobackend.repository.StockMovementRepository;
 import com.example.distrobackend.repository.UserRepository;
 import com.example.distrobackend.repository.DistributorProductAuthorizationRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
@@ -44,8 +51,11 @@ public class PurchaseOrderService {
 
     private final PurchaseOrderRepository purchaseOrderRepository;
     private final PurchaseOrderSettlementRepository settlementRepository;
+    private final PurchaseOrderShipmentRepository purchaseOrderShipmentRepository;
+    private final StockLocationService stockLocationService;
     private final OrganizationRepository organizationRepository;
     private final StockItemRepository stockItemRepository;
+    private final StockMovementRepository stockMovementRepository;
     private final UserRepository userRepository;
     private final NotificationService notificationService;
     private final ProductAuthorizationService productAuthorizationService;
@@ -106,12 +116,6 @@ public class PurchaseOrderService {
             if (requestItem.quantity() > stockItem.getAvailableQuantity()) {
                 throw new ApiException(ErrorCode.CONFLICT, "Insufficient available manufacturer stock for " + stockItem.getSku());
             }
-            try {
-                stockItem.setReservedQuantity(Math.addExact(stockItem.getReservedQuantity(), requestItem.quantity()));
-            } catch (ArithmeticException ex) {
-                throw new ApiException(ErrorCode.CONFLICT, "Requested stock quantity exceeds supported limits");
-            }
-
             PurchaseOrderItem item = new PurchaseOrderItem();
             item.setStockItem(stockItem);
             if (requestItem.distributorOfferId() != null) {
@@ -134,7 +138,7 @@ public class PurchaseOrderService {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Purchase order total must be positive");
         }
         purchaseOrder.setTotalAmount(total);
-        purchaseOrder.setStockReserved(true);
+        purchaseOrder.setStockReserved(false);
         PurchaseOrder saved = purchaseOrderRepository.save(purchaseOrder);
 
         PurchaseOrderSettlement settlement = new PurchaseOrderSettlement();
@@ -169,6 +173,102 @@ public class PurchaseOrderService {
     public PurchaseOrderResponse getForManufacturer(AuthenticatedUser actor, UUID id) {
         requireManufacturer(actor);
         return toResponse(getAuthorized(id, actor.organizationId(), false));
+    }
+
+    @Transactional
+    public PurchaseOrderResponse pickManufacturerItem(AuthenticatedUser actor, UUID purchaseOrderId,
+                                                       PickPurchaseOrderItemRequest request) {
+        requireManufacturer(actor);
+        purchaseOrderRepository.findByIdForUpdate(purchaseOrderId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Purchase order not found"));
+        PurchaseOrder order = getAuthorized(purchaseOrderId, actor.organizationId(), false);
+        requireFulfilmentEligible(order);
+        PurchaseOrderItem line = order.getItems().stream()
+                .filter(candidate -> candidate.getId().equals(request.purchaseOrderItemId()))
+                .findFirst().orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Purchase-order item not found"));
+        if (request.pickedQuantity() < line.getPickedQuantity()
+                || request.pickedQuantity() > line.getQuantity()
+                || request.pickedQuantity() < line.getPackedQuantity()) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    "Picked quantity must be between the packed quantity and ordered quantity");
+        }
+        int newlyPicked = request.pickedQuantity() - line.getPickedQuantity();
+        stockLocationService.pickReservedQuantity(actor, line.getStockItem().getId(), newlyPicked,
+                line.getId(), request.pickedQuantity());
+        line.setPickedQuantity(request.pickedQuantity());
+        order.setFulfilmentStatus(order.getItems().stream()
+                .allMatch(item -> item.getPickedQuantity() == item.getQuantity())
+                ? "READY_FOR_PACKING" : "PICKING");
+        return toResponse(purchaseOrderRepository.save(order));
+    }
+
+    @Transactional
+    public PurchaseOrderResponse packManufacturerOrder(AuthenticatedUser actor, UUID purchaseOrderId,
+                                                        PackPurchaseOrderRequest request) {
+        requireManufacturer(actor);
+        purchaseOrderRepository.findByIdForUpdate(purchaseOrderId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Purchase order not found"));
+        PurchaseOrder order = getAuthorized(purchaseOrderId, actor.organizationId(), false);
+        requireFulfilmentEligible(order);
+        java.util.Map<UUID, PackPurchaseOrderRequest.Line> lines = new java.util.HashMap<>();
+        for (PackPurchaseOrderRequest.Line line : request.lines()) {
+            if (lines.putIfAbsent(line.purchaseOrderItemId(), line) != null) {
+                throw new ApiException(ErrorCode.BAD_REQUEST, "Each purchase-order item must appear once");
+            }
+        }
+        if (lines.size() != order.getItems().size()) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Packing quantities are required for every order item");
+        }
+        for (PurchaseOrderItem item : order.getItems()) {
+            PackPurchaseOrderRequest.Line line = lines.get(item.getId());
+            if (line == null || item.getPickedQuantity() != item.getQuantity()
+                    || line.packedQuantity() < item.getPackedQuantity()
+                    || line.packedQuantity() > item.getPickedQuantity()) {
+                throw new ApiException(ErrorCode.BAD_REQUEST,
+                        "Every item must be fully picked and packed quantities cannot exceed picked quantities");
+            }
+            item.setPackedQuantity(line.packedQuantity());
+        }
+        order.setPackageCount(request.packageCount());
+        PurchaseOrder saved = purchaseOrderRepository.save(order);
+        if (dispatchReady(saved)) {
+            saved.setFulfilmentStatus("READY_FOR_DISPATCH");
+            purchaseOrderShipmentRepository.findByPurchaseOrderId(saved.getId()).ifPresent(shipment -> {
+                if (shipment.getStatus() == PurchaseOrderShipmentStatus.AWAITING_PICKING) {
+                    shipment.setStatus(PurchaseOrderShipmentStatus.READY_FOR_DISPATCH);
+                }
+            });
+        } else {
+            saved.setFulfilmentStatus("PACKING");
+        }
+        return toResponse(saved);
+    }
+
+    private void requireFulfilmentEligible(PurchaseOrder order) {
+        if (order.getStatus() != PurchaseOrderStatus.APPROVED || !order.isStockReserved()) {
+            throw new ApiException(ErrorCode.INVALID_STATE_TRANSITION,
+                    "Only approved purchase orders with reserved stock can be picked or packed");
+        }
+        boolean paid;
+        if (order.getCheckout() != null) {
+            var payment = order.getCheckout().getPayment();
+            paid = payment != null
+                    && payment.getStatus() == com.example.distrobackend.Domain.enums.CheckoutPaymentStatus.SUCCESS;
+        } else {
+            paid = settlementRepository.findByPurchaseOrderIdOrderByCreatedAtDesc(order.getId()).stream()
+                    .anyMatch(settlement -> settlement.getStatus() == SettlementStatus.SETTLED
+                            && settlement.getAmount() != null
+                            && settlement.getAmount().compareTo(order.getTotalAmount()) == 0
+                            && order.getCurrency().equalsIgnoreCase(settlement.getCurrency()));
+        }
+        if (!paid) throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                "Payment must be verified before warehouse fulfilment");
+    }
+
+    private boolean dispatchReady(PurchaseOrder order) {
+        return order.getPackageCount() > 0 && !order.getItems().isEmpty()
+                && order.getItems().stream().allMatch(item -> item.getPickedQuantity() == item.getQuantity()
+                && item.getPackedQuantity() == item.getQuantity());
     }
 
     @Transactional
@@ -268,6 +368,17 @@ public class PurchaseOrderService {
                 throw new ApiException(ErrorCode.CONFLICT, "Purchase-order stock reservation is inconsistent");
             }
             stockItem.setReservedQuantity(stockItem.getReservedQuantity() - item.getQuantity());
+            StockMovement movement = new StockMovement();
+            movement.setStockItem(stockItem);
+            movement.setMovementType(StockMovementType.RESERVATION_RELEASE);
+            movement.setQuantityDelta(0);
+            movement.setReservationQuantityDelta(-item.getQuantity());
+            movement.setReferenceType("PURCHASE_ORDER_RESERVATION_RELEASE");
+            movement.setReferenceId(purchaseOrder.getId());
+            movement.setExternalReference(item.getId().toString());
+            movement.setIdempotencyKey("PO_RELEASE:" + purchaseOrder.getId() + ":" + item.getId());
+            movement.setNote("Released reservation for " + purchaseOrder.getPurchaseOrderNumber());
+            stockMovementRepository.save(movement);
         }
         purchaseOrder.setStockReserved(false);
     }
@@ -287,15 +398,51 @@ public class PurchaseOrderService {
                         item.getStockItem().getSku(),
                         item.getStockItem().getName(), item.getQuantity(), item.getUnitPrice(),
                         item.getLineTotal() != null ? item.getLineTotal() : item.getUnitPrice()
-                                .multiply(BigDecimal.valueOf(item.getQuantity())))).toList(),
+                                .multiply(BigDecimal.valueOf(item.getQuantity())),
+                        item.getPickedQuantity(), item.getPackedQuantity())).toList(),
                 settlementRepository.findByPurchaseOrderIdOrderByCreatedAtDesc(purchaseOrder.getId())
                         .stream().map(this::toSettlementResponse).toList(),
                 purchaseOrder.getCheckout() == null ? null : purchaseOrder.getCheckout().getId(),
                 purchaseOrder.getCheckout() == null ? null : purchaseOrder.getCheckout().getCheckoutReference(),
                 purchaseOrder.getDestinationWarehouse() == null ? null : purchaseOrder.getDestinationWarehouse().getId(),
-                checkoutPayment == null ? "PENDING" : checkoutPayment.getStatus().name(),
+                checkoutPayment == null ? (isPurchaseOrderPaid(purchaseOrder) ? "SUCCESS" : "PENDING")
+                        : checkoutPayment.getStatus().name(),
                 checkoutPayment != null && checkoutPayment.isDemo(),
-                checkoutPayment == null ? null : checkoutPayment.getProviderReference());
+                checkoutPayment == null ? null : checkoutPayment.getProviderReference(),
+                checkoutPayment == null ? "PENDING" : checkoutPayment.getStatus().name(),
+                checkoutPayment == null ? null : (checkoutPayment.isDemo() ? "DEMO" : checkoutPayment.getMethod().name()),
+                checkoutPayment == null || checkoutPayment.getStatus() != com.example.distrobackend.Domain.enums.CheckoutPaymentStatus.SUCCESS
+                        ? BigDecimal.ZERO : checkoutPayment.getAmount(),
+                checkoutPayment == null ? null : checkoutPayment.getConfirmedAt(),
+                fulfilmentStatus(purchaseOrder),
+                purchaseOrder.getStatus() == PurchaseOrderStatus.APPROVED
+                        && isPurchaseOrderPaid(purchaseOrder) && dispatchReady(purchaseOrder),
+                purchaseOrder.getPackageCount());
+    }
+
+    private boolean isPurchaseOrderPaid(PurchaseOrder order) {
+        if (order.getCheckout() != null) {
+            var payment = order.getCheckout().getPayment();
+            return payment != null
+                    && payment.getStatus() == com.example.distrobackend.Domain.enums.CheckoutPaymentStatus.SUCCESS;
+        }
+        return settlementRepository.findByPurchaseOrderIdOrderByCreatedAtDesc(order.getId()).stream()
+                .anyMatch(settlement -> settlement.getStatus() == SettlementStatus.SETTLED
+                        && settlement.getAmount() != null
+                        && settlement.getAmount().compareTo(order.getTotalAmount()) == 0);
+    }
+
+    private String fulfilmentStatus(PurchaseOrder order) {
+        if (order.getFulfilmentStatus() != null && order.getFulfilmentStatus().endsWith("_EXCEPTION")) {
+            return order.getFulfilmentStatus();
+        }
+        if (order.getStatus() == PurchaseOrderStatus.CANCELLED) return "CANCELLED";
+        if (order.getStatus() == PurchaseOrderStatus.REJECTED) return "REJECTED";
+        if (!isPurchaseOrderPaid(order)) return "PAYMENT_PENDING";
+        if (!order.isStockReserved()) return "INVENTORY_EXCEPTION";
+        if (dispatchReady(order)) return "READY_FOR_DISPATCH";
+        if (order.getItems().stream().anyMatch(item -> item.getPickedQuantity() > 0)) return "PICKING";
+        return "READY_FOR_PICKING";
     }
 
     private String displayName(Organization organization) {

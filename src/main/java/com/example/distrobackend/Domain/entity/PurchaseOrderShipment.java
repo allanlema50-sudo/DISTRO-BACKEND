@@ -47,6 +47,10 @@ public class PurchaseOrderShipment {
     @JoinColumn(name = "destination_warehouse_id", nullable = false)
     private Warehouse destinationWarehouse;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "origin_warehouse_id")
+    private Warehouse originWarehouse;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 30)
     private PurchaseOrderShipmentStatus status = PurchaseOrderShipmentStatus.READY_FOR_DISPATCH;

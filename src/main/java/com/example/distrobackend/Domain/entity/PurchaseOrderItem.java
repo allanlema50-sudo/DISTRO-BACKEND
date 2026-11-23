@@ -42,6 +42,12 @@ public class PurchaseOrderItem {
     @Column(name = "quantity", nullable = false)
     private int quantity;
 
+    @Column(name = "picked_quantity", nullable = false)
+    private int pickedQuantity;
+
+    @Column(name = "packed_quantity", nullable = false)
+    private int packedQuantity;
+
     @Column(name = "unit_price", nullable = false, precision = 12, scale = 2)
     private BigDecimal unitPrice;
 

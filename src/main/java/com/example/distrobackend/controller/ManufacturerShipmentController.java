@@ -5,6 +5,10 @@ import com.example.distrobackend.dto.PurchaseOrderShipmentResponse;
 import com.example.distrobackend.dto.ShipmentStatusRequest;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.service.PurchaseOrderShipmentService;
+import com.example.distrobackend.service.PurchaseOrderShipmentConsolidationService;
+import com.example.distrobackend.dto.CreateShipmentConsolidationRequest;
+import com.example.distrobackend.dto.ShipmentConsolidationResponse;
+import com.example.distrobackend.dto.ShipmentConsolidationSuggestion;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -31,6 +35,28 @@ import java.util.UUID;
 public class ManufacturerShipmentController {
 
     private final PurchaseOrderShipmentService shipmentService;
+    private final PurchaseOrderShipmentConsolidationService consolidationService;
+
+    @GetMapping("/consolidations/suggestions")
+    public java.util.List<ShipmentConsolidationSuggestion> suggestions(
+            @AuthenticationPrincipal AuthenticatedUser actor) {
+        return consolidationService.suggestions(actor);
+    }
+
+    @PostMapping("/consolidations")
+    @ResponseStatus(HttpStatus.CREATED)
+    public ShipmentConsolidationResponse consolidate(
+            @AuthenticationPrincipal AuthenticatedUser actor,
+            @Valid @RequestBody CreateShipmentConsolidationRequest request) {
+        return consolidationService.create(actor, request);
+    }
+
+    @GetMapping("/consolidations/{groupId}")
+    public ShipmentConsolidationResponse consolidation(
+            @AuthenticationPrincipal AuthenticatedUser actor,
+            @PathVariable UUID groupId) {
+        return consolidationService.get(actor, groupId);
+    }
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)

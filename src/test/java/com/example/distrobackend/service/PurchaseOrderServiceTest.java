@@ -8,6 +8,7 @@ import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.repository.OrganizationRepository;
 import com.example.distrobackend.repository.PurchaseOrderRepository;
 import com.example.distrobackend.repository.PurchaseOrderSettlementRepository;
+import com.example.distrobackend.repository.PurchaseOrderShipmentRepository;
 import com.example.distrobackend.repository.StockItemRepository;
 import com.example.distrobackend.repository.UserRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
@@ -30,8 +31,11 @@ class PurchaseOrderServiceTest {
 
     @Mock private PurchaseOrderRepository purchaseOrderRepository;
     @Mock private PurchaseOrderSettlementRepository settlementRepository;
+    @Mock private PurchaseOrderShipmentRepository purchaseOrderShipmentRepository;
+    @Mock private StockLocationService stockLocationService;
     @Mock private OrganizationRepository organizationRepository;
     @Mock private StockItemRepository stockItemRepository;
+    @Mock private com.example.distrobackend.repository.StockMovementRepository stockMovementRepository;
     @Mock private UserRepository userRepository;
     @Mock private NotificationService notificationService;
     @Mock private ProductAuthorizationService productAuthorizationService;

@@ -27,7 +27,18 @@ public record PurchaseOrderShipmentResponse(
         OffsetDateTime receivedAt,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,
-        List<PurchaseOrderShipmentReceiptLineResponse> receiptLines
+        List<PurchaseOrderShipmentReceiptLineResponse> receiptLines,
+        UUID originWarehouseId,
+        String originWarehouseName,
+        String originAddress,
+        String originCity,
+        Double originLatitude,
+        Double originLongitude,
+        String destinationAddress,
+        String destinationCity,
+        Double destinationLatitude,
+        Double destinationLongitude,
+        String routePlanningStatus
 ) {
     public static PurchaseOrderShipmentResponse from(PurchaseOrderShipment shipment) {
         return new PurchaseOrderShipmentResponse(
@@ -55,7 +66,26 @@ public record PurchaseOrderShipmentResponse(
                         line.getPurchaseOrderItem().getStockItem().getId(),
                         line.getPurchaseOrderItem().getStockItem().getName(),
                         line.getExpectedQuantity(), line.getAcceptedQuantity(),
-                        line.getDamagedQuantity(), line.getMissingQuantity())).toList());
+                        line.getDamagedQuantity(), line.getMissingQuantity())).toList(),
+                shipment.getOriginWarehouse() == null ? null : shipment.getOriginWarehouse().getId(),
+                shipment.getOriginWarehouse() == null ? null : shipment.getOriginWarehouse().getName(),
+                shipment.getOriginWarehouse() == null ? null : shipment.getOriginWarehouse().getAddress(),
+                shipment.getOriginWarehouse() == null ? null : shipment.getOriginWarehouse().getCity(),
+                shipment.getOriginWarehouse() == null ? null : shipment.getOriginWarehouse().getLatitude(),
+                shipment.getOriginWarehouse() == null ? null : shipment.getOriginWarehouse().getLongitude(),
+                shipment.getDestinationWarehouse().getAddress(),
+                shipment.getDestinationWarehouse().getCity(),
+                shipment.getDestinationWarehouse().getLatitude(),
+                shipment.getDestinationWarehouse().getLongitude(),
+                hasRoutePins(shipment) ? "READY" : "LOCATION_DATA_REQUIRED");
+    }
+
+    private static boolean hasRoutePins(PurchaseOrderShipment shipment) {
+        return shipment.getOriginWarehouse() != null
+                && shipment.getOriginWarehouse().getLatitude() != null
+                && shipment.getOriginWarehouse().getLongitude() != null
+                && shipment.getDestinationWarehouse().getLatitude() != null
+                && shipment.getDestinationWarehouse().getLongitude() != null;
     }
 
     private static String displayName(String name) {

@@ -26,6 +26,7 @@ import com.example.distrobackend.security.AuthenticatedUser;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.*;
@@ -62,6 +63,10 @@ public class PaymentService {
     private final OrderService orderService;
     private final RestTemplate darajaRestTemplate;
     private final FinancialLedgerService financialLedgerService;
+    @Autowired(required = false)
+    private PurchaseOrderShipmentService purchaseOrderShipmentService;
+    @Autowired(required = false)
+    private ApplicationEventPublisher eventPublisher;
 
     @Autowired
     public PaymentService(PaymentRepository paymentRepository,
@@ -534,6 +539,14 @@ public class PaymentService {
             settlement.setFailureReason(callback.getResultDesc());
         }
         settlementRepository.save(settlement);
+        if (settlement.getStatus() == SettlementStatus.SETTLED && settlement.getPurchaseOrder() != null) {
+            if (eventPublisher != null) {
+                eventPublisher.publishEvent(PurchaseOrderPaymentVerifiedEvent.purchaseOrder(
+                        settlement.getPurchaseOrder().getId()));
+            } else if (purchaseOrderShipmentService != null) {
+                purchaseOrderShipmentService.handleSettledPurchaseOrder(settlement.getPurchaseOrder().getId());
+            }
+        }
     }
 
     private String getDarajaAccessToken() {

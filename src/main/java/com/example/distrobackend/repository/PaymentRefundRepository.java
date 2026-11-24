@@ -20,6 +20,10 @@ public interface PaymentRefundRepository extends JpaRepository<PaymentRefund, UU
     Page<PaymentRefund> findAllByOrderByCreatedAtDesc(Pageable pageable);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select r from PaymentRefund r where r.id = :id")
+    Optional<PaymentRefund> findByIdForUpdate(@Param("id") UUID id);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select r from PaymentRefund r where r.status in (com.example.distrobackend.Domain.enums.RefundStatus.REQUESTED, "
             + "com.example.distrobackend.Domain.enums.RefundStatus.PENDING, "
             + "com.example.distrobackend.Domain.enums.RefundStatus.PROCESSING) "

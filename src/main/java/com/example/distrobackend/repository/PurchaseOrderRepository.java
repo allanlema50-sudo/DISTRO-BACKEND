@@ -56,4 +56,55 @@ public interface PurchaseOrderRepository extends JpaRepository<PurchaseOrder, UU
 
     @Query(value = "select nextval('purchase_order_number_seq')", nativeQuery = true)
     Long getNextPurchaseOrderSequence();
+
+    /**
+     * Unpaid credit owed by one distributor to one manufacturer: each live credit
+     * order's total less the money received against it. Calculated, never stored.
+     */
+    @Query(value = "select coalesce(sum(greatest(po.total_amount - coalesce(paid.amount_paid, 0), 0)), 0) "
+            + "from purchase_orders po "
+            + "left join (select purchase_order_id, sum(amount_paid) as amount_paid "
+            + "           from purchase_order_settlements where status in ('PENDING', 'SETTLED') "
+            + "           group by purchase_order_id) paid on paid.purchase_order_id = po.id "
+            + "where po.supplier_organization_id = :manufacturerId "
+            + "and po.buyer_organization_id = :distributorId "
+            + "and po.payment_terms = 'CREDIT' and po.currency = :currency "
+            + "and po.status in ('SUBMITTED', 'APPROVED', 'FULFILLED')", nativeQuery = true)
+    java.math.BigDecimal outstandingCredit(@Param("manufacturerId") UUID manufacturerId,
+                                           @Param("distributorId") UUID distributorId,
+                                           @Param("currency") String currency);
+
+    /** Number of credit orders for the pair that are unpaid and past their due date. */
+    @Query(value = "select count(*) from purchase_orders po "
+            + "left join (select purchase_order_id, sum(amount_paid) as amount_paid "
+            + "           from purchase_order_settlements where status in ('PENDING', 'SETTLED') "
+            + "           group by purchase_order_id) paid on paid.purchase_order_id = po.id "
+            + "where po.supplier_organization_id = :manufacturerId "
+            + "and po.buyer_organization_id = :distributorId "
+            + "and po.payment_terms = 'CREDIT' and po.status in ('APPROVED', 'FULFILLED') "
+            + "and po.due_at is not null and po.due_at < :now "
+            + "and po.total_amount - coalesce(paid.amount_paid, 0) > 0", nativeQuery = true)
+    long countOverdueCreditOrders(@Param("manufacturerId") UUID manufacturerId,
+                                  @Param("distributorId") UUID distributorId,
+                                  @Param("now") java.time.OffsetDateTime now);
+
+    /** Credit orders past due that the nightly job has not yet flagged. */
+    @Query(value = "select po.id from purchase_orders po "
+            + "left join (select purchase_order_id, sum(amount_paid) as amount_paid "
+            + "           from purchase_order_settlements where status in ('PENDING', 'SETTLED') "
+            + "           group by purchase_order_id) paid on paid.purchase_order_id = po.id "
+            + "where po.payment_terms = 'CREDIT' and po.status in ('APPROVED', 'FULFILLED') "
+            + "and po.overdue_at is null and po.due_at is not null and po.due_at < :now "
+            + "and po.total_amount - coalesce(paid.amount_paid, 0) > 0 "
+            + "order by po.due_at asc limit :batchSize", nativeQuery = true)
+    java.util.List<UUID> findCreditOrdersToFlagOverdue(@Param("now") java.time.OffsetDateTime now,
+                                                       @Param("batchSize") int batchSize);
+
+    @Query("select p from PurchaseOrder p join fetch p.buyerOrganization join fetch p.supplierOrganization "
+            + "where p.supplierOrganization.id = :manufacturerId and p.buyerOrganization.id = :distributorId "
+            + "and p.paymentTerms = com.example.distrobackend.Domain.enums.PaymentTerms.CREDIT "
+            + "order by p.createdAt desc")
+    java.util.List<PurchaseOrder> findCreditOrdersForPair(@Param("manufacturerId") UUID manufacturerId,
+                                                          @Param("distributorId") UUID distributorId,
+                                                          Pageable pageable);
 }

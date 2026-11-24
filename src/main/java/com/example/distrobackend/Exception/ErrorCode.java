@@ -40,6 +40,11 @@ public enum ErrorCode {
     DATABASE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "The data service is temporarily unavailable"),
     PAYMENT_NOT_CONFIGURED(HttpStatus.SERVICE_UNAVAILABLE, "Payment service is not configured"),
     PAYMENT_STATE_CONFLICT(HttpStatus.CONFLICT, "Payment is already in a terminal state"),
+    PAYMENT_AMOUNT_MISMATCH(HttpStatus.CONFLICT, "The amount does not match what is owed"),
+    PAYMENT_REFERENCE_IN_USE(HttpStatus.CONFLICT, "This payment reference has already been used"),
+    CREDIT_NOT_AVAILABLE(HttpStatus.CONFLICT, "Credit terms are not available for this distributor"),
+    CREDIT_LIMIT_EXCEEDED(HttpStatus.CONFLICT, "The credit limit would be exceeded"),
+    CREDIT_OVERDUE(HttpStatus.CONFLICT, "Overdue credit must be paid before new credit orders"),
 
     ACCESS_REQUEST_NOT_FOUND(HttpStatus.NOT_FOUND, "Access request not found"),
     ACCESS_REQUEST_STATE_CONFLICT(HttpStatus.CONFLICT, "Access request is no longer in the requested state"),

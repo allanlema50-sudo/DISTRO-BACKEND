@@ -32,8 +32,8 @@ public class PaystackPaymentReconciliationJob {
                 if (payment == null || payment.getProviderReference() == null) continue;
                 var result = paystackPaymentService.verifyTransaction(payment.getProviderReference());
                 if ("not_found".equals(result.status())
-                        && attemptStore.expireUninitializedPaystackAttempt(
-                        paymentId, OffsetDateTime.now().minusMinutes(10))) continue;
+                        && attemptStore.expireUnresolvedPaystackAttempt(paymentId, result.reference(),
+                        OffsetDateTime.now().minusMinutes(10))) continue;
                 boolean terminal = checkoutService.applyPaystackVerification(
                         paymentId, payment.getProviderReference(), result);
                 if (!terminal) {

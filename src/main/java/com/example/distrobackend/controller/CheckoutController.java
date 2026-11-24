@@ -3,7 +3,7 @@ import com.example.distrobackend.dto.*;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.service.CentralizedCheckoutService;
 import com.example.distrobackend.service.PaystackPaymentService;
-import com.example.distrobackend.service.PaystackSettlementService;
+import com.example.distrobackend.service.ProviderWebhookInboxService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -20,7 +20,7 @@ import java.util.UUID;
 public class CheckoutController {
  private final CentralizedCheckoutService checkoutService;
  private final PaystackPaymentService paystackPaymentService;
- private final PaystackSettlementService paystackSettlementService;
+ private final ProviderWebhookInboxService webhookInboxService;
  @org.springframework.web.bind.annotation.PostMapping("/mpesa/callback")
  @PreAuthorize("permitAll()")
  @io.swagger.v3.oas.annotations.security.SecurityRequirements
@@ -34,11 +34,7 @@ public class CheckoutController {
          @RequestBody byte[] rawBody) {
   com.example.distrobackend.service.PaystackPaymentService.Webhook webhook =
           paystackPaymentService.parseAndVerifyWebhook(rawBody, signature, legacySignature);
-  if (webhook.event().startsWith("transfer.")) {
-   paystackSettlementService.processPaystackWebhook(webhook);
-  } else {
-   checkoutService.processPaystackWebhook(webhook);
-  }
+  webhookInboxService.accept("PAYSTACK", webhook, rawBody);
   return org.springframework.http.ResponseEntity.ok().build();
  }
  @PostMapping @ResponseStatus(HttpStatus.CREATED)

@@ -19,7 +19,8 @@ public interface SupplierSettlementRepository extends JpaRepository<SupplierSett
     Optional<SupplierSettlement> findByAllocation_Id(UUID allocationId);
     Page<SupplierSettlement> findByStatusOrderByCreatedAtAsc(SupplierSettlementStatus status, Pageable pageable);
     List<SupplierSettlement> findBySettlementBatch_IdOrderByCreatedAtAsc(UUID batchId);
-    @org.springframework.data.jpa.repository.Query(value = "select * from supplier_settlements s "
+    Optional<SupplierSettlement> findByPayoutReference(String reference);
+    @Query(value = "select * from supplier_settlements s "
             + "where s.provider = 'PAYSTACK' and s.status = 'PROCESSING' "
             + "and s.last_attempt_at <= :attemptCutoff "
             + "and (s.last_status_check_at is null or s.last_status_check_at <= :checkBefore) "
@@ -29,7 +30,6 @@ public interface SupplierSettlementRepository extends JpaRepository<SupplierSett
             @Param("attemptCutoff") OffsetDateTime attemptCutoff,
             @Param("checkBefore") OffsetDateTime checkBefore,
             @Param("batchSize") int batchSize);
-    Optional<SupplierSettlement> findByPayoutReference(String reference);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from SupplierSettlement s where s.settlementBatch.id = :batchId order by s.createdAt asc")
     List<SupplierSettlement> findBySettlementBatchIdForUpdate(@Param("batchId") UUID batchId);

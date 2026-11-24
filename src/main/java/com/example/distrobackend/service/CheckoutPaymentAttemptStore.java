@@ -156,16 +156,18 @@ public class CheckoutPaymentAttemptStore {
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public boolean expireUninitializedPaystackAttempt(UUID paymentId, OffsetDateTime olderThan) {
+    public boolean expireUnresolvedPaystackAttempt(UUID paymentId, String verifiedReference,
+                                                   OffsetDateTime olderThan) {
         CheckoutPayment payment = checkoutPaymentRepository.findByIdForUpdate(paymentId).orElse(null);
         if (payment == null || payment.getProvider() != PaymentProvider.PAYSTACK
-                || payment.getStatus() != CheckoutPaymentStatus.UNKNOWN
-                || payment.getInitiatedAt() == null || !payment.getInitiatedAt().isBefore(olderThan)
-                || payment.getProviderPayload() == null
-                || !"REQUEST_OUTCOME_UNKNOWN".equals(payment.getProviderPayload().get("state"))) return false;
+                || (payment.getStatus() != CheckoutPaymentStatus.PENDING
+                && payment.getStatus() != CheckoutPaymentStatus.UNKNOWN)
+                || verifiedReference == null
+                || !verifiedReference.equals(payment.getProviderReference())
+                || payment.getInitiatedAt() == null || !payment.getInitiatedAt().isBefore(olderThan)) return false;
         payment.setStatus(CheckoutPaymentStatus.TIMED_OUT);
         payment.setConfirmedAt(OffsetDateTime.now());
-        payment.setFailureReason("Paystack did not create a transaction for the unresolved initialization");
+        payment.setFailureReason("Paystack verification found no transaction for this payment reference");
         payment.setProviderNextVerificationAt(null);
         payment.getCheckout().setStatus(com.example.distrobackend.Domain.enums.CheckoutStatus.PAYMENT_FAILED);
         checkoutPaymentRepository.saveAndFlush(payment);

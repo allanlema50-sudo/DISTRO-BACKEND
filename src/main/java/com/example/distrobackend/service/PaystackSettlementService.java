@@ -215,9 +215,9 @@ public class PaystackSettlementService {
                     "Only a failed or reversed settlement can be retried");
         }
         executeSettlement(settlement);
-        settlementRepository.save(settlement);
+        SupplierSettlement saved = settlementRepository.save(settlement);
         refreshBatchStatus(batch);
-        return SupplierSettlementAdminResponse.from(settlement);
+        return SupplierSettlementAdminResponse.from(saved);
     }
 
     @Transactional
@@ -226,7 +226,8 @@ public class PaystackSettlementService {
         SupplierSettlement observed = settlementRepository.findByPayoutReference(webhook.reference()).orElse(null);
         if (observed == null || observed.getSettlementBatch() == null) return;
         SettlementBatch batch = lockBatch(observed.getSettlementBatch().getId());
-        SupplierSettlement settlement = settlementRepository.findByPayoutReferenceForUpdate(webhook.reference()).orElse(null);
+        SupplierSettlement settlement = settlementRepository.findByPayoutReferenceForUpdate(webhook.reference())
+                .orElse(null);
         if (settlement == null || settlement.getProvider() != PaymentProvider.PAYSTACK) return;
         boolean reversalOfSettled = "transfer.reversed".equals(webhook.event())
                 && settlement.getStatus() == SupplierSettlementStatus.SETTLED;
@@ -265,7 +266,7 @@ public class PaystackSettlementService {
 
     @Transactional
     public Optional<String> claimTransferVerification(UUID settlementId, OffsetDateTime attemptCutoff,
-                                                      OffsetDateTime checkedBefore, OffsetDateTime checkedAt) {
+                                                       OffsetDateTime checkedBefore, OffsetDateTime checkedAt) {
         SupplierSettlement settlement = settlementRepository.findByIdForUpdate(settlementId).orElse(null);
         if (settlement == null || settlement.getProvider() != PaymentProvider.PAYSTACK
                 || settlement.getStatus() != SupplierSettlementStatus.PROCESSING
@@ -305,6 +306,7 @@ public class PaystackSettlementService {
         settlement.setStatus(SupplierSettlementStatus.PROCESSING);
         settlement.setPayoutAttempts(settlement.getPayoutAttempts() + 1);
         settlement.setLastAttemptAt(OffsetDateTime.now());
+        settlement.setLastStatusCheckAt(null);
         try {
             PaystackPaymentService.Transfer transfer = paystackPaymentService.initiateTransfer(
                     settlement.getPayoutReference(), settlement.getAmount(), settlement.getCurrency(),

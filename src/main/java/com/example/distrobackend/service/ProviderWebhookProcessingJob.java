@@ -38,10 +38,10 @@ public class ProviderWebhookProcessingJob {
                         event.getAmountMinor(), event.getCurrency(), event.getGatewayResponse(), event.getTransferCode());
                 if (event.getEventName().startsWith("transfer.")) settlementService.processPaystackWebhook(webhook);
                 else checkoutService.processPaystackWebhook(webhook);
-                inbox.markProcessed(claim);
+                inbox.markProcessed(eventId, claim.claimToken());
             } catch (Exception ex) {
                 log.warn("Provider webhook event {} processing attempt failed", eventId, ex);
-                inbox.markFailed(claim, ex);
+                inbox.markFailed(eventId, claim.claimToken(), ex);
             }
         }
     }

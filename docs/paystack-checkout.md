@@ -115,16 +115,32 @@ enable payouts. After Paystack approves transfers, set
    marks it failed if Paystack confirms no transfer exists. Operators can then
    retry a definitively failed transfer only with its original reference.
 5. Signed `transfer.success`, `transfer.failed`, and `transfer.reversed`
-   webhooks also update the settlement and batch status. The reconciliation
-   job provides recovery if a webhook is delayed or lost.
+   webhooks also update the settlement and batch status. Webhooks are stored
+   before acknowledgement and processed asynchronously with bounded retries.
+   After the configured attempt limit, Super Admins can inspect a
+   `DEAD_LETTER` event and manually requeue it through the admin API.
+
+Webhook processing settings:
+
+```dotenv
+PAYMENT_WEBHOOK_POLL_INTERVAL_MS=2000
+PAYMENT_WEBHOOK_MAX_ATTEMPTS=8
+PAYMENT_WEBHOOK_BATCH_SIZE=25
+PAYMENT_WEBHOOK_PROCESSING_TIMEOUT=5m
+```
+
+Only the parsed event fields and payload fingerprint are retained; raw callback
+bodies and signatures are not stored.
 
 Paystack checkout attempts whose initialization response is ambiguous are
 verified by their stored transaction reference as well. While verification is
 still pending, the attempt remains unresolved and the buyer must not start a
 second payment. A confirmed success or failure is applied through the same
-idempotent processing path as a webhook. A reference that Paystack confirms is
-absent after a bounded verification window is timed out, allowing the buyer to
-try again.
+idempotent processing path as a webhook. An initialization with an unknown
+outcome and no authorization URL is timed out only after Paystack confirms no
+transaction exists for its stored reference beyond the bounded verification
+window. An accepted checkout remains unresolved until provider verification
+returns a conclusive result.
 
 Checkout payment verification cadence is controlled by
 `PAYSTACK_RECONCILIATION_SCAN_MS`. Supplier transfer reconciliation has separate
@@ -135,14 +151,6 @@ settings: `PAYSTACK_SETTLEMENT_RECONCILIATION_SCAN_MS`,
 repeat delays are five minutes. Provider timeouts remain unresolved and are
 queried again; they never trigger a transfer under a new reference. Transfer
 reconciliation runs only when `PAYSTACK_TRANSFERS_ENABLED=true`.
-
-Signed webhooks are stored before acknowledgement and processed asynchronously
-with bounded retries. Repeated failures enter `DEAD_LETTER` for Super Admin
-inspection and manual retry. Only parsed event fields and a payload fingerprint
-are retained; raw callback bodies and signatures are not stored. The worker is
-configured with `PAYMENT_WEBHOOK_POLL_INTERVAL_MS`,
-`PAYMENT_WEBHOOK_MAX_ATTEMPTS`, `PAYMENT_WEBHOOK_BATCH_SIZE`, and
-`PAYMENT_WEBHOOK_PROCESSING_TIMEOUT`.
 
 Transfers use the Paystack balance. The business must complete Paystack's
 transfer/KYC setup and ensure its balance and transfer approval settings are

@@ -16,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.security.MessageDigest;
 import java.time.OffsetDateTime;
+import java.util.Objects;
 import java.util.HexFormat;
 import java.util.Set;
 import java.util.UUID;
@@ -39,6 +40,16 @@ public class ProviderWebhookInboxService {
         if (rawBody == null || rawBody.length == 0 || rawBody.length > 1_048_576) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Webhook payload must be between 1 byte and 1 MiB");
         }
+        if (!"PAYSTACK".equals(provider) || webhook == null
+                || webhook.event() == null || webhook.event().isBlank() || webhook.event().length() > 80
+                || webhook.reference() == null || webhook.reference().isBlank()
+                || webhook.reference().length() > 120
+                || webhook.status() != null && webhook.status().length() > 40
+                || webhook.currency() != null && webhook.currency().length() > 3
+                || webhook.gatewayResponse() != null && webhook.gatewayResponse().length() > 10_000
+                || webhook.transferCode() != null && webhook.transferCode().length() > 120) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Webhook fields are invalid");
+        }
         String key = sha256(rawBody);
         repository.insertIfAbsent(UUID.randomUUID(), provider, key, webhook.event(), webhook.reference(),
                 webhook.status(), webhook.amountMinor(), webhook.currency(), webhook.gatewayResponse(),
@@ -47,6 +58,7 @@ public class ProviderWebhookInboxService {
 
     @Transactional
     public int recoverStaleProcessing() {
+        validateMaxAttempts();
         if (processingTimeout.isZero() || processingTimeout.isNegative()) {
             throw new IllegalStateException("app.payments.webhook-processing-timeout must be positive");
         }
@@ -55,7 +67,7 @@ public class ProviderWebhookInboxService {
 
     @Transactional
     public Claim claimNext() {
-        if (maxAttempts < 1) throw new IllegalStateException("app.payments.webhook-max-attempts must be positive");
+        validateMaxAttempts();
         repository.deadLetterExhausted(maxAttempts);
         return repository.lockDue(DUE, OffsetDateTime.now(), maxAttempts, PageRequest.of(0, 1)).stream().findFirst()
                 .map(event -> {
@@ -75,12 +87,10 @@ public class ProviderWebhookInboxService {
     }
 
     @Transactional
-    public void markProcessed(Claim claim) {
-        if (claim == null) return;
-        UUID id = claim.eventId();
+    public void markProcessed(UUID id, UUID claimToken) {
         ProviderWebhookEvent event = lock(id);
         if (event.getStatus() != ProviderWebhookStatus.PROCESSING
-                || !claim.claimToken().equals(event.getClaimToken())) return;
+                || !Objects.equals(event.getClaimToken(), claimToken)) return;
         event.setStatus(ProviderWebhookStatus.PROCESSED);
         event.setClaimToken(null);
         event.setProcessedAt(OffsetDateTime.now());
@@ -88,14 +98,12 @@ public class ProviderWebhookInboxService {
     }
 
     @Transactional
-    public void markFailed(Claim claim, Exception failure) {
-        if (claim == null) return;
-        UUID id = claim.eventId();
+    public void markFailed(UUID id, UUID claimToken, Exception failure) {
         ProviderWebhookEvent event = lock(id);
         if (event.getStatus() != ProviderWebhookStatus.PROCESSING
-                || !claim.claimToken().equals(event.getClaimToken())) return;
-        event.setLastError(safeMessage(failure));
+                || !Objects.equals(event.getClaimToken(), claimToken)) return;
         event.setClaimToken(null);
+        event.setLastError(safeMessage(failure));
         if (event.getAttemptCount() >= maxAttempts) {
             event.setStatus(ProviderWebhookStatus.DEAD_LETTER);
             return;
@@ -132,6 +140,10 @@ public class ProviderWebhookInboxService {
         return repository.findByIdForUpdate(id).orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND));
     }
 
+    private void validateMaxAttempts() {
+        if (maxAttempts < 1) throw new IllegalStateException("app.payments.webhook-max-attempts must be positive");
+    }
+
     private static String sha256(byte[] payload) {
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload));
@@ -140,12 +152,12 @@ public class ProviderWebhookInboxService {
         }
     }
 
-    public record Claim(UUID eventId, UUID claimToken) {}
-
     private static String safeMessage(Exception ex) {
         String message = ex.getMessage();
         if (message == null || message.isBlank()) return ex.getClass().getSimpleName();
         String sanitized = message.replaceAll("(?i)(sk_live_|sk_test_)[A-Za-z0-9]+", "[redacted]");
         return sanitized.substring(0, Math.min(sanitized.length(), 1000));
     }
+
+    public record Claim(UUID eventId, UUID claimToken) { }
 }

@@ -81,6 +81,7 @@ public class PurchaseOrderShipmentService {
     private final PurchaseOrderShipmentGroupRepository shipmentGroupRepository;
     private final TripRepository tripRepository;
     private final TripStatusHistoryRepository tripStatusHistoryRepository;
+    private final com.example.distrobackend.repository.ResellerListingRepository resellerListingRepository;
 
     /**
      * Creates the existing manufacturer shipment record once a centralized
@@ -576,6 +577,9 @@ public class PurchaseOrderShipmentService {
                         "Accepted, damaged, and missing quantities must equal each ordered quantity");
             }
         }
+        items.stream().map(item -> item.getStockItem().getId()).distinct().sorted().forEach(productId ->
+                stockItemRepository.findByIdForUpdate(productId)
+                        .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.STOCK_ITEM_NOT_FOUND)));
         items.sort(Comparator.comparing(item -> item.getDistributorOffer().getId()));
         List<StockItem> lockedOffers = new ArrayList<>();
         for (PurchaseOrderItem item : items) {
@@ -611,6 +615,10 @@ public class PurchaseOrderShipmentService {
                             "Receiving this shipment exceeds the supported stock quantity");
                 }
                 offer.setQuantityOnHand(quantity);
+                resellerListingRepository.findByDistributor_IdAndManufacturerProduct_Id(
+                        actor.organizationId(), item.getStockItem().getId()).ifPresent(listing -> {
+                    listing.setQuantityOnHand(Math.addExact(listing.getQuantityOnHand(), received.acceptedQuantity()));
+                });
                 StockMovement movement = new StockMovement();
                 movement.setStockItem(offer);
                 movement.setMovementType(StockMovementType.RESTOCK_IN);

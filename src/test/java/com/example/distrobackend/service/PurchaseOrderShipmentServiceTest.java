@@ -65,6 +65,7 @@ class PurchaseOrderShipmentServiceTest {
     @Mock private com.example.distrobackend.repository.PurchaseOrderShipmentGroupRepository shipmentGroupRepository;
     @Mock private com.example.distrobackend.repository.TripRepository tripRepository;
     @Mock private com.example.distrobackend.repository.TripStatusHistoryRepository tripStatusHistoryRepository;
+    @Mock private com.example.distrobackend.repository.ResellerListingRepository resellerListingRepository;
 
     @InjectMocks private PurchaseOrderShipmentService shipmentService;
 
@@ -223,6 +224,11 @@ class PurchaseOrderShipmentServiceTest {
         offer.setSku("RICE-1");
         offer.setName("Rice");
         offer.setQuantityOnHand(10);
+        com.example.distrobackend.Domain.entity.ResellerListing listing = new com.example.distrobackend.Domain.entity.ResellerListing();
+        listing.setId(UUID.randomUUID());
+        listing.setDistributor(distributor);
+        listing.setManufacturerProduct(source);
+        listing.setQuantityOnHand(3);
         PurchaseOrder po = new PurchaseOrder();
         po.setId(poId);
         po.setPurchaseOrderNumber("PO-17");
@@ -245,6 +251,9 @@ class PurchaseOrderShipmentServiceTest {
                 .thenReturn(Optional.of(warehouse));
         when(stockItemRepository.findByIdAndOrganizationIdForUpdateWithWarehouse(offerId, distributorId))
                 .thenReturn(Optional.of(offer));
+        when(stockItemRepository.findByIdForUpdate(sourceId)).thenReturn(Optional.of(source));
+        when(resellerListingRepository.findByDistributor_IdAndManufacturerProduct_Id(distributorId, sourceId))
+                .thenReturn(Optional.of(listing));
         when(shipmentRepository.save(any(PurchaseOrderShipment.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
         when(purchaseOrderRepository.save(any(PurchaseOrder.class)))
@@ -257,6 +266,7 @@ class PurchaseOrderShipmentServiceTest {
 
         assertThat(response.status()).isEqualTo(com.example.distrobackend.Domain.enums.PurchaseOrderShipmentStatus.RECEIVED);
         assertThat(offer.getQuantityOnHand()).isEqualTo(12);
+        assertThat(listing.getQuantityOnHand()).isEqualTo(5);
         assertThat(response.receiptLines()).singleElement().satisfies(line -> {
             assertThat(line.acceptedQuantity()).isEqualTo(2);
             assertThat(line.damagedQuantity()).isEqualTo(1);
@@ -266,6 +276,7 @@ class PurchaseOrderShipmentServiceTest {
 
         shipmentService.receive(actor, shipmentId, new ReceiveShipmentRequest("Retry", List.of()));
         assertThat(offer.getQuantityOnHand()).isEqualTo(12);
+        assertThat(listing.getQuantityOnHand()).isEqualTo(5);
         verify(stockMovementRepository).save(any(StockMovement.class));
     }
 

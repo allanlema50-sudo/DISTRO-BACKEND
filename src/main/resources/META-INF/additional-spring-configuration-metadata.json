@@ -60,9 +60,9 @@
     ,{ "name": "app.payments.webhook-processing-batch-size", "type": "java.lang.Integer", "description": "Maximum provider webhook events processed in one scheduled run." }
     ,{ "name": "app.payments.webhook-processing-timeout", "type": "java.time.Duration", "description": "After this duration, interrupted webhook processing claims become eligible for recovery." }
     ,{ "name": "paystack.reconciliation-scan-ms", "type": "java.lang.Long", "description": "Interval in milliseconds for verifying unresolved Paystack checkout payments." }
-    ,{ "name": "paystack.settlement.reconciliation.scan-ms", "type": "java.lang.Long", "description": "Delay between Paystack supplier transfer verification scans in milliseconds." }
-    ,{ "name": "paystack.settlement.reconciliation.batch-size", "type": "java.lang.Integer", "description": "Maximum supplier transfers checked per reconciliation scan." }
-    ,{ "name": "paystack.settlement.reconciliation.initial-delay-ms", "type": "java.lang.Long", "description": "Minimum age before an ambiguous supplier transfer is verified." }
-    ,{ "name": "paystack.settlement.reconciliation.repeat-delay-ms", "type": "java.lang.Long", "description": "Minimum delay between repeated supplier transfer verification requests." }
+    ,{ "name": "paystack.settlement.reconciliation.scan-ms", "type": "java.lang.Long", "description": "Interval in milliseconds for checking unresolved Paystack supplier transfers." }
+    ,{ "name": "paystack.settlement.reconciliation.batch-size", "type": "java.lang.Integer", "description": "Maximum supplier transfers checked in one reconciliation pass." }
+    ,{ "name": "paystack.settlement.reconciliation.initial-delay-ms", "type": "java.lang.Long", "description": "Wait before first verification of an ambiguous supplier transfer." }
+    ,{ "name": "paystack.settlement.reconciliation.repeat-delay-ms", "type": "java.lang.Long", "description": "Wait between repeated verifications of unresolved supplier transfers." }
   ]
 }

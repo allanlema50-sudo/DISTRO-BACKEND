@@ -157,14 +157,19 @@ public class CommissionRuleService {
 
     public record CommissionDecision(UUID ruleId, BigDecimal ratePercent, BigDecimal fixedFee, String currency) {
         public FinancialLedgerService.FinancialBreakdown calculate(BigDecimal gross, BigDecimal providerFee) {
-            BigDecimal commission = gross.multiply(ratePercent)
+            if (gross == null || providerFee == null || gross.signum() <= 0 || providerFee.signum() < 0) {
+                throw new ApiException(ErrorCode.BAD_REQUEST, "Payment amounts must be valid positive values");
+            }
+            BigDecimal maximumCommission = gross.subtract(providerFee).setScale(2, RoundingMode.HALF_UP);
+            if (maximumCommission.signum() < 0) {
+                throw new ApiException(ErrorCode.CONFLICT, "Provider fees exceed the payment amount");
+            }
+            BigDecimal calculatedCommission = gross.multiply(ratePercent)
                     .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP)
                     .add(fixedFee)
                     .setScale(2, RoundingMode.HALF_UP);
+            BigDecimal commission = calculatedCommission.min(maximumCommission);
             BigDecimal payable = gross.subtract(providerFee).subtract(commission).setScale(2, RoundingMode.HALF_UP);
-            if (payable.signum() < 0) {
-                throw new ApiException(ErrorCode.CONFLICT, "Commission and provider fees exceed the payment amount");
-            }
             return new FinancialLedgerService.FinancialBreakdown(gross, providerFee, commission, payable, currency, ruleId);
         }
     }

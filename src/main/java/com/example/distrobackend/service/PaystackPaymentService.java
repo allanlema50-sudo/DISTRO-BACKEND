@@ -3,8 +3,9 @@ package com.example.distrobackend.service;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.Domain.enums.PayoutMethod;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
@@ -20,7 +21,6 @@ import org.springframework.web.client.HttpStatusCodeException;
 import jakarta.annotation.PostConstruct;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
-import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URI;
@@ -31,6 +31,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -44,9 +45,10 @@ public class PaystackPaymentService {
     private static final long WEBHOOK_TOLERANCE_SECONDS = 300;
 
     private final RestTemplate restTemplate;
-    private final ObjectMapper objectMapper;
+    private final JsonMapper jsonMapper;
     private final boolean enabled;
     private final boolean transfersEnabled;
+    private final String mode;
     private final String baseUrl;
     private final String secretKey;
     private final String webhookSecret;
@@ -54,17 +56,19 @@ public class PaystackPaymentService {
 
     public PaystackPaymentService(
             @Qualifier("darajaRestTemplate") RestTemplate restTemplate,
-            ObjectMapper objectMapper,
+            JsonMapper jsonMapper,
             @Value("${paystack.enabled:false}") boolean enabled,
             @Value("${paystack.transfers-enabled:false}") boolean transfersEnabled,
+            @Value("${paystack.mode:test}") String mode,
             @Value("${paystack.base-url:https://api.paystack.co}") String baseUrl,
             @Value("${paystack.secret-key:}") String secretKey,
             @Value("${paystack.webhook-secret:}") String webhookSecret,
             @Value("${paystack.callback-url:}") String callbackUrl) {
         this.restTemplate = restTemplate;
-        this.objectMapper = objectMapper;
+        this.jsonMapper = jsonMapper;
         this.enabled = enabled;
         this.transfersEnabled = transfersEnabled;
+        this.mode = mode == null ? "" : mode.trim().toUpperCase(Locale.ROOT);
         this.baseUrl = trimTrailingSlash(baseUrl);
         this.secretKey = secretKey == null ? "" : secretKey.trim();
         this.webhookSecret = webhookSecret == null ? "" : webhookSecret.trim();
@@ -78,8 +82,16 @@ public class PaystackPaymentService {
         }
         if (!enabled) return;
         validateProviderHost();
+        String expectedKeyPrefix = switch (mode) {
+            case "TEST" -> "sk_test_";
+            case "LIVE" -> "sk_live_";
+            default -> throw new IllegalStateException("PAYSTACK_MODE must be TEST or LIVE");
+        };
         if (secretKey.isBlank()) {
             throw new IllegalStateException("PAYSTACK_SECRET_KEY must be set when PAYSTACK_ENABLED=true");
+        }
+        if (!secretKey.startsWith(expectedKeyPrefix)) {
+            throw new IllegalStateException("PAYSTACK_SECRET_KEY does not match PAYSTACK_MODE=" + mode);
         }
         if (webhookSecret.isBlank()) {
             throw new IllegalStateException("PAYSTACK_WEBHOOK_SECRET must be set when PAYSTACK_ENABLED=true");
@@ -89,6 +101,10 @@ public class PaystackPaymentService {
 
     public boolean enabled() {
         return enabled;
+    }
+
+    public boolean transfersEnabled() {
+        return transfersEnabled;
     }
 
     public Initialization initialize(String reference, BigDecimal amount, String currency,
@@ -111,8 +127,8 @@ public class PaystackPaymentService {
         body.put("reference", reference);
         body.put("channels", List.of(normalizedChannel));
         try {
-            body.put("metadata", objectMapper.writeValueAsString(metadata(paymentId, checkoutReference)));
-        } catch (IOException ex) {
+            body.put("metadata", jsonMapper.writeValueAsString(metadata(paymentId, checkoutReference)));
+        } catch (JacksonException ex) {
             throw new IllegalStateException("Unable to encode Paystack payment metadata", ex);
         }
         if (!callbackUrl.isBlank()) body.put("callback_url", callbackUrl);
@@ -126,6 +142,9 @@ public class PaystackPaymentService {
                     URI.create(baseUrl + "/transaction/initialize"), HttpMethod.POST,
                     new HttpEntity<>(body, headers), String.class);
         } catch (HttpStatusCodeException ex) {
+            if (ex.getStatusCode().is5xxServerError() || ex.getStatusCode().value() == 408) {
+                throw new ProviderOutcomeUnknownException("Paystack initialization outcome is unknown", ex);
+            }
             throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED,
                     "Paystack rejected the payment initialization request");
         } catch (RestClientException ex) {
@@ -134,20 +153,23 @@ public class PaystackPaymentService {
 
         JsonNode root;
         try {
-            root = response.getBody() == null ? null : objectMapper.readTree(response.getBody());
-        } catch (IOException ex) {
+            root = response.getBody() == null ? null : jsonMapper.readTree(response.getBody());
+        } catch (JacksonException ex) {
             throw new ProviderOutcomeUnknownException("Paystack returned an invalid response", ex);
         }
-        if (root == null || !root.path("status").asBoolean(false)) {
-            String message = root == null ? "Paystack returned an empty response"
-                    : root.path("message").asText("Paystack rejected the payment request");
-            throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, message);
+        if (root == null || !root.path("status").isBoolean()) {
+            throw new ProviderOutcomeUnknownException("Paystack returned an incomplete initialization response", null);
+        }
+        if (!root.path("status").asBoolean()) {
+            throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED,
+                    root.path("message").asText("Paystack rejected the payment request"));
         }
         JsonNode data = root.path("data");
         String providerReference = data.path("reference").asText("");
         String authorizationUrl = data.path("authorization_url").asText("");
         String accessCode = data.path("access_code").asText("");
-        if (providerReference.isBlank() || authorizationUrl.isBlank() || accessCode.isBlank()) {
+        if (providerReference.isBlank() || !reference.equals(providerReference)
+                || authorizationUrl.isBlank() || accessCode.isBlank()) {
             throw new ProviderOutcomeUnknownException("Paystack returned an incomplete initialization response", null);
         }
         return new Initialization(providerReference, authorizationUrl, accessCode, normalizedChannel);
@@ -163,19 +185,30 @@ public class PaystackPaymentService {
             throw new ApiException(ErrorCode.UNAUTHENTICATED, "Invalid Paystack webhook signature");
         }
         try {
-            JsonNode root = objectMapper.readTree(rawBody);
+            JsonNode root = jsonMapper.readTree(rawBody);
             JsonNode data = root.path("data");
             String event = root.path("event").asText("").trim();
             String reference = data.path("reference").asText("").trim();
             JsonNode disputeTransaction = data.path("transaction");
+            String transactionReference = data.path("transaction_reference").asText("").trim();
+            if (transactionReference.isBlank() && !disputeTransaction.isMissingNode()) {
+                transactionReference = disputeTransaction.path("reference").asText("").trim();
+            }
             if (reference.isBlank() && !disputeTransaction.isMissingNode()) {
                 reference = disputeTransaction.path("reference").asText("").trim();
             }
-            String disputeId = data.path("id").isMissingNode() ? null : data.path("id").asText();
+            if (reference.isBlank() && event.startsWith("refund.")) reference = transactionReference;
+            JsonNode disputeIdNode = data.path("id");
+            String disputeId = disputeIdNode.isMissingNode() || disputeIdNode.isNull()
+                    ? null : disputeIdNode.asText(null);
             boolean disputeEvent = event.startsWith("charge.dispute.");
             if (disputeEvent && reference.isBlank() && disputeId != null) reference = disputeId;
-            if (event.isBlank() || reference.isBlank() || (disputeEvent && disputeId == null)) {
+            if (event.isBlank() || reference.isBlank()
+                    || (disputeEvent && (disputeId == null || disputeId.isBlank()))) {
                 throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack webhook is missing event or reference");
+            }
+            if (transactionReference.isBlank() && !event.startsWith("refund.")) {
+                transactionReference = disputeTransaction.path("reference").asText(reference);
             }
             String dueAtValue = data.path("due_at").asText(null);
             java.time.OffsetDateTime dueAt = null;
@@ -187,14 +220,68 @@ public class PaystackPaymentService {
                 }
             }
             return new Webhook(event, reference, data.path("status").asText(""),
-                    data.path("amount").isNumber() ? data.path("amount").longValue()
-                            : data.path("refund_amount").isNumber() ? data.path("refund_amount").longValue() : null,
+                    parseMinorAmount(data),
                     data.path("currency").asText(null), data.path("gateway_response").asText(null),
                     data.path("transfer_code").asText(null), disputeId,
                     data.path("resolution").asText(null), dueAt,
-                    disputeTransaction.path("reference").asText(reference));
-        } catch (IOException ex) {
+                    transactionReference.isBlank() ? reference : transactionReference);
+        } catch (JacksonException ex) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack webhook body is not valid JSON");
+        }
+    }
+
+    private static Long parseMinorAmount(JsonNode data) {
+        JsonNode amount = data.path("amount");
+        if (amount.isMissingNode() || amount.isNull()) amount = data.path("refund_amount");
+        if (amount.isMissingNode() || amount.isNull()) return null;
+        if (amount.isIntegralNumber() && amount.canConvertToLong()) return amount.longValue();
+        if (amount.isTextual()) {
+            String value = amount.asText().trim();
+            try {
+                if (value.matches("-?[0-9]+")) return Long.parseLong(value);
+            } catch (NumberFormatException ignored) {
+                // Reject overflow below with the same safe validation error.
+            }
+        }
+        throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack webhook amount must be an integer minor-unit value");
+    }
+
+    public Verification verifyTransaction(String reference) {
+        requireEnabled();
+        if (reference == null || !REFERENCE.matcher(reference).matches()) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack payment reference is invalid");
+        }
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(secretKey);
+        ResponseEntity<String> response;
+        try {
+            response = restTemplate.exchange(URI.create(baseUrl + "/transaction/verify/" + reference),
+                    HttpMethod.GET, new HttpEntity<>(headers), String.class);
+        } catch (HttpStatusCodeException ex) {
+            if (ex.getStatusCode().value() == 404) {
+                return new Verification(reference, "not_found", null, null);
+            }
+            throw new ProviderOutcomeUnknownException("Paystack verification request failed", ex);
+        } catch (RestClientException ex) {
+            throw new ProviderOutcomeUnknownException("Paystack verification outcome is unknown", ex);
+        }
+
+        try {
+            JsonNode root = response.getBody() == null ? null : jsonMapper.readTree(response.getBody());
+            JsonNode data = root == null ? null : root.path("data");
+            if (root == null || !root.path("status").asBoolean(false) || data == null || data.isMissingNode()) {
+                throw new ProviderOutcomeUnknownException("Paystack returned an incomplete verification response", null);
+            }
+            String verifiedReference = data.path("reference").asText("");
+            String status = data.path("status").asText("").trim().toLowerCase(Locale.ROOT);
+            if (!reference.equals(verifiedReference) || status.isBlank()) {
+                throw new ProviderOutcomeUnknownException("Paystack returned incomplete transaction verification", null);
+            }
+            Long amount = data.path("amount").canConvertToLong() ? data.path("amount").longValue() : null;
+            String verifiedCurrency = data.path("currency").asText(null);
+            return new Verification(verifiedReference, status, amount, verifiedCurrency);
+        } catch (JacksonException ex) {
+            throw new ProviderOutcomeUnknownException("Paystack returned invalid verification data", ex);
         }
     }
 
@@ -250,12 +337,12 @@ public class PaystackPaymentService {
     private static long toMinorAmount(BigDecimal amount, String currency) {
         if (amount == null || amount.signum() <= 0 || currency == null
                 || !"KES".equalsIgnoreCase(currency.trim())) {
-            throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack checkout must be a positive KES amount");
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack payments require a positive KES amount");
         }
         try {
             return amount.movePointRight(2).setScale(0, RoundingMode.UNNECESSARY).longValueExact();
         } catch (ArithmeticException ex) {
-            throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack checkout amount must have at most two decimals");
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack amount must have at most two decimals");
         }
     }
 
@@ -274,13 +361,6 @@ public class PaystackPaymentService {
     private void requireEnabled() {
         if (!enabled) throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "Paystack payments are disabled");
         validateProviderHost();
-    }
-
-    private void requireTransfersEnabled() {
-        requireEnabled();
-        if (!transfersEnabled) {
-            throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "Paystack transfers are disabled");
-        }
     }
 
     private void validateProviderHost() {
@@ -319,7 +399,14 @@ public class PaystackPaymentService {
         body.put("name", accountName);
         body.put("account_number", accountNumber);
         body.put("currency", currency.toUpperCase(Locale.ROOT));
-        if (bankCode != null && !bankCode.isBlank()) body.put("bank_code", bankCode.trim());
+        String normalizedCurrency = currency == null ? "" : currency.trim().toUpperCase(Locale.ROOT);
+        if (method == PayoutMethod.MOBILE_MONEY && bankCode != null && !bankCode.isBlank()) {
+            body.put("bank_code", bankCode.trim());
+        } else if (method == PayoutMethod.MOBILE_MONEY && "KES".equals(normalizedCurrency)) {
+            body.put("bank_code", "MPESA");
+        } else if (bankCode != null && !bankCode.isBlank()) {
+            body.put("bank_code", bankCode.trim());
+        }
         if (email != null && !email.isBlank()) body.put("email", email.trim());
         JsonNode data = postJson("/transferrecipient", body, "Paystack recipient creation failed");
         String recipientCode = data.path("data").path("recipient_code").asText("");
@@ -332,7 +419,7 @@ public class PaystackPaymentService {
     public Transfer initiateTransfer(String reference, BigDecimal amount, String currency,
                                      String recipientCode, String reason) {
         requireTransfersEnabled();
-        if (!TRANSFER_REFERENCE.matcher(reference).matches()) {
+        if (reference == null || !TRANSFER_REFERENCE.matcher(reference).matches()) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Settlement transfer reference is invalid");
         }
         Map<String, Object> body = new java.util.LinkedHashMap<>();
@@ -344,25 +431,36 @@ public class PaystackPaymentService {
         body.put("reason", reason);
         JsonNode data = postJson("/transfer", body, "Paystack transfer creation failed");
         JsonNode transfer = data.path("data");
-        String returnedReference = transfer.path("reference").asText(reference);
+        String returnedReference = transfer.path("reference").asText("");
         String status = transfer.path("status").asText("");
         String transferCode = transfer.path("transfer_code").asText(null);
-        if (returnedReference.isBlank() || status.isBlank()) {
+        if (!reference.equals(returnedReference) || status.isBlank()) {
             throw new ProviderOutcomeUnknownException("Paystack returned an incomplete transfer response", null);
         }
-        return new Transfer(returnedReference, transferCode, status);
+        return new Transfer(returnedReference, transferCode, status,
+                transfer.path("amount").canConvertToLong() ? transfer.path("amount").longValue() : null,
+                transfer.path("currency").asText(null));
     }
 
-    public Verification verifyTransaction(String reference) {
-        requireEnabled();
-        return verification(getJson("/transaction/verify/" + encodePath(reference),
-                "Paystack transaction verification failed"), false);
-    }
-
-    public Verification verifyTransfer(String reference) {
+    public Optional<VerifiedTransfer> verifyTransfer(String reference) {
         requireTransfersEnabled();
-        return verification(getJson("/transfer/verify/" + encodePath(reference),
-                "Paystack transfer verification failed"), true);
+        if (reference == null || !TRANSFER_REFERENCE.matcher(reference).matches()) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Settlement transfer reference is invalid");
+        }
+        JsonNode data = getVerifiedData("/transfer/verify/" + encodePath(reference),
+                "Paystack transfer verification failed");
+        if (data == null) return Optional.empty();
+        String verifiedReference = data.path("reference").asText("");
+        if (!reference.equals(verifiedReference)) {
+            throw new ProviderOutcomeUnknownException("Paystack verified a different transfer reference", null);
+        }
+        if (data.path("status").asText("").isBlank()) {
+            throw new ProviderOutcomeUnknownException("Paystack returned an incomplete transfer verification", null);
+        }
+        return Optional.of(new VerifiedTransfer(verifiedReference,
+                data.path("transfer_code").asText(null), data.path("status").asText(""),
+                data.path("amount").canConvertToLong() ? data.path("amount").longValue() : null,
+                data.path("currency").asText(null), data.path("failures").asText(null)));
     }
 
     public Refund createRefund(String reference, String transactionReference, BigDecimal amount,
@@ -391,8 +489,26 @@ public class PaystackPaymentService {
 
     public Refund verifyRefund(String reference) {
         requireEnabled();
-        JsonNode root = getJson("/refund?reference=" + encodePath(reference),
-                "Paystack refund verification failed");
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(secretKey);
+        ResponseEntity<String> response;
+        try {
+            response = restTemplate.exchange(URI.create(baseUrl + "/refund?reference=" + encodePath(reference)),
+                    HttpMethod.GET, new HttpEntity<>(headers), String.class);
+        } catch (HttpStatusCodeException ex) {
+            throw new ProviderOutcomeUnknownException("Paystack refund verification outcome is unknown", ex);
+        } catch (RestClientException ex) {
+            throw new ProviderOutcomeUnknownException("Paystack refund verification outcome is unknown", ex);
+        }
+        JsonNode root;
+        try {
+            root = response.getBody() == null ? null : jsonMapper.readTree(response.getBody());
+        } catch (JacksonException ex) {
+            throw new ProviderOutcomeUnknownException("Paystack returned invalid refund verification JSON", ex);
+        }
+        if (root == null || !root.path("status").asBoolean(false)) {
+            throw new ProviderOutcomeUnknownException("Paystack refund verification response was incomplete", null);
+        }
         JsonNode refunds = root.path("data");
         if (!refunds.isArray()) throw new ProviderOutcomeUnknownException("Paystack refund response was incomplete", null);
         for (JsonNode refund : refunds) {
@@ -405,20 +521,7 @@ public class PaystackPaymentService {
         throw new ProviderOutcomeUnknownException("Paystack has not returned the refund reference yet", null);
     }
 
-    private Verification verification(JsonNode root, boolean transfer) {
-        JsonNode data = root.path("data");
-        String reference = data.path("reference").asText("");
-        String status = data.path("status").asText("");
-        if (reference.isBlank() || status.isBlank() || !root.path("status").asBoolean(false)) {
-            throw new ProviderOutcomeUnknownException("Paystack returned an incomplete verification response", null);
-        }
-        return new Verification(reference, status,
-                data.path("amount").isNumber() ? data.path("amount").longValue() : null,
-                data.path("currency").asText(null), data.path("gateway_response").asText(null),
-                transfer ? data.path("transfer_code").asText(null) : null);
-    }
-
-    private JsonNode getJson(String path, String rejectionMessage) {
+    private JsonNode getVerifiedData(String path, String rejectionMessage) {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(secretKey);
         ResponseEntity<String> response;
@@ -426,28 +529,28 @@ public class PaystackPaymentService {
             response = restTemplate.exchange(URI.create(baseUrl + path), HttpMethod.GET,
                     new HttpEntity<>(headers), String.class);
         } catch (HttpStatusCodeException ex) {
-            throw new ProviderOutcomeUnknownException(rejectionMessage, ex);
+            if (ex.getStatusCode().value() == 404) return null;
+            if (ex.getStatusCode().is5xxServerError() || ex.getStatusCode().value() == 408) {
+                throw new ProviderOutcomeUnknownException("Paystack transfer verification outcome is unknown", ex);
+            }
+            throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, rejectionMessage);
         } catch (RestClientException ex) {
-            throw new ProviderOutcomeUnknownException("Paystack verification outcome is unavailable", ex);
+            throw new ProviderOutcomeUnknownException("Paystack transfer verification outcome is unknown", ex);
         }
         try {
-            JsonNode root = response.getBody() == null ? null : objectMapper.readTree(response.getBody());
-            if (root == null || !root.path("status").asBoolean(false)) {
-                throw new ProviderOutcomeUnknownException(rejectionMessage, null);
+            JsonNode root = response.getBody() == null ? null : jsonMapper.readTree(response.getBody());
+            if (root == null || !root.path("status").asBoolean(false) || !root.path("data").isObject()) {
+                throw new ProviderOutcomeUnknownException("Paystack returned an incomplete transfer verification", null);
             }
-            return root;
-        } catch (IOException ex) {
-            throw new ProviderOutcomeUnknownException("Paystack returned invalid verification JSON", ex);
+            return root.path("data");
+        } catch (JacksonException ex) {
+            throw new ProviderOutcomeUnknownException("Paystack returned invalid transfer verification JSON", ex);
         }
     }
 
     private static String encodePath(String value) {
-        if (value == null || value.isBlank() || value.length() > 120) {
-            throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack reference is invalid");
-        }
-        return java.net.URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
+        return org.springframework.web.util.UriUtils.encodePathSegment(value, StandardCharsets.UTF_8);
     }
-
     private JsonNode postJson(String path, Map<String, Object> body, String rejectionMessage) {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(secretKey);
@@ -457,18 +560,31 @@ public class PaystackPaymentService {
             response = restTemplate.exchange(URI.create(baseUrl + path), HttpMethod.POST,
                     new HttpEntity<>(body, headers), String.class);
         } catch (HttpStatusCodeException ex) {
+            if (ex.getStatusCode().is5xxServerError() || ex.getStatusCode().value() == 408) {
+                throw new ProviderOutcomeUnknownException("Paystack request outcome is unknown", ex);
+            }
             throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, rejectionMessage);
         } catch (RestClientException ex) {
             throw new ProviderOutcomeUnknownException("Paystack request outcome is unknown", ex);
         }
         try {
-            JsonNode root = response.getBody() == null ? null : objectMapper.readTree(response.getBody());
-            if (root == null || !root.path("status").asBoolean(false)) {
+            JsonNode root = response.getBody() == null ? null : jsonMapper.readTree(response.getBody());
+            if (root == null || !root.path("status").isBoolean()) {
+                throw new ProviderOutcomeUnknownException("Paystack returned an incomplete response", null);
+            }
+            if (!root.path("status").asBoolean()) {
                 throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, rejectionMessage);
             }
             return root;
-        } catch (IOException ex) {
+        } catch (JacksonException ex) {
             throw new ProviderOutcomeUnknownException("Paystack returned invalid JSON", ex);
+        }
+    }
+
+    private void requireTransfersEnabled() {
+        requireEnabled();
+        if (!transfersEnabled) {
+            throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "Paystack transfers are disabled");
         }
     }
 
@@ -476,10 +592,11 @@ public class PaystackPaymentService {
 
     public record Recipient(String recipientCode) {}
 
-    public record Transfer(String reference, String transferCode, String status) {}
+    public record Transfer(String reference, String transferCode, String status,
+                           Long amountMinor, String currency) {}
 
-    public record Verification(String reference, String status, Long amountMinor, String currency,
-                               String gatewayResponse, String transferCode) {}
+    public record VerifiedTransfer(String reference, String transferCode, String status,
+                                   Long amountMinor, String currency, String failureReason) {}
 
     public record Refund(String reference, String providerRefundId, String status,
                          Long amountMinor, String currency) {}
@@ -494,6 +611,8 @@ public class PaystackPaymentService {
                     null, null, null, reference);
         }
     }
+
+    public record Verification(String reference, String status, Long amountMinor, String currency) {}
 
     public static class ProviderOutcomeUnknownException extends RuntimeException {
         public ProviderOutcomeUnknownException(String message, Throwable cause) {

@@ -26,9 +26,12 @@ CREATE TABLE payment_disputes (
 
 CREATE INDEX idx_payment_disputes_status_due ON payment_disputes(status, due_at, last_event_at);
 CREATE INDEX idx_payment_disputes_payment ON payment_disputes(checkout_payment_id, last_event_at DESC);
+CREATE INDEX idx_payment_disputes_transaction_reference_open
+    ON payment_disputes(transaction_reference) WHERE cleared_at IS NULL;
 
 ALTER TABLE provider_webhook_events
     ADD COLUMN provider_dispute_id VARCHAR(80),
     ADD COLUMN dispute_status VARCHAR(40),
     ADD COLUMN dispute_resolution VARCHAR(80),
-    ADD COLUMN dispute_due_at TIMESTAMPTZ;
+    ADD COLUMN dispute_due_at TIMESTAMPTZ,
+    ADD COLUMN provider_transaction_reference VARCHAR(120);

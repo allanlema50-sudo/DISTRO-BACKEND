@@ -12,6 +12,7 @@ import org.springframework.data.repository.query.Param;
 
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.data.repository.query.Param;
 
 public interface PaymentDisputeRepository extends JpaRepository<PaymentDispute, UUID> {
     Page<PaymentDispute> findAllByOrderByLastEventAtDesc(Pageable pageable);
@@ -22,6 +23,11 @@ public interface PaymentDisputeRepository extends JpaRepository<PaymentDispute, 
     Optional<PaymentDispute> findByProviderDisputeId(String providerDisputeId);
 
     boolean existsByPayment_IdAndClearedAtIsNull(UUID paymentId);
+
+    @Query("select (count(d) > 0) from PaymentDispute d where d.clearedAt is null "
+            + "and (d.payment.id = :paymentId or d.transactionReference = :transactionReference)")
+    boolean existsUnclearedForPaymentOrReference(@Param("paymentId") UUID paymentId,
+                                                  @Param("transactionReference") String transactionReference);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select d from PaymentDispute d where d.providerDisputeId = :providerDisputeId")

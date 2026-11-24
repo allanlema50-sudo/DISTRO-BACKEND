@@ -13,6 +13,7 @@ import com.example.distrobackend.dto.CreatePaymentRefundRequest;
 import com.example.distrobackend.dto.PaymentRefundResponse;
 import com.example.distrobackend.dto.PaymentDisputeResponse;
 import com.example.distrobackend.dto.UpdatePaymentDisputeReviewRequest;
+import com.example.distrobackend.dto.ReassignSettlementBeneficiaryRequest;
 import com.example.distrobackend.Domain.enums.PaymentDisputeStatus;
 import com.example.distrobackend.Domain.enums.SupplierSettlementStatus;
 import com.example.distrobackend.Domain.enums.ProviderWebhookStatus;
@@ -131,6 +132,14 @@ public class AdminFinancialController {
     public SupplierSettlementAdminResponse retrySettlement(
             @AuthenticationPrincipal AuthenticatedUser actor, @PathVariable UUID settlementId) {
         return paystackSettlementService.retrySettlement(actor, settlementId);
+    }
+
+    @PatchMapping("/settlements/{settlementId}/beneficiary")
+    public SupplierSettlementAdminResponse reassignSettlementBeneficiary(
+            @AuthenticationPrincipal AuthenticatedUser actor,
+            @PathVariable UUID settlementId,
+            @Valid @RequestBody ReassignSettlementBeneficiaryRequest request) {
+        return paystackSettlementService.reassignBeneficiary(actor, settlementId, request);
     }
 
     @GetMapping("/webhook-events")

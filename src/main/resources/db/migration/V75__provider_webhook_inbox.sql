@@ -11,6 +11,7 @@ CREATE TABLE provider_webhook_events (
     transfer_code VARCHAR(120),
     status VARCHAR(20) NOT NULL DEFAULT 'RECEIVED',
     attempt_count INTEGER NOT NULL DEFAULT 0,
+    claim_token UUID,
     next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_error TEXT,
     processed_at TIMESTAMPTZ,

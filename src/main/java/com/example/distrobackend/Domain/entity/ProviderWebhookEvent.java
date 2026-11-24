@@ -60,6 +60,9 @@ public class ProviderWebhookEvent {
     @Column(name = "attempt_count", nullable = false)
     private int attemptCount;
 
+    @Column(name = "claim_token")
+    private UUID claimToken;
+
     @Column(name = "next_attempt_at", nullable = false)
     private OffsetDateTime nextAttemptAt = OffsetDateTime.now();
 

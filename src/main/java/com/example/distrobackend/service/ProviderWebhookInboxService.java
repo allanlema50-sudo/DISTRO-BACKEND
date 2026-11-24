@@ -40,18 +40,9 @@ public class ProviderWebhookInboxService {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Webhook payload must be between 1 byte and 1 MiB");
         }
         String key = sha256(rawBody);
-        if (repository.existsByEventKey(key)) return;
-        ProviderWebhookEvent event = new ProviderWebhookEvent();
-        event.setProvider(provider);
-        event.setEventKey(key);
-        event.setEventName(webhook.event());
-        event.setProviderReference(webhook.reference());
-        event.setProviderStatus(webhook.status());
-        event.setAmountMinor(webhook.amountMinor());
-        event.setCurrency(webhook.currency());
-        event.setGatewayResponse(webhook.gatewayResponse());
-        event.setTransferCode(webhook.transferCode());
-        repository.saveAndFlush(event);
+        repository.insertIfAbsent(UUID.randomUUID(), provider, key, webhook.event(), webhook.reference(),
+                webhook.status(), webhook.amountMinor(), webhook.currency(), webhook.gatewayResponse(),
+                webhook.transferCode());
     }
 
     @Transactional
@@ -59,18 +50,22 @@ public class ProviderWebhookInboxService {
         if (processingTimeout.isZero() || processingTimeout.isNegative()) {
             throw new IllegalStateException("app.payments.webhook-processing-timeout must be positive");
         }
-        return repository.recoverStaleProcessing(OffsetDateTime.now().minus(processingTimeout));
+        return repository.recoverStaleProcessing(OffsetDateTime.now().minus(processingTimeout), maxAttempts);
     }
 
     @Transactional
-    public UUID claimNext() {
+    public Claim claimNext() {
         if (maxAttempts < 1) throw new IllegalStateException("app.payments.webhook-max-attempts must be positive");
-        return repository.lockDue(DUE, OffsetDateTime.now(), PageRequest.of(0, 1)).stream().findFirst()
+        repository.deadLetterExhausted(maxAttempts);
+        return repository.lockDue(DUE, OffsetDateTime.now(), maxAttempts, PageRequest.of(0, 1)).stream().findFirst()
                 .map(event -> {
                     event.setStatus(ProviderWebhookStatus.PROCESSING);
                     event.setAttemptCount(event.getAttemptCount() + 1);
                     event.setLastError(null);
-                    return repository.save(event).getId();
+                    UUID token = UUID.randomUUID();
+                    event.setClaimToken(token);
+                    repository.save(event);
+                    return new Claim(event.getId(), token);
                 }).orElse(null);
     }
 
@@ -80,19 +75,27 @@ public class ProviderWebhookInboxService {
     }
 
     @Transactional
-    public void markProcessed(UUID id) {
+    public void markProcessed(Claim claim) {
+        if (claim == null) return;
+        UUID id = claim.eventId();
         ProviderWebhookEvent event = lock(id);
-        if (event.getStatus() != ProviderWebhookStatus.PROCESSING) return;
+        if (event.getStatus() != ProviderWebhookStatus.PROCESSING
+                || !claim.claimToken().equals(event.getClaimToken())) return;
         event.setStatus(ProviderWebhookStatus.PROCESSED);
+        event.setClaimToken(null);
         event.setProcessedAt(OffsetDateTime.now());
         event.setLastError(null);
     }
 
     @Transactional
-    public void markFailed(UUID id, Exception failure) {
+    public void markFailed(Claim claim, Exception failure) {
+        if (claim == null) return;
+        UUID id = claim.eventId();
         ProviderWebhookEvent event = lock(id);
-        if (event.getStatus() != ProviderWebhookStatus.PROCESSING) return;
+        if (event.getStatus() != ProviderWebhookStatus.PROCESSING
+                || !claim.claimToken().equals(event.getClaimToken())) return;
         event.setLastError(safeMessage(failure));
+        event.setClaimToken(null);
         if (event.getAttemptCount() >= maxAttempts) {
             event.setStatus(ProviderWebhookStatus.DEAD_LETTER);
             return;
@@ -111,6 +114,7 @@ public class ProviderWebhookInboxService {
         }
         event.setStatus(ProviderWebhookStatus.RETRY);
         event.setAttemptCount(0);
+        event.setClaimToken(null);
         event.setNextAttemptAt(OffsetDateTime.now());
         event.setLastError(null);
         return ProviderWebhookEventResponse.from(event);
@@ -135,6 +139,8 @@ public class ProviderWebhookInboxService {
             throw new IllegalStateException("SHA-256 is unavailable", ex);
         }
     }
+
+    public record Claim(UUID eventId, UUID claimToken) {}
 
     private static String safeMessage(Exception ex) {
         String message = ex.getMessage();

@@ -24,14 +24,26 @@ public class CheckoutController {
  @org.springframework.web.bind.annotation.PostMapping("/mpesa/callback")
  @PreAuthorize("permitAll()")
  @io.swagger.v3.oas.annotations.security.SecurityRequirements
- public org.springframework.http.ResponseEntity<String> mpesaCallback(@RequestParam UUID paymentId,@RequestHeader(value="X-Mpesa-Callback-Secret",required=false) String secret,@RequestBody com.example.distrobackend.dto.mpesa.MpesaCallbackRequest callback){checkoutService.processMpesaCallback(paymentId,secret,callback);return org.springframework.http.ResponseEntity.ok("{\"ResultCode\":0,\"ResultDesc\":\"Accepted\"}");}
+ public org.springframework.http.ResponseEntity<String> mpesaCallback(@RequestParam UUID paymentId,@RequestParam(value="callbackToken",required=false) String callbackToken,@RequestHeader(value="X-Mpesa-Callback-Secret",required=false) String secret,@RequestBody com.example.distrobackend.dto.mpesa.MpesaCallbackRequest callback){checkoutService.processMpesaCallback(paymentId,callbackToken,secret,callback);return org.springframework.http.ResponseEntity.ok("{\"ResultCode\":0,\"ResultDesc\":\"Accepted\"}");}
  @org.springframework.web.bind.annotation.PostMapping(value="/paystack/webhook", consumes=org.springframework.http.MediaType.APPLICATION_JSON_VALUE)
  @PreAuthorize("permitAll()")
  @io.swagger.v3.oas.annotations.security.SecurityRequirements
  public org.springframework.http.ResponseEntity<Void> paystackWebhook(
          @RequestHeader(value="Paystack-Signature", required=false) String signature,
          @RequestHeader(value="X-Paystack-Signature", required=false) String legacySignature,
-         @RequestBody byte[] rawBody) {
+         jakarta.servlet.http.HttpServletRequest request) throws java.io.IOException {
+  final int maximumBodyBytes = 1_048_576;
+  if (request.getContentLengthLong() > maximumBodyBytes) {
+   throw new com.example.distrobackend.Exception.ApiException(
+           com.example.distrobackend.Exception.ErrorCode.PAYLOAD_TOO_LARGE,
+           "Webhook payload must not exceed 1 MiB");
+  }
+  byte[] rawBody = request.getInputStream().readNBytes(maximumBodyBytes + 1);
+  if (rawBody.length > maximumBodyBytes) {
+   throw new com.example.distrobackend.Exception.ApiException(
+           com.example.distrobackend.Exception.ErrorCode.PAYLOAD_TOO_LARGE,
+           "Webhook payload must not exceed 1 MiB");
+  }
   com.example.distrobackend.service.PaystackPaymentService.Webhook webhook =
           paystackPaymentService.parseAndVerifyWebhook(rawBody, signature, legacySignature);
   webhookInboxService.accept("PAYSTACK", webhook, rawBody);

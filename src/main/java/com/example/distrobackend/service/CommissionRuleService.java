@@ -16,6 +16,7 @@ import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -72,7 +73,13 @@ public class CommissionRuleService {
         rule.setEffectiveFrom(request.effectiveFrom());
         rule.setEffectiveUntil(request.effectiveUntil());
         rule.setCreatedBy(userRepository.getReferenceById(actor.userId()));
-        CommissionRule saved = commissionRuleRepository.saveAndFlush(rule);
+        CommissionRule saved;
+        try {
+            saved = commissionRuleRepository.saveAndFlush(rule);
+        } catch (DataIntegrityViolationException ex) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "An active commission rule already covers the requested currency, organization type and period");
+        }
         audit(actor, "COMMISSION_RULE_CREATED", saved.getId(), Map.of(
                 "currency", currency,
                 "ratePercent", saved.getRatePercent().toPlainString(),

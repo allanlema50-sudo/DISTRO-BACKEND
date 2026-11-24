@@ -148,6 +148,9 @@ problem and make later deployments unsafe.
 
 ## V71 collision reported by the production startup log
 
+This section records an earlier resolution and is superseded by the later V73
+incident below for the currently deployed payment history.
+
 The deployed application reported two resources with version 71:
 `V71__financial_ledger_and_commission_rules.sql` and
 `V71__canonical_reseller_listings.sql`. The reseller listing migration has
@@ -166,6 +169,9 @@ disable Flyway validation to bypass this check.
 
 ## V72 collision reported by the production startup log
 
+This also records the historical planned ordering; use the later V73 resolution
+below for the production database shown in the current Render history screenshot.
+
 The deployed application reported two resources with version 72:
 `V72__paystack_checkout_provider_fields.sql` and
 `V72__canonical_reseller_listings.sql`. The reseller listing migration has
@@ -179,3 +185,19 @@ history reconciliation on a backup/clone, because applied migrations are
 immutable. If V72 is the Paystack migration (or no V72 row exists), deploy
 Paystack V72 followed by reseller V73. Do not delete history rows or disable
 Flyway validation to bypass this check.
+
+## V73 collision reported by Render on 2026-11-24
+
+Render reported duplicate resources `V73__paystack_settlement_batches_and_beneficiaries.sql`
+and `V73__canonical_reseller_listings.sql`. The production history screenshot
+shows V73 recorded as the Paystack settlement migration, followed by successful
+V74, V75, and V76 rows. Preserve the applied Paystack V73 file and checksum.
+The reseller-listing migration is assigned V77. V79 contains duplicate
+reseller-listing DDL and is guarded with `IF NOT EXISTS` so it does not fail
+after V77 on a fresh history. The refund migration follows at V81.
+
+Before deployment, check the full history through its latest installed row.
+If V79 is already recorded, compare its history checksum with the currently
+deployed V79 artifact before using the changed idempotent script; do not run
+`flyway repair` blindly.
+Do not rename the applied Paystack V73 migration or delete its history row.

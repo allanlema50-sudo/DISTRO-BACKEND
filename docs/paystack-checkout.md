@@ -108,12 +108,11 @@ enable payouts. After Paystack approves transfers, set
    attached to a settlement.
 3. A Super Admin creates and approves a settlement batch. The API refuses
    demo, already batched, unpaid, or beneficiary-less settlements.
-4. A Super Admin executes the approved batch. Each transfer keeps one stable
-   reference. If the API response is ambiguous, LogiFlow does not start a new
-   transfer. A scheduled reconciliation job verifies that same reference with
-   Paystack, updates the settlement from the provider's verified status, or
-   marks it failed if Paystack confirms no transfer exists. Operators can then
-   retry a definitively failed transfer only with its original reference.
+4. A Super Admin executes the approved batch. LogiFlow commits each transfer
+   attempt before contacting Paystack. If the API response is ambiguous, it
+   retains that reference and verifies it; a recovery worker resumes batch
+   members that were not yet dispatched. A new reference is created only after
+   Paystack confirms a prior attempt failed or was reversed.
 5. Signed `transfer.success`, `transfer.failed`, and `transfer.reversed`
    webhooks also update the settlement and batch status. Webhooks are stored
    before acknowledgement and processed asynchronously with bounded retries.
@@ -151,6 +150,22 @@ settings: `PAYSTACK_SETTLEMENT_RECONCILIATION_SCAN_MS`,
 repeat delays are five minutes. Provider timeouts remain unresolved and are
 queried again; they never trigger a transfer under a new reference. Transfer
 reconciliation runs only when `PAYSTACK_TRANSFERS_ENABLED=true`.
+
+## Refunds
+
+Only a Super Admin can request a full refund for a successful, non-demo Paystack
+checkout. The API refuses the request if any distributor settlement is already
+batched or paid. Paystack's refund reference is stable, callback events are
+handled through the durable inbox, and the reconciliation worker checks pending
+refunds when a callback is delayed. A processed refund reverses each original
+allocation journal once. The checkout enters `REFUND_PENDING` while Paystack
+processes the request, which pauses warehouse fulfilment. A confirmed refund
+cancels still-unpicked purchase orders and releases their stock reservations.
+Requests are rejected once picking, packing, dispatch, or supplier payout has
+started. If Paystack definitively rejects a refund, the payment becomes eligible
+for a new Super Admin refund request; each attempt remains in the audit history.
+Partial refunds and refunds after supplier payout are not supported by this
+workflow.
 
 Transfers use the Paystack balance. The business must complete Paystack's
 transfer/KYC setup and ensure its balance and transfer approval settings are

@@ -1,4 +1,4 @@
-CREATE TABLE reseller_listings (
+CREATE TABLE IF NOT EXISTS reseller_listings (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     distributor_organization_id UUID NOT NULL REFERENCES organizations(id),
     manufacturer_product_id UUID NOT NULL REFERENCES stock_items(id),
@@ -10,4 +10,4 @@ CREATE TABLE reseller_listings (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT uk_reseller_listing_seller_product UNIQUE (distributor_organization_id, manufacturer_product_id)
 );
-CREATE INDEX idx_reseller_listings_catalog ON reseller_listings(listing_status, manufacturer_product_id);
+CREATE INDEX IF NOT EXISTS idx_reseller_listings_catalog ON reseller_listings(listing_status, manufacturer_product_id);

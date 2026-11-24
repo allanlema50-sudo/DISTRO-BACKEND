@@ -9,9 +9,12 @@ import com.example.distrobackend.dto.ReviewPayoutBeneficiaryRequest;
 import com.example.distrobackend.dto.SettlementBatchResponse;
 import com.example.distrobackend.dto.SupplierSettlementAdminResponse;
 import com.example.distrobackend.dto.ProviderWebhookEventResponse;
+import com.example.distrobackend.dto.CreatePaymentRefundRequest;
+import com.example.distrobackend.dto.PaymentRefundResponse;
 import com.example.distrobackend.Domain.enums.SupplierSettlementStatus;
 import com.example.distrobackend.Domain.enums.ProviderWebhookStatus;
 import com.example.distrobackend.service.ProviderWebhookInboxService;
+import com.example.distrobackend.service.PaymentRefundService;
 import com.example.distrobackend.service.PaystackSettlementService;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.service.CommissionRuleService;
@@ -37,6 +40,7 @@ public class AdminFinancialController {
     private final FinancialLedgerService financialLedgerService;
     private final PaystackSettlementService paystackSettlementService;
     private final ProviderWebhookInboxService webhookInboxService;
+    private final PaymentRefundService paymentRefundService;
 
     @GetMapping("/commission-rules")
     public List<CommissionRuleResponse> commissionRules(@AuthenticationPrincipal AuthenticatedUser actor) {
@@ -133,5 +137,19 @@ public class AdminFinancialController {
     @PostMapping("/webhook-events/{eventId}/retry")
     public ProviderWebhookEventResponse retryWebhookEvent(@PathVariable UUID eventId) {
         return webhookInboxService.retryDeadLetter(eventId);
+    }
+
+    @GetMapping("/refunds")
+    public Page<PaymentRefundResponse> refunds(
+            @AuthenticationPrincipal AuthenticatedUser actor, Pageable pageable) {
+        return paymentRefundService.list(actor, pageable);
+    }
+
+    @PostMapping("/payments/{paymentId}/refund")
+    public PaymentRefundResponse refundPayment(
+            @AuthenticationPrincipal AuthenticatedUser actor,
+            @PathVariable UUID paymentId,
+            @Valid @RequestBody CreatePaymentRefundRequest request) {
+        return paymentRefundService.requestFullRefund(actor, paymentId, request);
     }
 }

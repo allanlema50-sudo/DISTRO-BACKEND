@@ -47,6 +47,10 @@ public interface PurchaseOrderShipmentRepository extends JpaRepository<PurchaseO
             + "where p.id = :purchaseOrderId")
     Optional<PurchaseOrderShipment> findByPurchaseOrderId(@Param("purchaseOrderId") UUID purchaseOrderId);
 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from PurchaseOrderShipment s where s.purchaseOrder.id = :purchaseOrderId")
+    Optional<PurchaseOrderShipment> findByPurchaseOrderIdForUpdate(@Param("purchaseOrderId") UUID purchaseOrderId);
+
     @EntityGraph(attributePaths = {"purchaseOrder", "purchaseOrder.buyerOrganization",
             "purchaseOrder.supplierOrganization", "destinationWarehouse"})
     Page<PurchaseOrderShipment> findByPurchaseOrder_BuyerOrganization_IdOrderByCreatedAtDesc(

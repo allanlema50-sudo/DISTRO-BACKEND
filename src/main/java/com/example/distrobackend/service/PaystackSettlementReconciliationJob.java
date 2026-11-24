@@ -64,4 +64,17 @@ public class PaystackSettlementReconciliationJob {
             }
         }
     }
+
+    @Scheduled(fixedDelayString = "${paystack.settlement.reconciliation.scan-ms:60000}")
+    public void resumeUndispatchedApprovedBatchMembers() {
+        int limit = Math.max(1, Math.min(batchSize, 500));
+        for (var settlementId : settlementRepository
+                .findPendingPaystackSettlementsInProcessingBatches(limit)) {
+            try {
+                settlementService.resumePendingSettlement(settlementId);
+            } catch (RuntimeException ex) {
+                log.warn("Could not resume approved Paystack settlement {}", settlementId, ex);
+            }
+        }
+    }
 }

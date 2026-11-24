@@ -21,6 +21,7 @@ public class PaystackPaymentReconciliationJob {
     private final PaystackPaymentService paystackPaymentService;
     private final CentralizedCheckoutService checkoutService;
     private final CheckoutPaymentAttemptStore attemptStore;
+    private final PaymentRefundService refundService;
 
     @Scheduled(fixedDelayString = "${paystack.reconciliation-scan-ms:60000}")
     public void reconcileUnresolvedAttempts() {
@@ -52,5 +53,6 @@ public class PaystackPaymentReconciliationJob {
                 }
             }
         }
+        refundService.claimDue(MAX_BATCH_SIZE).forEach(refundService::reconcile);
     }
 }

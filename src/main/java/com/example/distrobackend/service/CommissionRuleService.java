@@ -13,6 +13,8 @@ import com.example.distrobackend.repository.CommissionRuleRepository;
 import com.example.distrobackend.repository.UserRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
 import jakarta.annotation.PostConstruct;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -35,6 +37,9 @@ public class CommissionRuleService {
     private final CommissionRuleRepository commissionRuleRepository;
     private final UserRepository userRepository;
     private final AuditLogRepository auditLogRepository;
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     @Value("${logiflow.commission.default-percent:5.00}")
     private BigDecimal defaultRatePercent;
@@ -59,6 +64,9 @@ public class CommissionRuleService {
         requirePlatformAdmin(actor);
         String currency = normalizeCurrency(request.currency());
         validateWindow(request.effectiveFrom(), request.effectiveUntil());
+        // Serialize check-and-insert even when there are no existing rows to lock.
+        entityManager.createNativeQuery("select pg_advisory_xact_lock(hashtext(:currency))")
+                .setParameter("currency", currency).getSingleResult();
         List<CommissionRule> existingRules = commissionRuleRepository.findActiveForUpdate(currency);
         if (existingRules.stream().anyMatch(existing -> overlaps(existing, request, currency))) {
             throw new ApiException(ErrorCode.CONFLICT,

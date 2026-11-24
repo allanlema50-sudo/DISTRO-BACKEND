@@ -26,6 +26,7 @@ public class PaystackSettlementService {
     private final SupplierSettlementRepository settlementRepository;
     private final OrganizationRepository organizationRepository;
     private final UserRepository userRepository;
+    private final PaystackSettlementDispatchStore dispatchStore;
 
     @Transactional
     public PayoutBeneficiaryResponse createBeneficiary(AuthenticatedUser actor,
@@ -39,6 +40,13 @@ public class PaystackSettlementService {
         String bankCode = clean(request.bankCode());
         if (method == PayoutMethod.BANK_ACCOUNT && bankCode == null) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "bankCode is required for a bank beneficiary");
+        }
+        if (method == PayoutMethod.MOBILE_MONEY && bankCode == null) {
+            if (!"KES".equals(currency)) {
+                throw new ApiException(ErrorCode.BAD_REQUEST,
+                        "bankCode is required for mobile-money beneficiaries outside KES");
+            }
+            bankCode = "MPESA";
         }
         Organization organization = organizationRepository.findById(actor.organizationId())
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Organization not found"));
@@ -180,44 +188,39 @@ public class PaystackSettlementService {
         return SettlementBatchResponse.from(batchRepository.save(batch));
     }
 
-    @Transactional
     public SettlementBatchResponse executeBatch(AuthenticatedUser actor, UUID batchId) {
         requirePlatformAdmin(actor);
-        SettlementBatch batch = lockBatch(batchId);
-        if (batch.getStatus() != SettlementBatchStatus.APPROVED) {
-            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT, "Only an approved settlement batch can be executed");
-        }
-        batch.setStatus(SettlementBatchStatus.PROCESSING);
-        batchRepository.save(batch);
-        for (SupplierSettlement settlement : settlementRepository.findBySettlementBatchIdForUpdate(batchId)) {
-            executeSettlement(settlement);
-        }
-        refreshBatchStatus(batch);
-        batch.setExecutedAt(OffsetDateTime.now());
-        return SettlementBatchResponse.from(batchRepository.save(batch));
+        requireTransfersEnabled();
+        List<UUID> settlementIds = dispatchStore.beginBatch(batchId);
+        settlementIds.forEach(id -> dispatchAttempt(id, false));
+        return dispatchStore.finishBatch(batchId);
     }
 
-    @Transactional
     public SupplierSettlementAdminResponse retrySettlement(AuthenticatedUser actor, UUID settlementId) {
         requirePlatformAdmin(actor);
-        SupplierSettlement observed = settlementRepository.findById(settlementId)
-                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Supplier settlement not found"));
-        if (observed.getSettlementBatch() == null) {
-            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
-                    "A settlement must belong to a batch before it can be retried");
+        requireTransfersEnabled();
+        dispatchAttempt(settlementId, true);
+        return dispatchStore.getSettlement(settlementId);
+    }
+
+    /** Internal recovery for a batch execution interrupted before this pending item was dispatched. */
+    public void resumePendingSettlement(UUID settlementId) {
+        dispatchAttempt(settlementId, false);
+    }
+
+    private void dispatchAttempt(UUID settlementId, boolean retry) {
+        PaystackSettlementDispatchStore.Attempt attempt = dispatchStore.prepareAttempt(settlementId, retry);
+        if (attempt == null) return;
+        try {
+            PaystackPaymentService.Transfer transfer = paystackPaymentService.initiateTransfer(
+                    attempt.reference(), attempt.amount(), attempt.currency(), attempt.recipientCode(),
+                    "LogiFlow supplier settlement " + attempt.settlementId());
+            dispatchStore.complete(attempt, transfer, null, false);
+        } catch (PaystackPaymentService.ProviderOutcomeUnknownException ex) {
+            dispatchStore.complete(attempt, null, null, true);
+        } catch (ApiException ex) {
+            dispatchStore.complete(attempt, null, ex.getMessage(), false);
         }
-        SettlementBatch batch = lockBatch(observed.getSettlementBatch().getId());
-        SupplierSettlement settlement = settlementRepository.findByIdForUpdate(settlementId)
-                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Supplier settlement not found"));
-        if (settlement.getStatus() != SupplierSettlementStatus.FAILED
-                && settlement.getStatus() != SupplierSettlementStatus.REVERSED) {
-            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
-                    "Only a failed or reversed settlement can be retried");
-        }
-        executeSettlement(settlement);
-        SupplierSettlement saved = settlementRepository.save(settlement);
-        refreshBatchStatus(batch);
-        return SupplierSettlementAdminResponse.from(saved);
     }
 
     @Transactional
@@ -237,8 +240,10 @@ public class PaystackSettlementService {
         if (webhook.amountMinor() == null || webhook.currency() == null
                 || webhook.amountMinor() != expected
                 || !settlement.getCurrency().equalsIgnoreCase(webhook.currency())) {
-            settlement.setStatus(SupplierSettlementStatus.FAILED);
+            settlement.setStatus(SupplierSettlementStatus.PROCESSING);
             settlement.setFailureReason("Paystack transfer amount or currency was missing or mismatched");
+            // Evidence does not prove the transfer failed. Keep the settlement in
+            // PROCESSING so provider reconciliation or an operator can resolve it.
             settlementRepository.save(settlement);
             refreshBatchStatus(batch);
             return;
@@ -295,43 +300,6 @@ public class PaystackSettlementService {
         refreshBatchStatus(batch);
     }
 
-    private void executeSettlement(SupplierSettlement settlement) {
-        if (settlement.getStatus() == SupplierSettlementStatus.SETTLED) return;
-        if (settlement.getBeneficiary() == null
-                || settlement.getBeneficiary().getStatus() != PayoutBeneficiaryStatus.ACTIVE) {
-            settlement.setStatus(SupplierSettlementStatus.FAILED);
-            settlement.setFailureReason("No active payout beneficiary is attached");
-            return;
-        }
-        settlement.setStatus(SupplierSettlementStatus.PROCESSING);
-        settlement.setPayoutAttempts(settlement.getPayoutAttempts() + 1);
-        settlement.setLastAttemptAt(OffsetDateTime.now());
-        settlement.setLastStatusCheckAt(null);
-        try {
-            PaystackPaymentService.Transfer transfer = paystackPaymentService.initiateTransfer(
-                    settlement.getPayoutReference(), settlement.getAmount(), settlement.getCurrency(),
-                    settlement.getBeneficiary().getProviderRecipientCode(),
-                    "LogiFlow supplier settlement " + settlement.getId());
-            settlement.setProviderTransferCode(transfer.transferCode());
-            settlement.setFailureReason(null);
-            if ("success".equalsIgnoreCase(transfer.status())) {
-                settlement.setStatus(SupplierSettlementStatus.SETTLED);
-                settlement.setSettledAt(OffsetDateTime.now());
-            } else if ("failed".equalsIgnoreCase(transfer.status())) {
-                settlement.setStatus(SupplierSettlementStatus.FAILED);
-                settlement.setFailureReason("Paystack reported a failed transfer");
-            } else {
-                settlement.setFailureReason("Waiting for Paystack transfer status: " + transfer.status());
-            }
-        } catch (PaystackPaymentService.ProviderOutcomeUnknownException ex) {
-            settlement.setFailureReason("Paystack transfer outcome is unknown; reconciliation is required");
-        } catch (ApiException ex) {
-            settlement.setStatus(SupplierSettlementStatus.FAILED);
-            settlement.setFailureReason(ex.getMessage());
-        }
-        settlementRepository.save(settlement);
-    }
-
     private void validateBatchCandidate(SupplierSettlement settlement) {
         if (settlement.isDemo() || settlement.getStatus() != SupplierSettlementStatus.PENDING
                 || settlement.getSettlementBatch() != null || settlement.getAmount() == null
@@ -346,6 +314,12 @@ public class PaystackSettlementService {
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Settlement batch not found"));
     }
 
+    private void requireTransfersEnabled() {
+        if (!paystackPaymentService.transfersEnabled()) {
+            throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "Paystack transfers are disabled");
+        }
+    }
+
     private void refreshBatchStatus(SettlementBatch batch) {
         if (batch == null) return;
         batch = lockBatch(batch.getId());
@@ -353,10 +327,13 @@ public class PaystackSettlementService {
                 .findBySettlementBatch_IdOrderByCreatedAtAsc(batch.getId());
         if (settlements.isEmpty()) return;
         boolean allSettled = settlements.stream().allMatch(s -> s.getStatus() == SupplierSettlementStatus.SETTLED);
+        boolean anyActive = settlements.stream().anyMatch(s -> s.getStatus() == SupplierSettlementStatus.PENDING
+                || s.getStatus() == SupplierSettlementStatus.PROCESSING);
         boolean anyFailed = settlements.stream().anyMatch(s -> s.getStatus() == SupplierSettlementStatus.FAILED
                 || s.getStatus() == SupplierSettlementStatus.REVERSED);
         batch.setStatus(allSettled ? SettlementBatchStatus.COMPLETED
-                : anyFailed ? SettlementBatchStatus.PARTIALLY_FAILED : SettlementBatchStatus.PROCESSING);
+                : anyActive ? SettlementBatchStatus.PROCESSING
+                : anyFailed ? SettlementBatchStatus.PARTIALLY_FAILED : SettlementBatchStatus.FAILED);
         batchRepository.save(batch);
     }
 

@@ -1012,9 +1012,11 @@ Settlement and payout APIs are intentionally Super Admin controlled:
 | `POST` | `/api/v1/admin/financial/settlement-batches` | `SUPER_ADMIN` | Create a batch from eligible pending settlements |
 | `POST` | `/api/v1/admin/financial/settlement-batches/{batchId}/approve` | `SUPER_ADMIN` | Approve the batch before any payout is attempted |
 | `POST` | `/api/v1/admin/financial/settlement-batches/{batchId}/execute` | `SUPER_ADMIN` | Initiate Paystack transfers for the approved batch |
-| `POST` | `/api/v1/admin/financial/settlements/{settlementId}/retry` | `SUPER_ADMIN` | Retry a failed or reversed transfer with its existing provider reference |
+| `POST` | `/api/v1/admin/financial/settlements/{settlementId}/retry` | `SUPER_ADMIN` | Retry only a confirmed failed or reversed transfer, using a fresh provider reference; unknown attempts remain under reconciliation |
 | `GET` | `/api/v1/admin/financial/webhook-events?status=DEAD_LETTER` | `SUPER_ADMIN` | Inspect provider webhook processing state and failure reason |
 | `POST` | `/api/v1/admin/financial/webhook-events/{eventId}/retry` | `SUPER_ADMIN` | Requeue a dead-lettered event for processing |
+| `POST` | `/api/v1/admin/financial/payments/{paymentId}/refund` | `SUPER_ADMIN` | Request a full Paystack refund before picking, packing, dispatch, or supplier payout starts; JSON body: `{"reason":"Order could not be fulfilled"}` |
+| `GET` | `/api/v1/admin/financial/refunds` | `SUPER_ADMIN` | Review refund status and provider reference |
 
 Paystack callbacks are signature-verified, stored in a durable inbox, and
 acknowledged before background processing. Raw callback bodies are not retained.
@@ -1027,6 +1029,15 @@ Paystack also verifies pending transactions and transfers periodically when a
 webhook is delayed or missing. These provider checks are bounded per run and
 back off after unresolved responses or provider errors; only final provider
 statuses update payment or settlement state.
+Refund requests are full-checkout only and are accepted only before any related
+supplier settlement is batched or paid and before warehouse picking starts.
+While Paystack processes a refund, the checkout is marked `REFUND_PENDING` and
+fulfilment is paused. A confirmed refund cancels unpicked purchase orders and
+releases reserved stock; a definitively failed attempt can be requested again.
+Paystack refund events and periodic provider verification finalize refund state;
+successful refunds reverse the original allocation ledger journals exactly
+once. Partial refunds and refunds after supplier payout require a later finance
+workflow.
 
 Typical payment status values are `INITIATING`, `PENDING`, `CONFIRMED`,
 `RECONCILED`, `FAILED`, and `REVERSED`. A successful STK response means the
@@ -1139,9 +1150,10 @@ audit fails if the stock changed since the count or if the result would fall
 below quantities reserved for customer orders.
 
 Legacy purchase-order settlement records remain a read-only `PENDING` ledger.
-Provider-backed supplier settlement batches are available to `SUPER_ADMIN`,
-but refunds, reversals, and platform-level reconciliation reporting remain
-follow-up work.
+Provider-backed supplier settlement batches are available to `SUPER_ADMIN`.
+Full-checkout Paystack refunds are supported before supplier settlement is
+batched or paid; partial and post-payout refunds, disputes, and platform-level
+reconciliation reporting remain follow-up work.
 
 ### Trips, delivery, and live tracking
 
@@ -1419,8 +1431,8 @@ Known limitations to account for during integration:
 - platform settings, report, analytics, and audit-log endpoints are contract
   surfaces; settlement automation is available only through the reviewed
   Paystack workflow and remains disabled until its transfer capability is enabled;
-- payment refunds, disputes, reconciliation reports, and provider payout
-  reversal recovery are not exposed as APIs;
+- partial or post-payout refunds, disputes, reconciliation reports, and provider
+  payout reversal recovery are not exposed as APIs;
 - procurement shipment and stock-audit APIs are available, but procurement payment initiation and settlement automation remain a follow-up;
 - an M-Pesa callback requires a reachable callback URL, a configured shared secret, and provider verification;
 - the catalog/order model currently represents distributor offers as stock items, so customers order distributor offer IDs.

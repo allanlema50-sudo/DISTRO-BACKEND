@@ -19,6 +19,10 @@ public interface SupplierSettlementRepository extends JpaRepository<SupplierSett
     Optional<SupplierSettlement> findByAllocation_Id(UUID allocationId);
     Page<SupplierSettlement> findByStatusOrderByCreatedAtAsc(SupplierSettlementStatus status, Pageable pageable);
     List<SupplierSettlement> findBySettlementBatch_IdOrderByCreatedAtAsc(UUID batchId);
+    List<SupplierSettlement> findByAllocation_Payment_Id(UUID paymentId);
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from SupplierSettlement s where s.allocation.payment.id = :paymentId")
+    List<SupplierSettlement> findByPaymentForUpdate(@Param("paymentId") UUID paymentId);
     Optional<SupplierSettlement> findByPayoutReference(String reference);
     @Query(value = "select * from supplier_settlements s "
             + "where s.provider = 'PAYSTACK' and s.status = 'PROCESSING' "
@@ -30,6 +34,11 @@ public interface SupplierSettlementRepository extends JpaRepository<SupplierSett
             @Param("attemptCutoff") OffsetDateTime attemptCutoff,
             @Param("checkBefore") OffsetDateTime checkBefore,
             @Param("batchSize") int batchSize);
+    @Query(value = "select s.id from supplier_settlements s "
+            + "join settlement_batches b on b.id = s.settlement_batch_id "
+            + "where s.provider = 'PAYSTACK' and s.status = 'PENDING' and b.status = 'PROCESSING' "
+            + "order by s.created_at asc limit :batchSize", nativeQuery = true)
+    List<UUID> findPendingPaystackSettlementsInProcessingBatches(@Param("batchSize") int batchSize);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from SupplierSettlement s where s.settlementBatch.id = :batchId order by s.createdAt asc")
     List<SupplierSettlement> findBySettlementBatchIdForUpdate(@Param("batchId") UUID batchId);

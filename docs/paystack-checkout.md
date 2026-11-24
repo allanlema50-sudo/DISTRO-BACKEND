@@ -113,6 +113,14 @@ enable payouts. After Paystack approves transfers, set
    retains that reference and verifies it; a recovery worker resumes batch
    members that were not yet dispatched. A new reference is created only after
    Paystack confirms a prior attempt failed or was reversed.
+
+An open or uncleared Paystack dispute, or a refund that is still being processed,
+blocks batch creation and transfer dispatch. After a beneficiary becomes inactive,
+a Super Admin can assign a matching active beneficiary to a failed or reversed
+settlement with `PATCH /api/v1/admin/financial/settlements/{settlementId}/beneficiary`
+before retrying it. A Paystack `needs-attention` refund remains on hold and is
+reconciled using its existing reference; an operator must complete any required
+bank-detail action in Paystack rather than starting a second refund.
 5. Signed `transfer.success`, `transfer.failed`, and `transfer.reversed`
    webhooks also update the settlement and batch status. Webhooks are stored
    before acknowledgement and processed asynchronously with bounded retries.
@@ -166,6 +174,29 @@ started. If Paystack definitively rejects a refund, the payment becomes eligible
 for a new Super Admin refund request; each attempt remains in the audit history.
 Partial refunds and refunds after supplier payout are not supported by this
 workflow.
+
+## Disputes
+
+Paystack `charge.dispute.create`, `charge.dispute.remind`, and
+`charge.dispute.resolve` webhooks are stored in the durable inbox and update a
+local dispute record. Super Admins can list disputes at
+`GET /api/v1/admin/financial/disputes`, filter by `PaymentDisputeStatus`, and
+record a review with `PATCH /api/v1/admin/financial/disputes/{providerDisputeId}/review`:
+
+```json
+{
+  "reviewNote": "Paystack shows the dispute resolved; evidence and delivery record reviewed.",
+  "clearForSettlement": true
+}
+```
+
+`clearForSettlement` is accepted only after Paystack reports `RESOLVED`; this
+also requires a nonblank internal review note. Until then, settlement creation,
+batch execution, and retries for the payment are blocked. The API does not
+submit evidence or resolve cases with Paystack, so time-critical evidence and
+provider decisions must still be handled through Paystack's dashboard or a
+separately approved dispute-evidence integration. A transfer already initiated
+before a dispute was received cannot be cancelled here.
 
 Transfers use the Paystack balance. The business must complete Paystack's
 transfer/KYC setup and ensure its balance and transfer approval settings are

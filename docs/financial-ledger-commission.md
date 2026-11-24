@@ -63,8 +63,9 @@ updates. `PAYSTACK_TRANSFERS_ENABLED` remains separate from collection and
 defaults to false. Signed Paystack webhooks are saved to a durable inbox before
 the provider receives an acknowledgement, retried by a worker, and moved to
 `DEAD_LETTER` after the configured limit for admin review. Full-checkout Paystack
-refunds are supported only before supplier settlement is batched or paid. Partial
-refunds, post-payout refunds, disputes, and provider reconciliation reports remain
-follow-up work.
+refunds are supported only before supplier settlement is batched or paid, and
+Paystack disputes are tracked and reviewed by Super Admins. Disputes that are
+unresolved or not explicitly cleared block supplier payouts. Partial refunds,
+post-payout refunds, and provider reconciliation reports remain follow-up work.
 
 No Tingg, M-Pesa, PesaLink, card, or bank API key is created by this branch. Provider credentials must be added later as deployment secrets, never committed to `.env.example` or source control.

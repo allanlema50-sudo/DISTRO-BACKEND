@@ -26,6 +26,9 @@ public class PaystackSettlementService {
     private final SupplierSettlementRepository settlementRepository;
     private final OrganizationRepository organizationRepository;
     private final UserRepository userRepository;
+    private final PaymentDisputeRepository disputeRepository;
+    private final CheckoutPaymentRepository checkoutPaymentRepository;
+    private final PaymentRefundRepository paymentRefundRepository;
     private final PaystackSettlementDispatchStore dispatchStore;
 
     @Transactional
@@ -131,6 +134,13 @@ public class PaystackSettlementService {
         if (ids.size() != request.settlementIds().size()) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Settlement IDs must be unique");
         }
+        List<SupplierSettlement> observedSettlements = settlementRepository.findAllById(ids);
+        if (observedSettlements.size() != ids.size()) {
+            throw new ApiException(ErrorCode.NOT_FOUND, "Supplier settlement not found");
+        }
+        observedSettlements.stream().map(s -> s.getAllocation().getPayment().getId()).distinct().sorted()
+                .forEach(paymentId -> checkoutPaymentRepository.findByIdForUpdate(paymentId)
+                        .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Checkout payment not found")));
         List<SupplierSettlement> settlements = ids.stream()
                 .map(id -> settlementRepository.findByIdForUpdate(id)
                         .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Supplier settlement not found")))
@@ -201,6 +211,37 @@ public class PaystackSettlementService {
         requireTransfersEnabled();
         dispatchAttempt(settlementId, true);
         return dispatchStore.getSettlement(settlementId);
+    }
+
+    @Transactional
+    public SupplierSettlementAdminResponse reassignBeneficiary(
+            AuthenticatedUser actor, UUID settlementId, ReassignSettlementBeneficiaryRequest request) {
+        requirePlatformAdmin(actor);
+        if (request == null || request.beneficiaryId() == null) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "A replacement beneficiary is required");
+        }
+        SupplierSettlement observed = settlementRepository.findById(settlementId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Supplier settlement not found"));
+        UUID paymentId = observed.getAllocation().getPayment().getId();
+        checkoutPaymentRepository.findByIdForUpdate(paymentId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Checkout payment not found"));
+        SupplierSettlement settlement = settlementRepository.findByIdForUpdate(settlementId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Supplier settlement not found"));
+        if (settlement.getStatus() != SupplierSettlementStatus.FAILED
+                && settlement.getStatus() != SupplierSettlementStatus.REVERSED) {
+            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                    "Only failed or reversed settlements can be assigned a replacement beneficiary");
+        }
+        PayoutBeneficiary beneficiary = beneficiaryRepository.findByIdForUpdate(request.beneficiaryId())
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Payout beneficiary not found"));
+        if (beneficiary.getStatus() != PayoutBeneficiaryStatus.ACTIVE
+                || !beneficiary.getOrganization().getId().equals(settlement.getSupplierOrganization().getId())
+                || !beneficiary.getCurrency().equalsIgnoreCase(settlement.getCurrency())) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "Replacement beneficiary must be active and match the supplier and settlement currency");
+        }
+        settlement.setBeneficiary(beneficiary);
+        return SupplierSettlementAdminResponse.from(settlementRepository.save(settlement));
     }
 
     /** Internal recovery for a batch execution interrupted before this pending item was dispatched. */
@@ -306,6 +347,17 @@ public class PaystackSettlementService {
                 || settlement.getAmount().signum() <= 0) {
             throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
                     "Only non-demo, unbatched pending settlements can be selected");
+        }
+        UUID paymentId = settlement.getAllocation().getPayment().getId();
+        CheckoutPayment payment = checkoutPaymentRepository.findByIdForUpdate(paymentId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Checkout payment not found"));
+        boolean hasUnclearedDispute = disputeRepository.existsUnclearedForPaymentOrReference(
+                paymentId, payment.getProviderReference());
+        boolean hasOpenRefund = paymentRefundRepository.existsByPayment_IdAndStatusIn(paymentId,
+                Set.of(RefundStatus.REQUESTED, RefundStatus.PENDING, RefundStatus.PROCESSING));
+        if (hasUnclearedDispute || hasOpenRefund) {
+            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                    "This settlement is blocked by an open refund or unresolved/unreviewed payment dispute");
         }
     }
 

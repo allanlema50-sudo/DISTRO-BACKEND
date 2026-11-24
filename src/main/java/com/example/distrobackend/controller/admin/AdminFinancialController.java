@@ -11,10 +11,15 @@ import com.example.distrobackend.dto.SupplierSettlementAdminResponse;
 import com.example.distrobackend.dto.ProviderWebhookEventResponse;
 import com.example.distrobackend.dto.CreatePaymentRefundRequest;
 import com.example.distrobackend.dto.PaymentRefundResponse;
+import com.example.distrobackend.dto.PaymentDisputeResponse;
+import com.example.distrobackend.dto.UpdatePaymentDisputeReviewRequest;
+import com.example.distrobackend.dto.ReassignSettlementBeneficiaryRequest;
+import com.example.distrobackend.Domain.enums.PaymentDisputeStatus;
 import com.example.distrobackend.Domain.enums.SupplierSettlementStatus;
 import com.example.distrobackend.Domain.enums.ProviderWebhookStatus;
 import com.example.distrobackend.service.ProviderWebhookInboxService;
 import com.example.distrobackend.service.PaymentRefundService;
+import com.example.distrobackend.service.PaymentDisputeService;
 import com.example.distrobackend.service.PaystackSettlementService;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.service.CommissionRuleService;
@@ -41,6 +46,7 @@ public class AdminFinancialController {
     private final PaystackSettlementService paystackSettlementService;
     private final ProviderWebhookInboxService webhookInboxService;
     private final PaymentRefundService paymentRefundService;
+    private final PaymentDisputeService paymentDisputeService;
 
     @GetMapping("/commission-rules")
     public List<CommissionRuleResponse> commissionRules(@AuthenticationPrincipal AuthenticatedUser actor) {
@@ -128,6 +134,14 @@ public class AdminFinancialController {
         return paystackSettlementService.retrySettlement(actor, settlementId);
     }
 
+    @PatchMapping("/settlements/{settlementId}/beneficiary")
+    public SupplierSettlementAdminResponse reassignSettlementBeneficiary(
+            @AuthenticationPrincipal AuthenticatedUser actor,
+            @PathVariable UUID settlementId,
+            @Valid @RequestBody ReassignSettlementBeneficiaryRequest request) {
+        return paystackSettlementService.reassignBeneficiary(actor, settlementId, request);
+    }
+
     @GetMapping("/webhook-events")
     public Page<ProviderWebhookEventResponse> webhookEvents(
             @RequestParam(required = false) ProviderWebhookStatus status, Pageable pageable) {
@@ -151,5 +165,21 @@ public class AdminFinancialController {
             @PathVariable UUID paymentId,
             @Valid @RequestBody CreatePaymentRefundRequest request) {
         return paymentRefundService.requestFullRefund(actor, paymentId, request);
+    }
+
+    @GetMapping("/disputes")
+    public Page<PaymentDisputeResponse> disputes(
+            @AuthenticationPrincipal AuthenticatedUser actor,
+            @RequestParam(required = false) PaymentDisputeStatus status,
+            Pageable pageable) {
+        return paymentDisputeService.list(actor, status, pageable);
+    }
+
+    @PatchMapping("/disputes/{providerDisputeId}/review")
+    public PaymentDisputeResponse reviewDispute(
+            @AuthenticationPrincipal AuthenticatedUser actor,
+            @PathVariable String providerDisputeId,
+            @Valid @RequestBody UpdatePaymentDisputeReviewRequest request) {
+        return paymentDisputeService.review(actor, providerDisputeId, request);
     }
 }

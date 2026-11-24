@@ -1,6 +1,7 @@
 package com.example.distrobackend.repository;
 
 import com.example.distrobackend.Domain.entity.PaymentRefund;
+import com.example.distrobackend.Domain.enums.RefundStatus;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -13,10 +14,14 @@ import java.util.Optional;
 import java.util.UUID;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Collection;
 
 public interface PaymentRefundRepository extends JpaRepository<PaymentRefund, UUID> {
     Optional<PaymentRefund> findTopByPayment_IdOrderByCreatedAtDescIdDesc(UUID paymentId);
     Optional<PaymentRefund> findByProviderReference(String reference);
+    boolean existsByPayment_IdAndStatusIn(UUID paymentId, Collection<RefundStatus> statuses);
+    Optional<PaymentRefund> findFirstByPayment_ProviderReferenceAndStatusInOrderByCreatedAtDescIdDesc(
+            String transactionReference, Collection<RefundStatus> statuses);
     Page<PaymentRefund> findAllByOrderByCreatedAtDesc(Pageable pageable);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)

@@ -38,6 +38,9 @@ public class ProviderWebhookEvent {
     @Column(name = "provider_reference", nullable = false, length = 120)
     private String providerReference;
 
+    @Column(name = "provider_transaction_reference", length = 120)
+    private String providerTransactionReference;
+
     @Column(name = "provider_status", length = 40)
     private String providerStatus;
 
@@ -52,6 +55,18 @@ public class ProviderWebhookEvent {
 
     @Column(name = "transfer_code", length = 120)
     private String transferCode;
+
+    @Column(name = "provider_dispute_id", length = 80)
+    private String providerDisputeId;
+
+    @Column(name = "dispute_status", length = 40)
+    private String disputeStatus;
+
+    @Column(name = "dispute_resolution", length = 80)
+    private String disputeResolution;
+
+    @Column(name = "dispute_due_at")
+    private OffsetDateTime disputeDueAt;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)

@@ -195,6 +195,9 @@ V74, V75, and V76 rows. Preserve the applied Paystack V73 file and checksum.
 The reseller-listing migration is assigned V77. V79 contains duplicate
 reseller-listing DDL and is guarded with `IF NOT EXISTS` so it does not fail
 after V77 on a fresh history. The refund migration follows at V81.
+Paystack dispute tracking and the durable webhook transaction-reference field
+are added at V82. Keep this new migration above the existing V81 refund
+migration; never renumber or edit the applied V73 payout migration.
 
 Before deployment, check the full history through its latest installed row.
 If V79 is already recorded, compare its history checksum with the currently

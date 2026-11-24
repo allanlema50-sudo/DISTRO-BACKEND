@@ -4,12 +4,16 @@ import com.example.distrobackend.Domain.entity.SettlementBatch;
 import com.example.distrobackend.Domain.entity.SupplierSettlement;
 import com.example.distrobackend.Domain.enums.SettlementBatchStatus;
 import com.example.distrobackend.Domain.enums.SupplierSettlementStatus;
+import com.example.distrobackend.Domain.enums.RefundStatus;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.dto.SettlementBatchResponse;
 import com.example.distrobackend.dto.SupplierSettlementAdminResponse;
 import com.example.distrobackend.repository.SettlementBatchRepository;
 import com.example.distrobackend.repository.SupplierSettlementRepository;
+import com.example.distrobackend.repository.CheckoutPaymentRepository;
+import com.example.distrobackend.repository.PaymentDisputeRepository;
+import com.example.distrobackend.repository.PaymentRefundRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 /** Commits a payout attempt before any external transfer request is sent. */
@@ -25,6 +30,9 @@ import java.util.UUID;
 public class PaystackSettlementDispatchStore {
     private final SettlementBatchRepository batchRepository;
     private final SupplierSettlementRepository settlementRepository;
+    private final CheckoutPaymentRepository paymentRepository;
+    private final PaymentDisputeRepository disputeRepository;
+    private final PaymentRefundRepository refundRepository;
 
     @Transactional
     public List<UUID> beginBatch(UUID batchId) {
@@ -33,10 +41,22 @@ public class PaystackSettlementDispatchStore {
             throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
                     "Only an approved settlement batch can be executed");
         }
+        List<SupplierSettlement> observed = settlementRepository
+                .findBySettlementBatch_IdOrderByCreatedAtAsc(batchId);
+        observed.stream().map(s -> s.getAllocation().getPayment().getId()).distinct().sorted()
+                .forEach(paymentId -> paymentRepository.findByIdForUpdate(paymentId)
+                        .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Checkout payment not found")));
+        List<SupplierSettlement> settlements = observed.stream()
+                .map(s -> settlementRepository.findByIdForUpdate(s.getId())
+                        .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Supplier settlement not found")))
+                .toList();
+        if (settlements.stream().anyMatch(this::hasOpenRefundOrDispute)) {
+            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                    "A settlement in this batch is blocked by an open refund or payment dispute");
+        }
         batch.setStatus(SettlementBatchStatus.PROCESSING);
         batchRepository.saveAndFlush(batch);
-        return settlementRepository.findBySettlementBatch_IdOrderByCreatedAtAsc(batchId).stream()
-                .map(SupplierSettlement::getId).toList();
+        return settlements.stream().map(SupplierSettlement::getId).toList();
     }
 
     @Transactional
@@ -49,8 +69,20 @@ public class PaystackSettlementDispatchStore {
         }
         UUID batchId = observed.getSettlementBatch().getId();
         SettlementBatch batch = lockBatch(batchId);
+        UUID paymentId = observed.getAllocation().getPayment().getId();
+        com.example.distrobackend.Domain.entity.CheckoutPayment payment = paymentRepository.findByIdForUpdate(paymentId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Checkout payment not found"));
         SupplierSettlement settlement = settlementRepository.findByIdForUpdate(settlementId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Supplier settlement not found"));
+
+        if (hasOpenRefundOrDispute(settlement, payment)) {
+            if (!retry && batch.getStatus() == SettlementBatchStatus.PROCESSING
+                    && settlement.getStatus() == SupplierSettlementStatus.PENDING) {
+                return null;
+            }
+            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                    "This settlement is blocked by an open refund or payment dispute");
+        }
 
         if (retry) {
             if (settlement.getStatus() != SupplierSettlementStatus.FAILED
@@ -156,14 +188,31 @@ public class PaystackSettlementDispatchStore {
                 .findBySettlementBatch_IdOrderByCreatedAtAsc(batch.getId());
         if (members.isEmpty()) return;
         boolean allSettled = members.stream().allMatch(s -> s.getStatus() == SupplierSettlementStatus.SETTLED);
-        boolean anyActive = members.stream().anyMatch(s -> s.getStatus() == SupplierSettlementStatus.PENDING
-                || s.getStatus() == SupplierSettlementStatus.PROCESSING);
+        boolean anyProcessing = members.stream().anyMatch(s -> s.getStatus() == SupplierSettlementStatus.PROCESSING);
+        boolean anyPending = members.stream().anyMatch(s -> s.getStatus() == SupplierSettlementStatus.PENDING);
         boolean anyFailed = members.stream().anyMatch(s -> s.getStatus() == SupplierSettlementStatus.FAILED
                 || s.getStatus() == SupplierSettlementStatus.REVERSED);
         batch.setStatus(allSettled ? SettlementBatchStatus.COMPLETED
-                : anyActive ? SettlementBatchStatus.PROCESSING
+                : anyProcessing ? SettlementBatchStatus.PROCESSING
+                : anyPending ? SettlementBatchStatus.APPROVED
                 : anyFailed ? SettlementBatchStatus.PARTIALLY_FAILED : SettlementBatchStatus.FAILED);
         batchRepository.save(batch);
+    }
+
+    private boolean hasOpenRefundOrDispute(SupplierSettlement settlement) {
+        com.example.distrobackend.Domain.entity.CheckoutPayment payment = paymentRepository
+                .findByIdForUpdate(settlement.getAllocation().getPayment().getId())
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Checkout payment not found"));
+        return hasOpenRefundOrDispute(settlement, payment);
+    }
+
+    private boolean hasOpenRefundOrDispute(SupplierSettlement settlement,
+                                           com.example.distrobackend.Domain.entity.CheckoutPayment payment) {
+        boolean openDispute = disputeRepository.existsUnclearedForPaymentOrReference(
+                payment.getId(), payment.getProviderReference());
+        boolean openRefund = refundRepository.existsByPayment_IdAndStatusIn(payment.getId(),
+                Set.of(RefundStatus.REQUESTED, RefundStatus.PENDING, RefundStatus.PROCESSING));
+        return openDispute || openRefund;
     }
 
     private static long toMinor(BigDecimal amount) {

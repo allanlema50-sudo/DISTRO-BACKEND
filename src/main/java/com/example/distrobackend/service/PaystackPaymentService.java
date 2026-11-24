@@ -189,16 +189,61 @@ public class PaystackPaymentService {
             JsonNode data = root.path("data");
             String event = root.path("event").asText("").trim();
             String reference = data.path("reference").asText("").trim();
-            if (event.isBlank() || reference.isBlank()) {
+            JsonNode disputeTransaction = data.path("transaction");
+            String transactionReference = data.path("transaction_reference").asText("").trim();
+            if (transactionReference.isBlank() && !disputeTransaction.isMissingNode()) {
+                transactionReference = disputeTransaction.path("reference").asText("").trim();
+            }
+            if (reference.isBlank() && !disputeTransaction.isMissingNode()) {
+                reference = disputeTransaction.path("reference").asText("").trim();
+            }
+            if (reference.isBlank() && event.startsWith("refund.")) reference = transactionReference;
+            JsonNode disputeIdNode = data.path("id");
+            String disputeId = disputeIdNode.isMissingNode() || disputeIdNode.isNull()
+                    ? null : disputeIdNode.asText(null);
+            boolean disputeEvent = event.startsWith("charge.dispute.");
+            if (disputeEvent && reference.isBlank() && disputeId != null) reference = disputeId;
+            if (event.isBlank() || reference.isBlank()
+                    || (disputeEvent && (disputeId == null || disputeId.isBlank()))) {
                 throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack webhook is missing event or reference");
             }
+            if (transactionReference.isBlank() && !event.startsWith("refund.")) {
+                transactionReference = disputeTransaction.path("reference").asText(reference);
+            }
+            String dueAtValue = data.path("due_at").asText(null);
+            java.time.OffsetDateTime dueAt = null;
+            if (dueAtValue != null && !dueAtValue.isBlank()) {
+                try {
+                    dueAt = java.time.OffsetDateTime.parse(dueAtValue);
+                } catch (java.time.format.DateTimeParseException ex) {
+                    throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack dispute due_at is invalid");
+                }
+            }
             return new Webhook(event, reference, data.path("status").asText(""),
-                    data.path("amount").isNumber() ? data.path("amount").longValue() : null,
+                    parseMinorAmount(data),
                     data.path("currency").asText(null), data.path("gateway_response").asText(null),
-                    data.path("transfer_code").asText(null));
+                    data.path("transfer_code").asText(null), disputeId,
+                    data.path("resolution").asText(null), dueAt,
+                    transactionReference.isBlank() ? reference : transactionReference);
         } catch (JacksonException ex) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack webhook body is not valid JSON");
         }
+    }
+
+    private static Long parseMinorAmount(JsonNode data) {
+        JsonNode amount = data.path("amount");
+        if (amount.isMissingNode() || amount.isNull()) amount = data.path("refund_amount");
+        if (amount.isMissingNode() || amount.isNull()) return null;
+        if (amount.isIntegralNumber() && amount.canConvertToLong()) return amount.longValue();
+        if (amount.isTextual()) {
+            String value = amount.asText().trim();
+            try {
+                if (value.matches("-?[0-9]+")) return Long.parseLong(value);
+            } catch (NumberFormatException ignored) {
+                // Reject overflow below with the same safe validation error.
+            }
+        }
+        throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack webhook amount must be an integer minor-unit value");
     }
 
     public Verification verifyTransaction(String reference) {
@@ -557,7 +602,15 @@ public class PaystackPaymentService {
                          Long amountMinor, String currency) {}
 
     public record Webhook(String event, String reference, String status, Long amountMinor,
-                           String currency, String gatewayResponse, String transferCode) {}
+                           String currency, String gatewayResponse, String transferCode,
+                           String disputeId, String disputeResolution, java.time.OffsetDateTime disputeDueAt,
+                           String transactionReference) {
+        public Webhook(String event, String reference, String status, Long amountMinor,
+                       String currency, String gatewayResponse, String transferCode) {
+            this(event, reference, status, amountMinor, currency, gatewayResponse, transferCode,
+                    null, null, null, reference);
+        }
+    }
 
     public record Verification(String reference, String status, Long amountMinor, String currency) {}
 

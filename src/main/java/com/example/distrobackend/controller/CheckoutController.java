@@ -2,6 +2,7 @@ package com.example.distrobackend.controller;
 import com.example.distrobackend.dto.*;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.service.CentralizedCheckoutService;
+import com.example.distrobackend.service.MpesaCallbackGuard;
 import com.example.distrobackend.service.PaystackPaymentService;
 import com.example.distrobackend.service.ProviderWebhookInboxService;
 import jakarta.validation.Valid;
@@ -21,10 +22,11 @@ public class CheckoutController {
  private final CentralizedCheckoutService checkoutService;
  private final PaystackPaymentService paystackPaymentService;
  private final ProviderWebhookInboxService webhookInboxService;
+ private final MpesaCallbackGuard callbackGuard;
  @org.springframework.web.bind.annotation.PostMapping("/mpesa/callback")
  @PreAuthorize("permitAll()")
  @io.swagger.v3.oas.annotations.security.SecurityRequirements
- public org.springframework.http.ResponseEntity<String> mpesaCallback(@RequestParam UUID paymentId,@RequestParam(value="callbackToken",required=false) String callbackToken,@RequestHeader(value="X-Mpesa-Callback-Secret",required=false) String secret,@RequestBody com.example.distrobackend.dto.mpesa.MpesaCallbackRequest callback){checkoutService.processMpesaCallback(paymentId,callbackToken,secret,callback);return org.springframework.http.ResponseEntity.ok("{\"ResultCode\":0,\"ResultDesc\":\"Accepted\"}");}
+ public org.springframework.http.ResponseEntity<String> mpesaCallback(@RequestParam UUID paymentId,@RequestParam(value="callbackToken",required=false) String callbackToken,@RequestHeader(value="X-Mpesa-Callback-Secret",required=false) String secret, jakarta.servlet.http.HttpServletRequest request, @RequestBody com.example.distrobackend.dto.mpesa.MpesaCallbackRequest callback){callbackGuard.verifyIp(callbackGuard.clientAddress(request));checkoutService.processMpesaCallback(paymentId,callbackToken,callbackGuard.headerSecretIfEnabled(secret),callback);return org.springframework.http.ResponseEntity.ok("{\"ResultCode\":0,\"ResultDesc\":\"Accepted\"}");}
  @org.springframework.web.bind.annotation.PostMapping(value="/paystack/webhook", consumes=org.springframework.http.MediaType.APPLICATION_JSON_VALUE)
  @PreAuthorize("permitAll()")
  @io.swagger.v3.oas.annotations.security.SecurityRequirements

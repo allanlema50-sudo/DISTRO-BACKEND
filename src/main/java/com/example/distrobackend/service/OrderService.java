@@ -44,6 +44,7 @@ public class OrderService {
     private final UserRepository userRepository;
     private final OrganizationRepository organizationRepository;
     private final PaymentRepository paymentRepository;
+    private final FinancialLedgerService financialLedgerService;
     private final OrganizationNotificationService notificationService;
     private final PlatformSettingsService platformSettingsService;
 
@@ -323,6 +324,9 @@ public class OrderService {
             order.setReservationExpiresAt(null);
         }
         if (update.status() == OrderStatus.DELIVERED) order.setDeliveredAt(java.time.OffsetDateTime.now());
+        if (update.status() == OrderStatus.REFUNDED) {
+            reverseCapturedCustomerPayment(orderId);
+        }
         if (update.status() == OrderStatus.CANCELLED) {
             order.setCancelledAt(java.time.OffsetDateTime.now());
             order.setReservationExpiresAt(null);
@@ -467,6 +471,20 @@ public class OrderService {
         order.addStatusHistory(history);
         orderRepository.save(order);
         return true;
+    }
+
+    private void reverseCapturedCustomerPayment(UUID orderId) {
+        Payment payment = paymentRepository.findByOrderIdForUpdate(orderId).orElse(null);
+        if (payment == null) {
+            return;
+        }
+        if (payment.getStatus() != PaymentStatus.CONFIRMED
+                && payment.getStatus() != PaymentStatus.RECONCILED) {
+            return;
+        }
+        financialLedgerService.reverseCapturedPayment("CUSTOMER_ORDER_PAYMENT", payment.getId());
+        payment.setStatus(PaymentStatus.REVERSED);
+        paymentRepository.save(payment);
     }
 
     @Transactional

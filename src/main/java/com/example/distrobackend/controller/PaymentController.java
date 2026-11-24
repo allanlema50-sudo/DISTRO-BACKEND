@@ -6,9 +6,11 @@ import com.example.distrobackend.dto.PaymentStatusResponse;
 import com.example.distrobackend.dto.PaymentResponse;
 import com.example.distrobackend.dto.mpesa.MpesaCallbackRequest;
 import com.example.distrobackend.security.AuthenticatedUser;
+import com.example.distrobackend.service.MpesaCallbackGuard;
 import com.example.distrobackend.service.PaymentService;
 import com.example.distrobackend.service.callbackhandling;
 import com.example.distrobackend.service.PaymentAdministrationService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -29,6 +31,7 @@ public class PaymentController {
     private final callbackhandling callbackHandling;
     private final PaymentAdministrationService paymentAdministrationService;
     private final com.example.distrobackend.service.PurchaseOrderService purchaseOrderService;
+    private final MpesaCallbackGuard callbackGuard;
 
     @GetMapping
     public Object listPayments(
@@ -78,8 +81,11 @@ public class PaymentController {
     @SecurityRequirements
     public ResponseEntity<String> mpesaCallback(
             @RequestHeader(value = "X-Mpesa-Callback-Secret", required = false) String callbackSecret,
+            @RequestParam(value = "token", required = false) String callbackToken,
+            HttpServletRequest request,
             @RequestBody MpesaCallbackRequest callbackRequest) {
-        return ResponseEntity.ok(callbackHandling.handle(callbackSecret, callbackRequest));
+        return ResponseEntity.ok(callbackHandling.handle(
+                callbackSecret, callbackToken, callbackGuard.clientAddress(request), callbackRequest));
     }
 
     @GetMapping("/{orderId}/status")

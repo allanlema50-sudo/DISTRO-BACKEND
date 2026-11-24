@@ -26,6 +26,7 @@ public class PaymentAdministrationService {
     private final PaymentRepository paymentRepository;
     private final OrderRepository orderRepository;
     private final OrderService orderService;
+    private final FinancialLedgerService financialLedgerService;
 
     @Transactional(readOnly = true)
     public Page<PaymentResponse> list(AuthenticatedUser actor, Pageable pageable) {
@@ -93,6 +94,35 @@ public class PaymentAdministrationService {
         payment.setFailureReason(note);
         paymentRepository.save(payment);
         orderService.failPaymentAndReleaseOrder(payment.getOrder().getId(), note);
+        return PaymentResponse.from(payment);
+    }
+
+    @Transactional
+    public PaymentResponse reverse(AuthenticatedUser actor, UUID paymentId, String note) {
+        requirePlatformAdmin(actor);
+        UUID orderId = paymentRepository.findOrderIdByPaymentId(paymentId)
+                .orElseThrow(() -> new ApiException(ErrorCode.PAYMENT_NOT_FOUND, "Payment not found"));
+        orderRepository.findByIdWithOwnershipForUpdate(orderId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
+        Payment payment = paymentRepository.findByIdWithOwnershipForUpdate(paymentId)
+                .orElseThrow(() -> new ApiException(ErrorCode.PAYMENT_NOT_FOUND, "Payment not found"));
+        if (payment.getStatus() == PaymentStatus.REVERSED) {
+            return PaymentResponse.from(payment);
+        }
+        if (payment.getStatus() != PaymentStatus.CONFIRMED
+                && payment.getStatus() != PaymentStatus.RECONCILED) {
+            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                    "Only a captured payment can be reversed");
+        }
+        financialLedgerService.reverseCapturedPayment("CUSTOMER_ORDER_PAYMENT", payment.getId());
+        String reason = note == null || note.isBlank()
+                ? "Payment reversed by platform administrator" : note.trim();
+        payment.setStatus(PaymentStatus.REVERSED);
+        payment.setFailureReason(reason);
+        payment.setReconciledNote(reason);
+        payment.setReconciledAt(java.time.OffsetDateTime.now());
+        payment.setReconciledBy(null);
+        paymentRepository.save(payment);
         return PaymentResponse.from(payment);
     }
 

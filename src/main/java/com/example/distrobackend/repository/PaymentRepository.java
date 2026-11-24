@@ -54,6 +54,9 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID> {
     Optional<UUID> findOrderIdByPaymentId(@Param("paymentId") UUID paymentId);
     Optional<Payment> findByIdempotencyKey(String idempotencyKey);
 
+    @Query("select p.id from Payment p where p.status = :status order by p.confirmedAt asc")
+    List<UUID> findIdsByStatus(@Param("status") PaymentStatus status, Pageable pageable);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select p from Payment p join fetch p.order o join fetch o.customer c join fetch o.organization org where o.id = :orderId")
     Optional<Payment> findByOrderIdForUpdate(@Param("orderId") UUID orderId);

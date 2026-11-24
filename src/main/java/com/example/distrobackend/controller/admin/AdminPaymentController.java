@@ -2,6 +2,7 @@ package com.example.distrobackend.controller.admin;
 
 import com.example.distrobackend.dto.PaymentResponse;
 import com.example.distrobackend.dto.PaymentStatusUpdateRequest;
+import com.example.distrobackend.dto.ReversePaymentRequest;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.service.PaymentAdministrationService;
 import jakarta.validation.Valid;
@@ -12,6 +13,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -31,6 +33,20 @@ public class AdminPaymentController {
     public Page<PaymentResponse> getAllPayments(
             @AuthenticationPrincipal AuthenticatedUser actor, Pageable pageable) {
         return paymentAdministrationService.list(actor, pageable);
+    }
+
+    @GetMapping("/{paymentId}")
+    public PaymentResponse getPayment(@AuthenticationPrincipal AuthenticatedUser actor,
+                                      @PathVariable UUID paymentId) {
+        return paymentAdministrationService.get(actor, paymentId);
+    }
+
+    @PostMapping("/{paymentId}/reverse")
+    public PaymentResponse reverse(@AuthenticationPrincipal AuthenticatedUser actor,
+                                   @PathVariable UUID paymentId,
+                                   @RequestBody(required = false) ReversePaymentRequest request) {
+        String note = request == null ? null : request.note();
+        return paymentAdministrationService.reverse(actor, paymentId, note);
     }
 
     @PatchMapping("/{paymentId}/status")

@@ -196,10 +196,11 @@ class PaymentServiceTest {
         Payment payment = new Payment();
         payment.setOrder(order);
         payment.setAmount(order.getTotalAmount());
+        CustomerCollectionProvider provider = org.mockito.Mockito.mock(CustomerCollectionProvider.class);
+        ReflectionTestUtils.setField(paymentService, "collectionProvider", provider);
         when(orderRepository.findByIdWithOwnershipForUpdate(orderId)).thenReturn(Optional.of(order));
         when(paymentRepository.findByOrderIdForUpdate(orderId)).thenReturn(Optional.of(payment));
-        when(restTemplate.exchange(anyString(), eq(HttpMethod.GET), any(HttpEntity.class),
-                org.mockito.ArgumentMatchers.<ParameterizedTypeReference<Map<String, Object>>>any()))
+        when(provider.push(any(), any(), any(), anyInt(), any()))
                 .thenThrow(new org.springframework.web.client.ResourceAccessException("timeout"));
 
         assertThatThrownBy(() -> paymentService.initiatePayment(
@@ -286,6 +287,38 @@ class PaymentServiceTest {
 
         org.assertj.core.api.Assertions.assertThat(payment.getStatus()).isEqualTo(PaymentStatus.FAILED);
         verify(orderService).failPaymentAndReleaseOrder(orderId, "Request cancelled");
+    }
+
+    @Test
+    void callbackUrlTokenIsAcceptedWithoutTheLegacyHeader() {
+        MpesaCallbackGuard guard = new MpesaCallbackGuard();
+        ReflectionTestUtils.setField(guard, "callbackSecret", "test-callback-secret");
+        ReflectionTestUtils.setField(guard, "allowedIps", "");
+        ReflectionTestUtils.setField(guard, "allowlistRequired", false);
+        ReflectionTestUtils.setField(guard, "verifyCallback", true);
+        ReflectionTestUtils.setField(paymentService, "callbackGuard", guard);
+
+        assertThatThrownBy(() -> paymentService.processMpesaCallback(
+                null, "test-callback-secret", "127.0.0.1", new MpesaCallbackRequest()))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("Invalid M-Pesa callback payload");
+        verifyNoInteractions(paymentRepository);
+    }
+
+    @Test
+    void callbackFromOutsideTheAllowlistIsRejectedBeforeDatabaseLookup() {
+        MpesaCallbackGuard guard = new MpesaCallbackGuard();
+        ReflectionTestUtils.setField(guard, "callbackSecret", "test-callback-secret");
+        ReflectionTestUtils.setField(guard, "allowedIps", "203.0.113.10");
+        ReflectionTestUtils.setField(guard, "allowlistRequired", false);
+        ReflectionTestUtils.setField(guard, "verifyCallback", true);
+        ReflectionTestUtils.setField(paymentService, "callbackGuard", guard);
+
+        assertThatThrownBy(() -> paymentService.processMpesaCallback(
+                null, "test-callback-secret", "198.51.100.4", new MpesaCallbackRequest()))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("Invalid M-Pesa callback credentials");
+        verifyNoInteractions(paymentRepository);
     }
 
     private Order order() {

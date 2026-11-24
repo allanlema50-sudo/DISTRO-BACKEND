@@ -9,6 +9,8 @@ import com.example.distrobackend.repository.AuditLogRepository;
 import com.example.distrobackend.repository.CommissionRuleRepository;
 import com.example.distrobackend.repository.UserRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.Query;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -30,6 +32,8 @@ class CommissionRuleServiceTest {
     @Mock private CommissionRuleRepository ruleRepository;
     @Mock private UserRepository userRepository;
     @Mock private AuditLogRepository auditLogRepository;
+    @Mock private EntityManager entityManager;
+    @Mock private Query advisoryLockQuery;
 
     private CommissionRuleService service;
     private AuthenticatedUser admin;
@@ -37,6 +41,7 @@ class CommissionRuleServiceTest {
     @BeforeEach
     void setUp() {
         service = new CommissionRuleService(ruleRepository, userRepository, auditLogRepository);
+        ReflectionTestUtils.setField(service, "entityManager", entityManager);
         ReflectionTestUtils.setField(service, "defaultRatePercent", new BigDecimal("5.00"));
         admin = new AuthenticatedUser(UUID.randomUUID(), UserRole.SUPER_ADMIN, null, null,
                 java.time.Instant.now().plusSeconds(300));
@@ -58,6 +63,10 @@ class CommissionRuleServiceTest {
 
     @Test
     void rejectsOverlappingRulesForTheSameScope() {
+        when(entityManager.createNativeQuery("select pg_advisory_xact_lock(hashtext(:currency))"))
+                .thenReturn(advisoryLockQuery);
+        when(advisoryLockQuery.setParameter("currency", "KES")).thenReturn(advisoryLockQuery);
+        when(advisoryLockQuery.getSingleResult()).thenReturn(1L);
         CommissionRule existing = rule(new BigDecimal("5.00"), Organizationtype.DISTRIBUTOR,
                 OffsetDateTime.now().minusDays(1));
         when(ruleRepository.findActiveForUpdate("KES")).thenReturn(List.of(existing));
@@ -68,6 +77,19 @@ class CommissionRuleServiceTest {
         assertThatThrownBy(() -> service.create(admin, request))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("already covers");
+    }
+
+    @Test
+    void capsFixedAndPercentageCommissionAtTheAvailableGrossAmount() {
+        var decision = new CommissionRuleService.CommissionDecision(UUID.randomUUID(),
+                new BigDecimal("5.00"), new BigDecimal("10.00"), "KES");
+
+        var breakdown = decision.calculate(new BigDecimal("5.00"), new BigDecimal("1.00"));
+
+        assertThat(breakdown.commission()).isEqualByComparingTo("4.00");
+        assertThat(breakdown.supplierAmount()).isEqualByComparingTo("0.00");
+        assertThat(breakdown.gross()).isEqualByComparingTo(
+                breakdown.providerFee().add(breakdown.commission()).add(breakdown.supplierAmount()));
     }
 
     private CommissionRule rule(BigDecimal rate, Organizationtype type, OffsetDateTime from) {

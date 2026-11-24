@@ -90,13 +90,15 @@ public class PaystackTransactionMatchingService {
             case "failed" -> "FAILED";
             case "abandoned" -> "CANCELLED";
             case "reversed" -> "REFUNDED";
+            case "ongoing", "processing" -> "PENDING";
             default -> status.trim().toUpperCase(java.util.Locale.ROOT);
         };
     }
 
     private static String normalizeLocalStatus(CheckoutPaymentStatus status) {
         return switch (status) {
-            case SUCCESS, REFUND_PENDING, REFUNDED -> "SUCCESS";
+            case SUCCESS, REFUND_PENDING -> "SUCCESS";
+            case REFUNDED -> "REFUNDED";
             case FAILED -> "FAILED";
             case CANCELLED, TIMED_OUT -> "CANCELLED";
             case PENDING, UNKNOWN -> status.name();

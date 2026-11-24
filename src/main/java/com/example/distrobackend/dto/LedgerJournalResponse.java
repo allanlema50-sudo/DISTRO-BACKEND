@@ -11,6 +11,7 @@ public record LedgerJournalResponse(
         String sourceType,
         UUID sourceId,
         String eventType,
+        String providerReference,
         String currency,
         String description,
         boolean simulated,
@@ -19,7 +20,8 @@ public record LedgerJournalResponse(
 ) {
     public static LedgerJournalResponse from(LedgerJournal journal) {
         return new LedgerJournalResponse(journal.getId(), journal.getSourceType(), journal.getSourceId(),
-                journal.getEventType(), journal.getCurrency(), journal.getDescription(), journal.isSimulated(),
+                journal.getEventType(), journal.getProviderReference(), journal.getCurrency(),
+                journal.getDescription(), journal.isSimulated(),
                 journal.getCreatedAt(), journal.getEntries().stream().map(LedgerEntryResponse::from).toList());
     }
 }

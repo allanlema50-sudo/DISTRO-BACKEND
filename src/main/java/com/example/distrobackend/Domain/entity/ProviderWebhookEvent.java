@@ -38,6 +38,9 @@ public class ProviderWebhookEvent {
     @Column(name = "provider_reference", nullable = false, length = 120)
     private String providerReference;
 
+    @Column(name = "provider_transaction_reference", length = 120)
+    private String providerTransactionReference;
+
     @Column(name = "provider_status", length = 40)
     private String providerStatus;
 
@@ -71,6 +74,9 @@ public class ProviderWebhookEvent {
 
     @Column(name = "attempt_count", nullable = false)
     private int attemptCount;
+
+    @Column(name = "claim_token")
+    private UUID claimToken;
 
     @Column(name = "next_attempt_at", nullable = false)
     private OffsetDateTime nextAttemptAt = OffsetDateTime.now();

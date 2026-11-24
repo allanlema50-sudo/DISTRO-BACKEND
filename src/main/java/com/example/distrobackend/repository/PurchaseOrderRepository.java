@@ -42,6 +42,18 @@ public interface PurchaseOrderRepository extends JpaRepository<PurchaseOrder, UU
 
     java.util.List<PurchaseOrder> findByCheckout_Id(UUID checkoutId);
 
+    @Query("select distinct payment.id from CheckoutPayment payment "
+            + "join payment.checkout checkout join PurchaseOrder po on po.checkout = checkout "
+            + "where payment.status = com.example.distrobackend.Domain.enums.CheckoutPaymentStatus.SUCCESS "
+            + "and po.status = com.example.distrobackend.Domain.enums.PurchaseOrderStatus.APPROVED "
+            + "and (po.fulfilmentNextRecoveryAt is null or po.fulfilmentNextRecoveryAt <= :now) "
+            + "and not exists (select shipment.id from PurchaseOrderShipment shipment "
+            + "where shipment.purchaseOrder = po and shipment.status <> "
+            + "com.example.distrobackend.Domain.enums.PurchaseOrderShipmentStatus.CANCELLED) "
+            + "order by payment.id asc")
+    Page<UUID> findCheckoutPaymentsNeedingFulfilmentRecovery(
+            @Param("now") java.time.OffsetDateTime now, Pageable pageable);
+
     @Query(value = "select nextval('purchase_order_number_seq')", nativeQuery = true)
     Long getNextPurchaseOrderSequence();
 }

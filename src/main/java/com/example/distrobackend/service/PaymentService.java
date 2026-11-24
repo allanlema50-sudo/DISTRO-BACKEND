@@ -362,6 +362,11 @@ public class PaymentService {
                             ? "" : result.resultDescription()));
             paymentRepository.save(payment);
             orderService.confirmPaidOrder(orderId);
+            if (financialLedgerService != null) {
+                financialLedgerService.recordCapturedPayment(
+                        "CUSTOMER_ORDER_PAYMENT", payment.getId(), order.getOrganization(),
+                        payment.getAmount(), BigDecimal.ZERO, payment.getCurrency(), false);
+            }
         } else if (isConfiguredFinalFailureCode(result.resultCode())) {
             String reason = isBlank(result.resultDescription())
                     ? "M-Pesa payment did not complete"

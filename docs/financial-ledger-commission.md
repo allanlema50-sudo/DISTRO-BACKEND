@@ -15,6 +15,8 @@ gross payment
 
 The default commission is `5.00%`, controlled by `LOGIFLOW_DEFAULT_COMMISSION_PERCENT`. A database commission rule takes precedence over that fallback when its currency, organization type, and effective date match. Rules are created and deactivated by `SUPER_ADMIN`, and changes are written to the existing audit log.
 
+Commission is capped at the amount remaining after the provider fee. If a fixed fee and percentage would consume more than the available gross, the supplier payable becomes zero rather than allowing the journal to become negative. Provider fees greater than the gross payment are rejected because they cannot produce a balanced payable allocation.
+
 The journal is balanced:
 
 ```text
@@ -35,7 +37,7 @@ All endpoints below require a `SUPER_ADMIN` access token.
 | GET | `/api/v1/admin/financial/commission-rules` | List commission rules |
 | POST | `/api/v1/admin/financial/commission-rules` | Create a commission rule |
 | POST | `/api/v1/admin/financial/commission-rules/{ruleId}/deactivate` | Deactivate a rule without deleting its history |
-| GET | `/api/v1/admin/financial/ledger/journals?page=0&size=20` | Review captured-payment journals |
+| GET | `/api/v1/admin/financial/ledger/journals?page=0&size=20` | Review payment and payout journals, including provider references |
 | GET | `/api/v1/admin/financial/ledger/journals/{journalId}` | Inspect one journal and its entries |
 
 Create-rule example:
@@ -64,19 +66,28 @@ CREDIT provider clearing
 
 If Paystack later reverses that transfer, LogiFlow writes the opposite entries
 as a separate reversal journal. Replayed provider events do not duplicate an
-open payout posting. The Super Admin reconciliation report flags missing or
-unbalanced payout journals for settled transfers and checks reversal state.
+open payout posting. Each payout and reversal journal retains its Paystack
+transfer reference, and payout references are unique in the ledger. The Super Admin
+reconciliation report flags missing or unbalanced payout journals for settled
+transfers and checks reversal state.
 
 These entries record the provider-confirmed movement; they do not initiate a
 transfer or independently prove bank statement settlement.
 
 ## What is deliberately not included yet
 
-The settlement branch adds Paystack beneficiary onboarding, Super Admin-reviewed
-batches, retry-safe transfer references, and signed transfer webhook handling.
-`PAYSTACK_TRANSFERS_ENABLED` remains separate from collection and defaults to
-false. Partial refunds, recovery of funds after a supplier payout, provider
-statement import, and a durable outbox/worker for deferred transfer attempts
-remain follow-up work.
+The payout workflow supports Paystack beneficiary onboarding, Super Admin-
+reviewed batches, transfer-reference verification, and retryable payout status
+updates. `PAYSTACK_TRANSFERS_ENABLED` remains separate from collection and
+defaults to false. Signed Paystack webhooks are saved to a durable inbox before
+the provider receives an acknowledgement, retried by a worker, and moved to
+`DEAD_LETTER` after the configured limit for admin review. Full-checkout Paystack
+refunds are supported only before supplier settlement is batched or paid, and
+Paystack disputes are tracked and reviewed by Super Admins. Disputes that are
+unresolved or not explicitly cleared block supplier payouts. Partial refunds,
+post-payout refunds, provider statement import, and bank settlement confirmation
+remain follow-up work. Internal LogiFlow reconciliation and on-demand Paystack
+transaction matching are available, but neither proves that a bank credited a
+beneficiary account.
 
 No Tingg, M-Pesa, PesaLink, card, or bank API key is created by this branch. Provider credentials must be added later as deployment secrets, never committed to `.env.example` or source control.

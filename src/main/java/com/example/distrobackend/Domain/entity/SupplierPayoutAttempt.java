@@ -45,7 +45,7 @@ public class SupplierPayoutAttempt {
     @Column(name = "attempt_number", nullable = false)
     private int attemptNumber;
 
-    @Column(name = "provider_reference", nullable = false, unique = true, length = 64)
+    @Column(name = "provider_reference", nullable = false, unique = true, length = 120)
     private String providerReference;
 
     @Column(name = "provider_transfer_code", length = 120)
@@ -69,6 +69,9 @@ public class SupplierPayoutAttempt {
 
     @Column(name = "completed_at")
     private OffsetDateTime completedAt;
+
+    @Column(name = "last_status_check_at")
+    private OffsetDateTime lastStatusCheckAt;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

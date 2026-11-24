@@ -15,6 +15,13 @@ import java.util.UUID;
 
 public interface PurchaseOrderShipmentRepository extends JpaRepository<PurchaseOrderShipment, UUID> {
 
+    @Query("select coalesce(sum(r.acceptedQuantity), 0) from PurchaseOrderShipmentReceiptLine r "
+            + "where r.purchaseOrderItem.stockItem.id = :productId "
+            + "and r.purchaseOrderItem.purchaseOrder.buyerOrganization.id = :distributorId "
+            + "and r.shipment.status = com.example.distrobackend.Domain.enums.PurchaseOrderShipmentStatus.RECEIVED")
+    Long sumAcceptedQuantityForDistributorProduct(@Param("distributorId") UUID distributorId,
+                                                   @Param("productId") UUID productId);
+
     @Query("select s from PurchaseOrderShipment s "
             + "join fetch s.purchaseOrder p "
             + "join fetch p.buyerOrganization buyer "

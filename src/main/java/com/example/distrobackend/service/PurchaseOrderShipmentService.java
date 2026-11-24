@@ -51,6 +51,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.event.TransactionalEventListener;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
 
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -80,6 +81,7 @@ public class PurchaseOrderShipmentService {
     private final PurchaseOrderShipmentGroupRepository shipmentGroupRepository;
     private final TripRepository tripRepository;
     private final TripStatusHistoryRepository tripStatusHistoryRepository;
+    private final com.example.distrobackend.repository.ResellerListingRepository resellerListingRepository;
 
     /**
      * Creates the existing manufacturer shipment record once a centralized
@@ -94,9 +96,13 @@ public class PurchaseOrderShipmentService {
                     "Only a confirmed checkout payment can make supplier orders dispatchable");
         }
         List<PurchaseOrder> orders = purchaseOrderRepository.findByCheckout_Id(payment.getCheckout().getId());
+        OffsetDateTime now = OffsetDateTime.now();
         for (PurchaseOrder listedOrder : orders) {
             purchaseOrderRepository.findByIdForUpdate(listedOrder.getId());
             PurchaseOrder order = purchaseOrderRepository.findByIdWithItems(listedOrder.getId()).orElse(listedOrder);
+            if (order.getFulfilmentNextRecoveryAt() != null && order.getFulfilmentNextRecoveryAt().isAfter(now)) {
+                continue;
+            }
             if (order.getStatus() != PurchaseOrderStatus.APPROVED) {
                 setFulfilmentException(order, "ORDER_NOT_APPROVED");
                 continue;
@@ -171,6 +177,7 @@ public class PurchaseOrderShipmentService {
             shipment.setReceivedAt(null);
             PurchaseOrderShipment saved = shipmentRepository.save(shipment);
             order.setFulfilmentStatus("READY_FOR_PICKING");
+            clearFulfilmentRecovery(order);
             purchaseOrderRepository.save(order);
             notifyOrganizationAdministrators(order.getSupplierOrganization(),
                     "Purchase order ready for picking", "Payment was confirmed for purchase order "
@@ -183,7 +190,7 @@ public class PurchaseOrderShipmentService {
         }
     }
 
-    @Transactional
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onPurchaseOrderPaymentVerified(PurchaseOrderPaymentVerifiedEvent event) {
         if (event.checkoutPaymentId() != null) {
@@ -266,6 +273,7 @@ public class PurchaseOrderShipmentService {
             handleSettledPurchaseOrder(purchaseOrderId);
             return;
         }
+        order.setFulfilmentNextRecoveryAt(null);
         if (order.getCheckout().getPayment() == null || order.getCheckout().getPayment().getStatus()
                 != com.example.distrobackend.Domain.enums.CheckoutPaymentStatus.SUCCESS) {
             throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
@@ -276,7 +284,48 @@ public class PurchaseOrderShipmentService {
 
     private void setFulfilmentException(PurchaseOrder order, String status) {
         order.setFulfilmentStatus(status);
+        scheduleFulfilmentRecovery(order, status);
         purchaseOrderRepository.save(order);
+    }
+
+    @Transactional
+    public void retryPaidCheckoutFulfilment(UUID paymentId) {
+        CheckoutPayment payment = checkoutPaymentRepository.findById(paymentId).orElse(null);
+        if (payment == null || payment.getStatus() != com.example.distrobackend.Domain.enums.CheckoutPaymentStatus.SUCCESS
+                || payment.getCheckout() == null) return;
+        markCheckoutOrdersReady(payment);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void recordCheckoutFulfilmentRecoveryFailure(UUID paymentId) {
+        CheckoutPayment payment = checkoutPaymentRepository.findById(paymentId).orElse(null);
+        if (payment == null || payment.getStatus() != com.example.distrobackend.Domain.enums.CheckoutPaymentStatus.SUCCESS
+                || payment.getCheckout() == null) return;
+        for (PurchaseOrder listedOrder : purchaseOrderRepository.findByCheckout_Id(payment.getCheckout().getId())) {
+            PurchaseOrder order = purchaseOrderRepository.findByIdForUpdate(listedOrder.getId()).orElse(null);
+            if (order == null || order.getStatus() != PurchaseOrderStatus.APPROVED
+                    || shipmentRepository.findByPurchaseOrderId(order.getId())
+                    .filter(shipment -> shipment.getStatus() != PurchaseOrderShipmentStatus.CANCELLED).isPresent()) {
+                continue;
+            }
+            order.setFulfilmentStatus("FULFILMENT_RETRY_EXCEPTION");
+            scheduleFulfilmentRecovery(order, "Automatic fulfilment preparation failed; see server logs");
+            purchaseOrderRepository.save(order);
+        }
+    }
+
+    private static void scheduleFulfilmentRecovery(PurchaseOrder order, String reason) {
+        int attempts = order.getFulfilmentRecoveryAttempts() + 1;
+        order.setFulfilmentRecoveryAttempts(attempts);
+        long delaySeconds = Math.min(21_600L, 60L << Math.min(attempts - 1, 8));
+        order.setFulfilmentNextRecoveryAt(OffsetDateTime.now().plusSeconds(delaySeconds));
+        order.setFulfilmentLastRecoveryError(reason);
+    }
+
+    private static void clearFulfilmentRecovery(PurchaseOrder order) {
+        order.setFulfilmentRecoveryAttempts(0);
+        order.setFulfilmentNextRecoveryAt(null);
+        order.setFulfilmentLastRecoveryError(null);
     }
 
     @Transactional
@@ -528,6 +577,9 @@ public class PurchaseOrderShipmentService {
                         "Accepted, damaged, and missing quantities must equal each ordered quantity");
             }
         }
+        items.stream().map(item -> item.getStockItem().getId()).distinct().sorted().forEach(productId ->
+                stockItemRepository.findByIdForUpdate(productId)
+                        .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.STOCK_ITEM_NOT_FOUND)));
         items.sort(Comparator.comparing(item -> item.getDistributorOffer().getId()));
         List<StockItem> lockedOffers = new ArrayList<>();
         for (PurchaseOrderItem item : items) {
@@ -563,6 +615,10 @@ public class PurchaseOrderShipmentService {
                             "Receiving this shipment exceeds the supported stock quantity");
                 }
                 offer.setQuantityOnHand(quantity);
+                resellerListingRepository.findByDistributor_IdAndManufacturerProduct_Id(
+                        actor.organizationId(), item.getStockItem().getId()).ifPresent(listing -> {
+                    listing.setQuantityOnHand(Math.addExact(listing.getQuantityOnHand(), received.acceptedQuantity()));
+                });
                 StockMovement movement = new StockMovement();
                 movement.setStockItem(offer);
                 movement.setMovementType(StockMovementType.RESTOCK_IN);

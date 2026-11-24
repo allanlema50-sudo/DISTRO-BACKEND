@@ -70,6 +70,19 @@ class CommissionRuleServiceTest {
                 .hasMessageContaining("already covers");
     }
 
+    @Test
+    void capsFixedAndPercentageCommissionAtTheAvailableGrossAmount() {
+        var decision = new CommissionRuleService.CommissionDecision(UUID.randomUUID(),
+                new BigDecimal("5.00"), new BigDecimal("10.00"), "KES");
+
+        var breakdown = decision.calculate(new BigDecimal("5.00"), new BigDecimal("1.00"));
+
+        assertThat(breakdown.commission()).isEqualByComparingTo("4.00");
+        assertThat(breakdown.supplierAmount()).isEqualByComparingTo("0.00");
+        assertThat(breakdown.gross()).isEqualByComparingTo(
+                breakdown.providerFee().add(breakdown.commission()).add(breakdown.supplierAmount()));
+    }
+
     private CommissionRule rule(BigDecimal rate, Organizationtype type, OffsetDateTime from) {
         CommissionRule rule = new CommissionRule();
         rule.setId(UUID.randomUUID());

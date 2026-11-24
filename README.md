@@ -115,6 +115,7 @@ Important environment values:
 | `ONBOARDING_DOCUMENT_RETENTION_SCAN_MS` | `86400000` | Scheduled cleanup interval for retained onboarding evidence |
 | `ORDER_RESERVATION_TTL` | `15m` | Unpaid stock-reservation lifetime |
 | `ORDER_MAX_OPEN_PENDING_PER_CUSTOMER` | `5` | Maximum open unpaid orders per customer |
+| `PURCHASE_ORDER_FULFILMENT_RECOVERY_SCAN_MS` | `60000` | Scan interval for retrying paid checkout shipment preparation |
 | `FLYWAY_BASELINE_ON_MIGRATE` | `false` | Only for a reviewed pre-Flyway database |
 
 M-Pesa variables are optional for starting the API, but they must be configured
@@ -963,6 +964,12 @@ Order creation reserves stock immediately. An unpaid reservation expires after
 M-Pesa request is still in flight, cleanup reconciles the provider first so a
 successful payment is not stranded.
 
+After a centralized checkout payment succeeds, shipment preparation runs after
+the payment transaction commits. If that work fails, the backend records a
+retry time and error on the affected purchase order; a scheduled worker retries
+with increasing delays. The scan interval is configurable with
+`PURCHASE_ORDER_FULFILMENT_RECOVERY_SCAN_MS`.
+
 ### Payments
 
 The financial foundation and commission-rule handoff is documented in
@@ -1005,7 +1012,8 @@ Settlement and payout APIs are intentionally Super Admin controlled:
 | `POST` | `/api/v1/admin/financial/settlement-batches` | `SUPER_ADMIN` | Create a batch from eligible pending settlements |
 | `POST` | `/api/v1/admin/financial/settlement-batches/{batchId}/approve` | `SUPER_ADMIN` | Approve the batch before any payout is attempted |
 | `POST` | `/api/v1/admin/financial/settlement-batches/{batchId}/execute` | `SUPER_ADMIN` | Initiate Paystack transfers for the approved batch |
-| `POST` | `/api/v1/admin/financial/settlements/{settlementId}/retry` | `SUPER_ADMIN` | Retry a failed or reversed transfer with its existing provider reference |
+| `POST` | `/api/v1/admin/financial/settlements/{settlementId}/retry` | `SUPER_ADMIN` | Retry only a confirmed failed or reversed transfer, using a fresh provider reference; unknown attempts remain under reconciliation |
+| `PATCH` | `/api/v1/admin/financial/settlements/{settlementId}/beneficiary` | `SUPER_ADMIN` | Replace an inactive beneficiary on a failed or reversed settlement before retrying it |
 | `GET` | `/api/v1/admin/financial/webhook-events?status=DEAD_LETTER` | `SUPER_ADMIN` | Inspect provider webhook processing state and failure reason |
 | `POST` | `/api/v1/admin/financial/webhook-events/{eventId}/retry` | `SUPER_ADMIN` | Requeue a dead-lettered event for processing |
 | `POST` | `/api/v1/admin/financial/payments/{paymentId}/refund` | `SUPER_ADMIN` | Request a full Paystack refund before picking, packing, dispatch, or supplier payout starts; JSON body: `{"reason":"Order could not be fulfilled"}` |
@@ -1441,8 +1449,8 @@ Known limitations to account for during integration:
 - platform settings, report, analytics, and audit-log endpoints are contract
   surfaces; settlement automation is available only through the reviewed
   Paystack workflow and remains disabled until its transfer capability is enabled;
-- partial payment refunds, post-payout reversals, and provider-statement matching
-  reversal recovery are not exposed as APIs;
+- Paystack statement matching, partial payment refunds, post-payout reversals,
+  and provider payout reversal recovery are not exposed as APIs;
 - procurement shipment and stock-audit APIs are available, but procurement payment initiation and settlement automation remain a follow-up;
 - an M-Pesa callback requires a reachable callback URL, a configured shared secret, and provider verification;
 - the catalog/order model currently represents distributor offers as stock items, so customers order distributor offer IDs.

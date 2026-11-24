@@ -13,9 +13,12 @@ import com.example.distrobackend.repository.CommissionRuleRepository;
 import com.example.distrobackend.repository.UserRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
 import jakarta.annotation.PostConstruct;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -34,6 +37,9 @@ public class CommissionRuleService {
     private final CommissionRuleRepository commissionRuleRepository;
     private final UserRepository userRepository;
     private final AuditLogRepository auditLogRepository;
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     @Value("${logiflow.commission.default-percent:5.00}")
     private BigDecimal defaultRatePercent;
@@ -58,6 +64,9 @@ public class CommissionRuleService {
         requirePlatformAdmin(actor);
         String currency = normalizeCurrency(request.currency());
         validateWindow(request.effectiveFrom(), request.effectiveUntil());
+        // Serialize check-and-insert even when there are no existing rows to lock.
+        entityManager.createNativeQuery("select pg_advisory_xact_lock(hashtext(:currency))")
+                .setParameter("currency", currency).getSingleResult();
         List<CommissionRule> existingRules = commissionRuleRepository.findActiveForUpdate(currency);
         if (existingRules.stream().anyMatch(existing -> overlaps(existing, request, currency))) {
             throw new ApiException(ErrorCode.CONFLICT,
@@ -72,7 +81,13 @@ public class CommissionRuleService {
         rule.setEffectiveFrom(request.effectiveFrom());
         rule.setEffectiveUntil(request.effectiveUntil());
         rule.setCreatedBy(userRepository.getReferenceById(actor.userId()));
-        CommissionRule saved = commissionRuleRepository.saveAndFlush(rule);
+        CommissionRule saved;
+        try {
+            saved = commissionRuleRepository.saveAndFlush(rule);
+        } catch (DataIntegrityViolationException ex) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "An active commission rule already covers the requested currency, organization type and period");
+        }
         audit(actor, "COMMISSION_RULE_CREATED", saved.getId(), Map.of(
                 "currency", currency,
                 "ratePercent", saved.getRatePercent().toPlainString(),
@@ -150,14 +165,19 @@ public class CommissionRuleService {
 
     public record CommissionDecision(UUID ruleId, BigDecimal ratePercent, BigDecimal fixedFee, String currency) {
         public FinancialLedgerService.FinancialBreakdown calculate(BigDecimal gross, BigDecimal providerFee) {
-            BigDecimal commission = gross.multiply(ratePercent)
+            if (gross == null || providerFee == null || gross.signum() <= 0 || providerFee.signum() < 0) {
+                throw new ApiException(ErrorCode.BAD_REQUEST, "Payment amounts must be valid positive values");
+            }
+            BigDecimal maximumCommission = gross.subtract(providerFee).setScale(2, RoundingMode.HALF_UP);
+            if (maximumCommission.signum() < 0) {
+                throw new ApiException(ErrorCode.CONFLICT, "Provider fees exceed the payment amount");
+            }
+            BigDecimal calculatedCommission = gross.multiply(ratePercent)
                     .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP)
                     .add(fixedFee)
                     .setScale(2, RoundingMode.HALF_UP);
+            BigDecimal commission = calculatedCommission.min(maximumCommission);
             BigDecimal payable = gross.subtract(providerFee).subtract(commission).setScale(2, RoundingMode.HALF_UP);
-            if (payable.signum() < 0) {
-                throw new ApiException(ErrorCode.CONFLICT, "Commission and provider fees exceed the payment amount");
-            }
             return new FinancialLedgerService.FinancialBreakdown(gross, providerFee, commission, payable, currency, ruleId);
         }
     }

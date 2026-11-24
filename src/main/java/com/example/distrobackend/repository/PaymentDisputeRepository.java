@@ -22,8 +22,14 @@ public interface PaymentDisputeRepository extends JpaRepository<PaymentDispute, 
     Optional<PaymentDispute> findByProviderDisputeId(String providerDisputeId);
 
     java.util.List<PaymentDispute> findByPayment_IdIn(java.util.Collection<UUID> paymentIds);
+    java.util.List<PaymentDispute> findByTransactionReferenceIn(java.util.Collection<String> references);
 
     boolean existsByPayment_IdAndClearedAtIsNull(UUID paymentId);
+
+    @Query("select (count(d) > 0) from PaymentDispute d where d.clearedAt is null "
+            + "and (d.payment.id = :paymentId or d.transactionReference = :transactionReference)")
+    boolean existsUnclearedForPaymentOrReference(@Param("paymentId") UUID paymentId,
+                                                  @Param("transactionReference") String transactionReference);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select d from PaymentDispute d where d.providerDisputeId = :providerDisputeId")

@@ -28,6 +28,7 @@ public enum ErrorCode {
     STOCK_NOT_FOUND(HttpStatus.NOT_FOUND, "Stock item not found"),
     PAYMENT_NOT_FOUND(HttpStatus.NOT_FOUND, "Payment not found"),
     METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, "HTTP method not supported for this endpoint"),
+    PAYLOAD_TOO_LARGE(HttpStatus.PAYLOAD_TOO_LARGE, "Request payload is too large"),
 
     DUPLICATE_EMAIL(HttpStatus.CONFLICT, "An account with this email already exists"),
     DUPLICATE_PHONE(HttpStatus.CONFLICT, "An account with this phone number already exists"),

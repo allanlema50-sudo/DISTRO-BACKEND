@@ -375,6 +375,7 @@ public class TripService {
             shipment.setTrip(null);
             shipmentRepository.saveAndFlush(shipment);
         }
+        releaseManufacturerShipmentGroups(trip, true);
         tripStatusHistoryRepository.deleteByTrip_Id(trip.getId());
         locationPingRepository.deleteByTrip_Id(trip.getId());
         sharedLoadRepository.deleteByTripId(trip.getId());
@@ -636,6 +637,7 @@ public class TripService {
         trip.setStatus(requested);
         Trip saved = tripRepository.save(trip);
         if (requested == TripStatus.CANCELLED) {
+            if (previous == TripStatus.SCHEDULED) releaseManufacturerShipmentGroups(saved, false);
             for (Shipment shipment : shipmentRepository.findByTrip_Id(saved.getId())) {
                 if (shipment.getStatus() == ShipmentStatus.ASSIGNED) {
                     shipment.setTrip(null);
@@ -647,6 +649,27 @@ public class TripService {
         recordStatus(saved, previous, requested, actor,
                 note == null || note.isBlank() ? "Trip status updated" : note.trim());
         return TripResponse.from(saved, aggregateItems(saved));
+    }
+
+    private void releaseManufacturerShipmentGroups(Trip trip, boolean deletingTrip) {
+        for (PurchaseOrderShipmentGroup group : purchaseOrderShipmentGroupRepository
+                .findByTrip_IdForUpdate(trip.getId())) {
+            if (group.getStatus() == ManufacturerShipmentStatus.IN_TRANSIT
+                    || group.getStatus() == ManufacturerShipmentStatus.DELIVERED
+                    || group.getStatus() == ManufacturerShipmentStatus.RECEIVED) {
+                if (deletingTrip) {
+                    throw new ApiException(ErrorCode.CONFLICT,
+                            "A trip with a moving or completed manufacturer shipment cannot be deleted");
+                }
+                continue;
+            }
+            if (group.getStatus() == ManufacturerShipmentStatus.TRIP_ASSIGNED) {
+                group.setStatus(ManufacturerShipmentStatus.CREATED);
+            }
+            group.setTrip(null);
+            group.setDispatchedAt(null);
+            purchaseOrderShipmentGroupRepository.save(group);
+        }
     }
 
     @Transactional

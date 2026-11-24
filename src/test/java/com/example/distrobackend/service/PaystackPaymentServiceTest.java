@@ -1,6 +1,6 @@
 package com.example.distrobackend.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
@@ -74,7 +74,7 @@ class PaystackPaymentServiceTest {
     }
 
     private static PaystackPaymentService service(RestTemplate restTemplate) {
-        return new PaystackPaymentService(restTemplate, new ObjectMapper(), true, true, "TEST",
+        return new PaystackPaymentService(restTemplate, new JsonMapper(), true, true, "TEST",
                 "https://api.paystack.co", "sk_test_secret", WEBHOOK_SECRET, "");
     }
 

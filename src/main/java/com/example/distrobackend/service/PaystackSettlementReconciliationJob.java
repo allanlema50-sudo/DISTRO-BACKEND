@@ -38,12 +38,12 @@ public class PaystackSettlementReconciliationJob {
                 attemptCutoff, checkedBefore, Math.max(1, Math.min(batchSize, 500)));
         for (SupplierSettlement candidate : candidates) {
             try {
-                var reference = settlementService.claimTransferVerification(candidate.getId(),
+                var claimedReference = settlementService.claimTransferVerification(candidate.getId(),
                         attemptCutoff, checkedBefore, now);
-                if (reference.isEmpty()) continue;
-                var verified = paystackPaymentService.verifyTransfer(reference.get());
+                if (claimedReference.isEmpty()) continue;
+                var verified = paystackPaymentService.verifyTransfer(claimedReference.get());
                 if (verified.isEmpty()) {
-                    settlementService.markPaystackTransferNotFound(reference.get());
+                    settlementService.markPaystackTransferNotFound(claimedReference.get());
                     continue;
                 }
                 var transfer = verified.get();
@@ -59,8 +59,8 @@ public class PaystackSettlementReconciliationJob {
                             transfer.currency(), transfer.failureReason(), transfer.transferCode()));
                 }
             } catch (RuntimeException ex) {
-                log.warn("Paystack transfer reconciliation failed for settlement {}: {}",
-                        candidate.getId(), ex.getMessage());
+                log.warn("Paystack transfer reconciliation failed for settlement {}",
+                        candidate.getId(), ex);
             }
         }
     }

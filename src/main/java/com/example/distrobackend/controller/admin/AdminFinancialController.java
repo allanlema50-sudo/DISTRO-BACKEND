@@ -8,7 +8,10 @@ import com.example.distrobackend.dto.PayoutBeneficiaryResponse;
 import com.example.distrobackend.dto.ReviewPayoutBeneficiaryRequest;
 import com.example.distrobackend.dto.SettlementBatchResponse;
 import com.example.distrobackend.dto.SupplierSettlementAdminResponse;
+import com.example.distrobackend.dto.ProviderWebhookEventResponse;
 import com.example.distrobackend.Domain.enums.SupplierSettlementStatus;
+import com.example.distrobackend.Domain.enums.ProviderWebhookStatus;
+import com.example.distrobackend.service.ProviderWebhookInboxService;
 import com.example.distrobackend.service.PaystackSettlementService;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.service.CommissionRuleService;
@@ -33,6 +36,7 @@ public class AdminFinancialController {
     private final CommissionRuleService commissionRuleService;
     private final FinancialLedgerService financialLedgerService;
     private final PaystackSettlementService paystackSettlementService;
+    private final ProviderWebhookInboxService webhookInboxService;
 
     @GetMapping("/commission-rules")
     public List<CommissionRuleResponse> commissionRules(@AuthenticationPrincipal AuthenticatedUser actor) {
@@ -118,5 +122,16 @@ public class AdminFinancialController {
     public SupplierSettlementAdminResponse retrySettlement(
             @AuthenticationPrincipal AuthenticatedUser actor, @PathVariable UUID settlementId) {
         return paystackSettlementService.retrySettlement(actor, settlementId);
+    }
+
+    @GetMapping("/webhook-events")
+    public Page<ProviderWebhookEventResponse> webhookEvents(
+            @RequestParam(required = false) ProviderWebhookStatus status, Pageable pageable) {
+        return webhookInboxService.list(status, pageable);
+    }
+
+    @PostMapping("/webhook-events/{eventId}/retry")
+    public ProviderWebhookEventResponse retryWebhookEvent(@PathVariable UUID eventId) {
+        return webhookInboxService.retryDeadLetter(eventId);
     }
 }

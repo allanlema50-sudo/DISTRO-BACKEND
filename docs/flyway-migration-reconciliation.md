@@ -145,4 +145,21 @@ problem and make later deployments unsafe.
 - Check for duplicate versions before opening a pull request.
 - Test startup against both a fresh database and a copy of the production
   database before deployment.
+
+## V71 collision reported by the production startup log
+
+The deployed application reported two resources with version 71:
+`V71__financial_ledger_and_commission_rules.sql` and
+`V71__canonical_reseller_listings.sql`. The reseller listing migration has
+been assigned the next version, `V72__canonical_reseller_listings.sql`, so a
+build that includes the financial migration has one resource per version.
+The financial migration remains at V71 and must not be renamed or edited.
+
+Before rollout, inspect `flyway_schema_history` on the target database. If a
+successful V71 row already records `V71__canonical_reseller_listings.sql`, do
+not deploy the renumbering as-is: that database needs a reviewed Flyway
+history reconciliation on a backup/clone, because applied migrations are
+immutable. If V71 is the financial migration (or no V71 row exists), deploy
+the financial V71 followed by reseller V72. Do not delete history rows or
+disable Flyway validation to bypass this check.
 - Keep schema changes in Flyway and leave Hibernate at `validate`.

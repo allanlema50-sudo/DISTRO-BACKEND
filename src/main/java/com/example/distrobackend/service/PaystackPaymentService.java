@@ -103,6 +103,10 @@ public class PaystackPaymentService {
         return enabled;
     }
 
+    public boolean transfersEnabled() {
+        return transfersEnabled;
+    }
+
     public Initialization initialize(String reference, BigDecimal amount, String currency,
                                     String email, String channel, String paymentId,
                                     String checkoutReference) {
@@ -283,12 +287,12 @@ public class PaystackPaymentService {
     private static long toMinorAmount(BigDecimal amount, String currency) {
         if (amount == null || amount.signum() <= 0 || currency == null
                 || !"KES".equalsIgnoreCase(currency.trim())) {
-            throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack checkout must be a positive KES amount");
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack payments require a positive KES amount");
         }
         try {
             return amount.movePointRight(2).setScale(0, RoundingMode.UNNECESSARY).longValueExact();
         } catch (ArithmeticException ex) {
-            throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack checkout amount must have at most two decimals");
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack amount must have at most two decimals");
         }
     }
 
@@ -307,13 +311,6 @@ public class PaystackPaymentService {
     private void requireEnabled() {
         if (!enabled) throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "Paystack payments are disabled");
         validateProviderHost();
-    }
-
-    private void requireTransfersEnabled() {
-        requireEnabled();
-        if (!transfersEnabled) {
-            throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "Paystack transfers are disabled");
-        }
     }
 
     private void validateProviderHost() {
@@ -391,8 +388,8 @@ public class PaystackPaymentService {
         if (reference == null || !TRANSFER_REFERENCE.matcher(reference).matches()) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Settlement transfer reference is invalid");
         }
-        JsonNode data = getVerifiedData("/transfer/verify/"
-                + org.springframework.web.util.UriUtils.encodePathSegment(reference, StandardCharsets.UTF_8));
+        JsonNode data = getVerifiedData("/transfer/verify/" + encodePath(reference),
+                "Paystack transfer verification failed");
         if (data == null) return Optional.empty();
         String verifiedReference = data.path("reference").asText("");
         if (!reference.equals(verifiedReference)) {
@@ -404,7 +401,7 @@ public class PaystackPaymentService {
                 data.path("currency").asText(null), data.path("failures").asText(null)));
     }
 
-    private JsonNode getVerifiedData(String path) {
+    private JsonNode getVerifiedData(String path, String rejectionMessage) {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(secretKey);
         ResponseEntity<String> response;
@@ -416,7 +413,7 @@ public class PaystackPaymentService {
             if (ex.getStatusCode().is5xxServerError() || ex.getStatusCode().value() == 408) {
                 throw new ProviderOutcomeUnknownException("Paystack transfer verification outcome is unknown", ex);
             }
-            throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "Paystack transfer verification failed");
+            throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, rejectionMessage);
         } catch (RestClientException ex) {
             throw new ProviderOutcomeUnknownException("Paystack transfer verification outcome is unknown", ex);
         }
@@ -431,6 +428,9 @@ public class PaystackPaymentService {
         }
     }
 
+    private static String encodePath(String value) {
+        return org.springframework.web.util.UriUtils.encodePathSegment(value, StandardCharsets.UTF_8);
+    }
     private JsonNode postJson(String path, Map<String, Object> body, String rejectionMessage) {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(secretKey);
@@ -455,6 +455,13 @@ public class PaystackPaymentService {
             return root;
         } catch (IOException ex) {
             throw new ProviderOutcomeUnknownException("Paystack returned invalid JSON", ex);
+        }
+    }
+
+    private void requireTransfersEnabled() {
+        requireEnabled();
+        if (!transfersEnabled) {
+            throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "Paystack transfers are disabled");
         }
     }
 

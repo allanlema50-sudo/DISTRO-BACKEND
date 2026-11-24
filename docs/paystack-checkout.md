@@ -108,22 +108,17 @@ enable payouts. After Paystack approves transfers, set
    attached to a settlement.
 3. A Super Admin creates and approves a settlement batch. The API refuses
    demo, already batched, unpaid, or beneficiary-less settlements.
-4. A Super Admin executes the approved batch. Each attempt uses its stored
-   transfer reference. If the provider response is ambiguous, the backend
-   checks that exact reference through Paystack's transfer verification API;
-   it does not issue another transfer while the outcome is unknown.
-5. Webhooks are signature-verified and persisted before acknowledgement. A
-   bounded background worker processes charge and `transfer.success`,
-   `transfer.failed`, and `transfer.reversed` events.
-6. Events are deduplicated by payload fingerprint and retried with increasing
-   delays. After the configured attempt limit, Super Admins can inspect the
+4. A Super Admin executes the approved batch. Each transfer keeps one stable
+   reference. If the API response is ambiguous, LogiFlow does not start a new
+   transfer. A scheduled reconciliation job verifies that same reference with
+   Paystack, updates the settlement from the provider's verified status, or
+   marks it failed if Paystack confirms no transfer exists. Operators can then
+   retry a definitively failed transfer only with its original reference.
+5. Signed `transfer.success`, `transfer.failed`, and `transfer.reversed`
+   webhooks also update the settlement and batch status. Webhooks are stored
+   before acknowledgement and processed asynchronously with bounded retries.
+   After the configured attempt limit, Super Admins can inspect a
    `DEAD_LETTER` event and manually requeue it through the admin API.
-
-Transfers without a webhook are checked on a separate schedule. Paystack is
-queried by the stored reference; confirmed success, failure, and reversal
-statuses update the settlement, while provider timeouts leave it unresolved for
-another check. If Paystack confirms that no transfer exists, the settlement is
-marked failed and can be reviewed and retried by a Super Admin.
 
 Webhook processing settings:
 
@@ -137,12 +132,23 @@ PAYMENT_WEBHOOK_PROCESSING_TIMEOUT=5m
 Only the parsed event fields and payload fingerprint are retained; raw callback
 bodies and signatures are not stored.
 
-Checkout and transfer reconciliation use separate intervals. Transfer checks
-are controlled by `PAYSTACK_SETTLEMENT_RECONCILIATION_SCAN_MS`,
+Paystack checkout attempts whose initialization response is ambiguous are
+verified by their stored transaction reference as well. While verification is
+still pending, the attempt remains unresolved and the buyer must not start a
+second payment. A confirmed success or failure is applied through the same
+idempotent processing path as a webhook. If Paystack confirms no transaction
+exists for the stored reference after the bounded verification window, the
+attempt is timed out so the buyer can retry.
+
+Checkout payment verification cadence is controlled by
+`PAYSTACK_RECONCILIATION_SCAN_MS`. Supplier transfer reconciliation has separate
+settings: `PAYSTACK_SETTLEMENT_RECONCILIATION_SCAN_MS`,
 `PAYSTACK_SETTLEMENT_RECONCILIATION_BATCH_SIZE`,
 `PAYSTACK_SETTLEMENT_RECONCILIATION_INITIAL_DELAY_MS`, and
-`PAYSTACK_SETTLEMENT_RECONCILIATION_REPEAT_DELAY_MS`. The scheduled transfer
-checker is active only when `PAYSTACK_TRANSFERS_ENABLED=true`.
+`PAYSTACK_SETTLEMENT_RECONCILIATION_REPEAT_DELAY_MS`. The default initial and
+repeat delays are five minutes. Provider timeouts remain unresolved and are
+queried again; they never trigger a transfer under a new reference. Transfer
+reconciliation runs only when `PAYSTACK_TRANSFERS_ENABLED=true`.
 
 Transfers use the Paystack balance. The business must complete Paystack's
 transfer/KYC setup and ensure its balance and transfer approval settings are

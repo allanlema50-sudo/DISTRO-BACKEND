@@ -48,7 +48,7 @@ public class PaystackSettlementService {
                     method, accountName, accountNumber, bankCode, currency, clean(request.email()));
         } catch (PaystackPaymentService.ProviderOutcomeUnknownException ex) {
             throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED,
-                    "Paystack did not confirm beneficiary creation; check the Paystack dashboard before retrying");
+                    "Paystack recipient creation could not be confirmed; check Paystack before submitting again");
         }
 
         PayoutBeneficiary beneficiary = new PayoutBeneficiary();

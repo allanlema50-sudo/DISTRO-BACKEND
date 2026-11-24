@@ -426,7 +426,9 @@ public class CentralizedCheckoutService {
 
     @Transactional
     public void processPaystackWebhook(byte[] rawBody, String signature, String legacySignature) {
-        processPaystackWebhook(paystackPaymentService.parseAndVerifyWebhook(rawBody, signature, legacySignature));
+        PaystackPaymentService.Webhook webhook = paystackPaymentService.parseAndVerifyWebhook(
+                rawBody, signature, legacySignature);
+        processPaystackWebhook(webhook);
     }
 
     @Transactional

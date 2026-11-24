@@ -20,8 +20,9 @@ public interface SupplierSettlementRepository extends JpaRepository<SupplierSett
     Page<SupplierSettlement> findByStatusOrderByCreatedAtAsc(SupplierSettlementStatus status, Pageable pageable);
     List<SupplierSettlement> findBySettlementBatch_IdOrderByCreatedAtAsc(UUID batchId);
     Optional<SupplierSettlement> findByPayoutReference(String reference);
-    @Query(value = "select * from supplier_settlements s where s.provider = 'PAYSTACK' "
-            + "and s.status = 'PROCESSING' and s.last_attempt_at <= :attemptCutoff "
+    @Query(value = "select * from supplier_settlements s "
+            + "where s.provider = 'PAYSTACK' and s.status = 'PROCESSING' "
+            + "and s.last_attempt_at <= :attemptCutoff "
             + "and (s.last_status_check_at is null or s.last_status_check_at <= :checkBefore) "
             + "order by coalesce(s.last_status_check_at, s.last_attempt_at) asc limit :batchSize",
             nativeQuery = true)

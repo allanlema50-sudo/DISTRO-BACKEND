@@ -29,6 +29,7 @@ public class SupplierSettlement {
  @Column(name="provider_transfer_code", length=120) private String providerTransferCode;
  @Column(name="payout_attempts", nullable=false) private int payoutAttempts;
  @Column(name="last_attempt_at") private OffsetDateTime lastAttemptAt;
+ @Column(name="last_status_check_at") private OffsetDateTime lastStatusCheckAt;
  @Column(name="failure_reason", columnDefinition="TEXT") private String failureReason;
  @Column(name="demo", nullable=false) private boolean demo;
  @Column(name="note", columnDefinition="TEXT") private String note;

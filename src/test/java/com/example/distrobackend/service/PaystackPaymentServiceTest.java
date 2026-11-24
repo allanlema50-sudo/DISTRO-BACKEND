@@ -74,7 +74,7 @@ class PaystackPaymentServiceTest {
     }
 
     private static PaystackPaymentService service(RestTemplate restTemplate) {
-        return new PaystackPaymentService(restTemplate, new ObjectMapper(), true, true,
+        return new PaystackPaymentService(restTemplate, new ObjectMapper(), true, true, "TEST",
                 "https://api.paystack.co", "sk_test_secret", WEBHOOK_SECRET, "");
     }
 

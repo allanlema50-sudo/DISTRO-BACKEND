@@ -17,7 +17,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.OffsetDateTime;
+import java.util.Currency;
 import java.util.Locale;
 import java.util.UUID;
 
@@ -42,14 +44,26 @@ public class FinancialLedgerService {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Payment amounts must be valid positive values");
         }
         String normalizedCurrency = normalizeCurrency(currency);
+        int currencyScale;
+        try {
+            currencyScale = Currency.getInstance(normalizedCurrency).getDefaultFractionDigits();
+        } catch (IllegalArgumentException ex) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "currency must be a supported ISO 4217 currency code");
+        }
+        if (currencyScale < 0) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "currency must have a defined minor-unit precision");
+        }
+        BigDecimal normalizedGross = requireCurrencyScale(gross, "gross", currencyScale);
+        BigDecimal normalizedProviderFee = requireCurrencyScale(providerFee, "providerFee", currencyScale);
+        if (!simulated) {
+            LedgerJournal existing = journalRepository
+                    .findBySourceTypeAndSourceIdAndEventType(sourceType, sourceId, CAPTURE_EVENT).orElse(null);
+            if (existing != null) return breakdownFromJournal(existing);
+        }
         CommissionRuleService.CommissionDecision decision = commissionRuleService.resolve(
                 beneficiary.getType(), normalizedCurrency, OffsetDateTime.now());
-        FinancialBreakdown breakdown = decision.calculate(gross, providerFee);
+        FinancialBreakdown breakdown = decision.calculate(normalizedGross, normalizedProviderFee);
         if (simulated) return breakdown;
-
-        if (journalRepository.findBySourceTypeAndSourceIdAndEventType(sourceType, sourceId, CAPTURE_EVENT).isPresent()) {
-            return breakdown;
-        }
 
         LedgerAccount clearing = platformAccount(LedgerAccountType.PROVIDER_CLEARING, normalizedCurrency);
         LedgerAccount payable = organizationAccount(LedgerAccountType.ORGANIZATION_PAYABLE,
@@ -62,6 +76,7 @@ public class FinancialLedgerService {
         journal.setSourceType(sourceType);
         journal.setSourceId(sourceId);
         journal.setEventType(CAPTURE_EVENT);
+        journal.setCommissionRuleId(breakdown.commissionRuleId());
         journal.setCurrency(normalizedCurrency);
         journal.setDescription("Confirmed payment allocation for " + beneficiary.getName());
         journal.setSimulated(false);
@@ -93,24 +108,56 @@ public class FinancialLedgerService {
     }
 
     private LedgerAccount platformAccount(LedgerAccountType type, String currency) {
-        return accountRepository.findPlatformAccount(type, currency).orElseGet(() -> {
-            LedgerAccount account = new LedgerAccount();
-            account.setAccountType(type);
-            account.setCurrency(currency);
-            account.setActive(true);
-            return accountRepository.save(account);
-        });
+        accountRepository.insertPlatformAccountIfMissing(type.name(), currency);
+        return accountRepository.findPlatformAccount(type, currency)
+                .orElseThrow(() -> new IllegalStateException("Platform ledger account could not be created"));
     }
 
     private LedgerAccount organizationAccount(LedgerAccountType type, String currency, Organization organization) {
-        return accountRepository.findOrganizationAccount(type, currency, organization.getId()).orElseGet(() -> {
-            LedgerAccount account = new LedgerAccount();
-            account.setAccountType(type);
-            account.setCurrency(currency);
-            account.setOrganization(organization);
-            account.setActive(true);
-            return accountRepository.save(account);
-        });
+        accountRepository.insertOrganizationAccountIfMissing(type.name(), organization.getId(), currency);
+        return accountRepository.findOrganizationAccount(type, currency, organization.getId())
+                .orElseThrow(() -> new IllegalStateException("Organization ledger account could not be created"));
+    }
+
+    private static FinancialBreakdown breakdownFromJournal(LedgerJournal journal) {
+        BigDecimal gross = amountFor(journal, LedgerAccountType.PROVIDER_CLEARING, LedgerEntryDirection.DEBIT);
+        if (gross == null || gross.signum() <= 0) {
+            throw new ApiException(ErrorCode.CONFLICT, "Existing capture journal is incomplete");
+        }
+        BigDecimal supplier = amountOrZero(journal, LedgerAccountType.ORGANIZATION_PAYABLE,
+                LedgerEntryDirection.CREDIT);
+        BigDecimal commission = amountOrZero(journal, LedgerAccountType.PLATFORM_REVENUE,
+                LedgerEntryDirection.CREDIT);
+        BigDecimal providerFee = amountOrZero(journal, LedgerAccountType.PAYMENT_PROCESSING_PAYABLE,
+                LedgerEntryDirection.CREDIT);
+        if (gross.compareTo(supplier.add(commission).add(providerFee)) != 0) {
+            throw new ApiException(ErrorCode.CONFLICT, "Existing capture journal is unbalanced");
+        }
+        return new FinancialBreakdown(gross, providerFee, commission, supplier,
+                journal.getCurrency(), journal.getCommissionRuleId());
+    }
+
+    private static BigDecimal amountOrZero(LedgerJournal journal, LedgerAccountType type,
+                                           LedgerEntryDirection direction) {
+        BigDecimal amount = amountFor(journal, type, direction);
+        return amount == null ? BigDecimal.ZERO : amount;
+    }
+
+    private static BigDecimal amountFor(LedgerJournal journal, LedgerAccountType type,
+                                        LedgerEntryDirection direction) {
+        var entries = journal.getEntries().stream()
+                .filter(entry -> entry.getAccount().getAccountType() == type && entry.getDirection() == direction)
+                .map(LedgerEntry::getAmount).toList();
+        return entries.isEmpty() ? null : entries.stream().reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    private static BigDecimal requireCurrencyScale(BigDecimal amount, String field, int currencyScale) {
+        try {
+            return amount.setScale(currencyScale, RoundingMode.UNNECESSARY);
+        } catch (ArithmeticException ex) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    field + " exceeds the minor-unit precision for the selected currency");
+        }
     }
 
     private static void addEntry(LedgerJournal journal, LedgerAccount account, LedgerEntryDirection direction,

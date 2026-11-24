@@ -15,6 +15,8 @@ gross payment
 
 The default commission is `5.00%`, controlled by `LOGIFLOW_DEFAULT_COMMISSION_PERCENT`. A database commission rule takes precedence over that fallback when its currency, organization type, and effective date match. Rules are created and deactivated by `SUPER_ADMIN`, and changes are written to the existing audit log.
 
+Commission is capped at the amount remaining after the provider fee. If a fixed fee and percentage would consume more than the available gross, the supplier payable becomes zero rather than allowing the journal to become negative. Provider fees greater than the gross payment are rejected because they cannot produce a balanced payable allocation.
+
 The journal is balanced:
 
 ```text
@@ -55,10 +57,12 @@ Set `organizationType` to `null` for a global rule. Rules may not overlap for th
 
 ## What is deliberately not included yet
 
-The settlement branch adds Paystack beneficiary onboarding, Super Admin-reviewed
-batches, retry-safe transfer references, and signed transfer webhook handling.
-`PAYSTACK_TRANSFERS_ENABLED` remains separate from collection and defaults to
-false. Refunds, disputes, provider reconciliation reports, and a durable
-outbox/worker for deferred transfer attempts remain follow-up work.
+The payout workflow supports Paystack beneficiary onboarding, Super Admin-
+reviewed batches, transfer-reference verification, and retryable payout status
+updates. `PAYSTACK_TRANSFERS_ENABLED` remains separate from collection and
+defaults to false. Signed Paystack webhooks are saved to a durable inbox before
+the provider receives an acknowledgement, retried by a worker, and moved to
+`DEAD_LETTER` after the configured limit for admin review. Refunds, disputes,
+and provider reconciliation reports remain follow-up work.
 
 No Tingg, M-Pesa, PesaLink, card, or bank API key is created by this branch. Provider credentials must be added later as deployment secrets, never committed to `.env.example` or source control.

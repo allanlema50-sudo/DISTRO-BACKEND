@@ -16,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.security.MessageDigest;
 import java.time.OffsetDateTime;
+import java.util.Objects;
 import java.util.HexFormat;
 import java.util.Set;
 import java.util.UUID;
@@ -39,38 +40,44 @@ public class ProviderWebhookInboxService {
         if (rawBody == null || rawBody.length == 0 || rawBody.length > 1_048_576) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Webhook payload must be between 1 byte and 1 MiB");
         }
+        if (!"PAYSTACK".equals(provider) || webhook == null
+                || webhook.event() == null || webhook.event().isBlank() || webhook.event().length() > 80
+                || webhook.reference() == null || webhook.reference().isBlank()
+                || webhook.reference().length() > 120
+                || webhook.status() != null && webhook.status().length() > 40
+                || webhook.currency() != null && webhook.currency().length() > 3
+                || webhook.gatewayResponse() != null && webhook.gatewayResponse().length() > 10_000
+                || webhook.transferCode() != null && webhook.transferCode().length() > 120) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Webhook fields are invalid");
+        }
         String key = sha256(rawBody);
-        if (repository.existsByEventKey(key)) return;
-        ProviderWebhookEvent event = new ProviderWebhookEvent();
-        event.setProvider(provider);
-        event.setEventKey(key);
-        event.setEventName(webhook.event());
-        event.setProviderReference(webhook.reference());
-        event.setProviderStatus(webhook.status());
-        event.setAmountMinor(webhook.amountMinor());
-        event.setCurrency(webhook.currency());
-        event.setGatewayResponse(webhook.gatewayResponse());
-        event.setTransferCode(webhook.transferCode());
-        repository.saveAndFlush(event);
+        repository.insertIfAbsent(UUID.randomUUID(), provider, key, webhook.event(), webhook.reference(),
+                webhook.status(), webhook.amountMinor(), webhook.currency(), webhook.gatewayResponse(),
+                webhook.transferCode());
     }
 
     @Transactional
     public int recoverStaleProcessing() {
+        validateMaxAttempts();
         if (processingTimeout.isZero() || processingTimeout.isNegative()) {
             throw new IllegalStateException("app.payments.webhook-processing-timeout must be positive");
         }
-        return repository.recoverStaleProcessing(OffsetDateTime.now().minus(processingTimeout));
+        return repository.recoverStaleProcessing(OffsetDateTime.now().minus(processingTimeout), maxAttempts);
     }
 
     @Transactional
-    public UUID claimNext() {
-        if (maxAttempts < 1) throw new IllegalStateException("app.payments.webhook-max-attempts must be positive");
-        return repository.lockDue(DUE, OffsetDateTime.now(), PageRequest.of(0, 1)).stream().findFirst()
+    public Claim claimNext() {
+        validateMaxAttempts();
+        repository.deadLetterExhausted(maxAttempts);
+        return repository.lockDue(DUE, OffsetDateTime.now(), maxAttempts, PageRequest.of(0, 1)).stream().findFirst()
                 .map(event -> {
                     event.setStatus(ProviderWebhookStatus.PROCESSING);
                     event.setAttemptCount(event.getAttemptCount() + 1);
                     event.setLastError(null);
-                    return repository.save(event).getId();
+                    UUID token = UUID.randomUUID();
+                    event.setClaimToken(token);
+                    repository.save(event);
+                    return new Claim(event.getId(), token);
                 }).orElse(null);
     }
 
@@ -80,18 +87,22 @@ public class ProviderWebhookInboxService {
     }
 
     @Transactional
-    public void markProcessed(UUID id) {
+    public void markProcessed(UUID id, UUID claimToken) {
         ProviderWebhookEvent event = lock(id);
-        if (event.getStatus() != ProviderWebhookStatus.PROCESSING) return;
+        if (event.getStatus() != ProviderWebhookStatus.PROCESSING
+                || !Objects.equals(event.getClaimToken(), claimToken)) return;
         event.setStatus(ProviderWebhookStatus.PROCESSED);
+        event.setClaimToken(null);
         event.setProcessedAt(OffsetDateTime.now());
         event.setLastError(null);
     }
 
     @Transactional
-    public void markFailed(UUID id, Exception failure) {
+    public void markFailed(UUID id, UUID claimToken, Exception failure) {
         ProviderWebhookEvent event = lock(id);
-        if (event.getStatus() != ProviderWebhookStatus.PROCESSING) return;
+        if (event.getStatus() != ProviderWebhookStatus.PROCESSING
+                || !Objects.equals(event.getClaimToken(), claimToken)) return;
+        event.setClaimToken(null);
         event.setLastError(safeMessage(failure));
         if (event.getAttemptCount() >= maxAttempts) {
             event.setStatus(ProviderWebhookStatus.DEAD_LETTER);
@@ -111,6 +122,7 @@ public class ProviderWebhookInboxService {
         }
         event.setStatus(ProviderWebhookStatus.RETRY);
         event.setAttemptCount(0);
+        event.setClaimToken(null);
         event.setNextAttemptAt(OffsetDateTime.now());
         event.setLastError(null);
         return ProviderWebhookEventResponse.from(event);
@@ -128,6 +140,10 @@ public class ProviderWebhookInboxService {
         return repository.findByIdForUpdate(id).orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND));
     }
 
+    private void validateMaxAttempts() {
+        if (maxAttempts < 1) throw new IllegalStateException("app.payments.webhook-max-attempts must be positive");
+    }
+
     private static String sha256(byte[] payload) {
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload));
@@ -142,4 +158,6 @@ public class ProviderWebhookInboxService {
         String sanitized = message.replaceAll("(?i)(sk_live_|sk_test_)[A-Za-z0-9]+", "[redacted]");
         return sanitized.substring(0, Math.min(sanitized.length(), 1000));
     }
+
+    public record Claim(UUID eventId, UUID claimToken) { }
 }

@@ -160,6 +160,22 @@ successful V71 row already records `V71__canonical_reseller_listings.sql`, do
 not deploy the renumbering as-is: that database needs a reviewed Flyway
 history reconciliation on a backup/clone, because applied migrations are
 immutable. If V71 is the financial migration (or no V71 row exists), deploy
-the financial V71 followed by reseller V72. Do not delete history rows or
+the financial V71, Paystack V72, and reseller V73. Do not delete history rows or
 disable Flyway validation to bypass this check.
 - Keep schema changes in Flyway and leave Hibernate at `validate`.
+
+## V72 collision reported by the production startup log
+
+The deployed application reported two resources with version 72:
+`V72__paystack_checkout_provider_fields.sql` and
+`V72__canonical_reseller_listings.sql`. The reseller listing migration has
+been assigned version V73; the Paystack migration remains at V72 and must not
+be renamed or edited.
+
+Before rollout, inspect `flyway_schema_history` on the target database. If a
+successful V72 row already records `V72__canonical_reseller_listings.sql`, do
+not deploy the renumbering as-is: that database needs a reviewed Flyway
+history reconciliation on a backup/clone, because applied migrations are
+immutable. If V72 is the Paystack migration (or no V72 row exists), deploy
+Paystack V72 followed by reseller V73. Do not delete history rows or disable
+Flyway validation to bypass this check.

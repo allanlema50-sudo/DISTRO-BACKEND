@@ -49,7 +49,7 @@ public class PaystackSettlementReconciliationJob {
                 var transfer = verified.get();
                 String event = switch (transfer.status().toLowerCase(Locale.ROOT)) {
                     case "success" -> "transfer.success";
-                    case "failed" -> "transfer.failed";
+                    case "failed", "abandoned", "blocked", "rejected" -> "transfer.failed";
                     case "reversed" -> "transfer.reversed";
                     default -> null;
                 };

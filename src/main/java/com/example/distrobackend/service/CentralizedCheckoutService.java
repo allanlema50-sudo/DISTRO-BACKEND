@@ -205,28 +205,30 @@ public class CentralizedCheckoutService {
         if (paystack) {
             String reference = "LF-" + checkout.getCheckoutReference() + "-"
                     + attempt.paymentId().toString().replace("-", "").substring(0, 12);
-            boolean providerRequestStarted = false;
+            PaystackPaymentService.Initialization result;
             try {
                 paymentAttemptStore.preparePaystack(attempt.paymentId(), reference);
-                providerRequestStarted = true;
-                PaystackPaymentService.Initialization result = paystackPaymentService.initialize(
+                result = paystackPaymentService.initialize(
                         reference, checkout.getTotalAmount(), checkout.getCurrency(),
                         checkout.getCreatedBy().getEmail(), paystackChannel,
                         attempt.paymentId().toString(), checkout.getCheckoutReference());
-                paymentAttemptStore.markPaystackAccepted(attempt.paymentId(), result.providerReference(),
-                        result.authorizationUrl(), result.accessCode(), result.channel());
             } catch (PaystackPaymentService.ProviderOutcomeUnknownException ex) {
                 paymentAttemptStore.markOutcomeUnknown(attempt.paymentId());
                 throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED,
                         "Paystack payment status is being verified; do not start another payment attempt");
             } catch (RuntimeException ex) {
-                if (!providerRequestStarted || ex instanceof ApiException) {
-                    paymentAttemptStore.markFailed(attempt.paymentId(),
-                            ex instanceof ApiException ? ex.getMessage() : "Paystack attempt could not be prepared");
-                } else {
-                    paymentAttemptStore.markOutcomeUnknown(attempt.paymentId());
-                }
+                paymentAttemptStore.markFailed(attempt.paymentId(),
+                        ex instanceof ApiException ? ex.getMessage() : "Paystack attempt could not be prepared");
                 throw ex;
+            }
+            try {
+                paymentAttemptStore.markPaystackAccepted(attempt.paymentId(), result.providerReference(),
+                        result.authorizationUrl(), result.accessCode(), result.channel());
+            } catch (RuntimeException persistenceFailure) {
+                // Paystack accepted initialization; keep the durable reference retryable by verification.
+                paymentAttemptStore.markOutcomeUnknown(attempt.paymentId());
+                throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED,
+                        "Paystack accepted the request, but its details could not be saved; payment verification is pending");
             }
         } else if (!demo) {
             DarajaStkResult result;

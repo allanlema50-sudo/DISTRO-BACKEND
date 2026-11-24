@@ -157,10 +157,12 @@ public class PaystackPaymentService {
         } catch (JacksonException ex) {
             throw new ProviderOutcomeUnknownException("Paystack returned an invalid response", ex);
         }
-        if (root == null || !root.path("status").asBoolean(false)) {
-            String message = root == null ? "Paystack returned an empty response"
-                    : root.path("message").asText("Paystack rejected the payment request");
-            throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, message);
+        if (root == null || !root.path("status").isBoolean()) {
+            throw new ProviderOutcomeUnknownException("Paystack returned an incomplete initialization response", null);
+        }
+        if (!root.path("status").asBoolean()) {
+            throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED,
+                    root.path("message").asText("Paystack rejected the payment request"));
         }
         JsonNode data = root.path("data");
         String providerReference = data.path("reference").asText("");
@@ -227,6 +229,9 @@ public class PaystackPaymentService {
             }
             String verifiedReference = data.path("reference").asText("");
             String status = data.path("status").asText("").trim().toLowerCase(Locale.ROOT);
+            if (!reference.equals(verifiedReference) || status.isBlank()) {
+                throw new ProviderOutcomeUnknownException("Paystack returned incomplete transaction verification", null);
+            }
             Long amount = data.path("amount").canConvertToLong() ? data.path("amount").longValue() : null;
             String verifiedCurrency = data.path("currency").asText(null);
             return new Verification(verifiedReference, status, amount, verifiedCurrency);
@@ -349,7 +354,14 @@ public class PaystackPaymentService {
         body.put("name", accountName);
         body.put("account_number", accountNumber);
         body.put("currency", currency.toUpperCase(Locale.ROOT));
-        if (bankCode != null && !bankCode.isBlank()) body.put("bank_code", bankCode.trim());
+        String normalizedCurrency = currency == null ? "" : currency.trim().toUpperCase(Locale.ROOT);
+        if (method == PayoutMethod.MOBILE_MONEY && bankCode != null && !bankCode.isBlank()) {
+            body.put("bank_code", bankCode.trim());
+        } else if (method == PayoutMethod.MOBILE_MONEY && "KES".equals(normalizedCurrency)) {
+            body.put("bank_code", "MPESA");
+        } else if (bankCode != null && !bankCode.isBlank()) {
+            body.put("bank_code", bankCode.trim());
+        }
         if (email != null && !email.isBlank()) body.put("email", email.trim());
         JsonNode data = postJson("/transferrecipient", body, "Paystack recipient creation failed");
         String recipientCode = data.path("data").path("recipient_code").asText("");
@@ -394,6 +406,9 @@ public class PaystackPaymentService {
         String verifiedReference = data.path("reference").asText("");
         if (!reference.equals(verifiedReference)) {
             throw new ProviderOutcomeUnknownException("Paystack verified a different transfer reference", null);
+        }
+        if (data.path("status").asText("").isBlank()) {
+            throw new ProviderOutcomeUnknownException("Paystack returned an incomplete transfer verification", null);
         }
         return Optional.of(new VerifiedTransfer(verifiedReference,
                 data.path("transfer_code").asText(null), data.path("status").asText(""),
@@ -449,7 +464,10 @@ public class PaystackPaymentService {
         }
         try {
             JsonNode root = response.getBody() == null ? null : jsonMapper.readTree(response.getBody());
-            if (root == null || !root.path("status").asBoolean(false)) {
+            if (root == null || !root.path("status").isBoolean()) {
+                throw new ProviderOutcomeUnknownException("Paystack returned an incomplete response", null);
+            }
+            if (!root.path("status").asBoolean()) {
                 throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, rejectionMessage);
             }
             return root;

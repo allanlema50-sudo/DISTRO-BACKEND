@@ -17,6 +17,7 @@ import java.util.HexFormat;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
@@ -71,6 +72,40 @@ class PaystackPaymentServiceTest {
                 "{}".getBytes(StandardCharsets.UTF_8),
                 "t=" + Instant.now().getEpochSecond() + ",v1=whk_test:00", null))
                 .hasMessage("Invalid Paystack webhook signature");
+    }
+
+    @Test
+    void treatsIncompleteSuccessfulHttpInitializationAsUnknown() {
+        RestTemplate restTemplate = new RestTemplate();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(restTemplate).build();
+        PaystackPaymentService service = service(restTemplate);
+        server.expect(requestTo("https://api.paystack.co/transaction/initialize"))
+                .andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> service.initialize("LF-456", new BigDecimal("10.00"), "KES",
+                "buyer@example.com", "card", "payment-id", "CHK-456"))
+                .isInstanceOf(PaystackPaymentService.ProviderOutcomeUnknownException.class);
+        server.verify();
+    }
+
+    @Test
+    void defaultsKenyanMobileMoneyRecipientBankCodeToMpesa() {
+        RestTemplate restTemplate = new RestTemplate();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(restTemplate).build();
+        PaystackPaymentService service = service(restTemplate);
+        server.expect(requestTo("https://api.paystack.co/transferrecipient"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(content().json("""
+                        {"type":"mobile_money","name":"Recipient","account_number":"254700000001",
+                         "currency":"KES","bank_code":"MPESA"}
+                        """))
+                .andRespond(withSuccess("""
+                        {"status":true,"data":{"recipient_code":"RCP_test"}}
+                        """, MediaType.APPLICATION_JSON));
+
+        assertThat(service.createRecipient(com.example.distrobackend.Domain.enums.PayoutMethod.MOBILE_MONEY,
+                "Recipient", "254700000001", null, "KES", null).recipientCode()).isEqualTo("RCP_test");
+        server.verify();
     }
 
     private static PaystackPaymentService service(RestTemplate restTemplate) {

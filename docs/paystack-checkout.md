@@ -136,9 +136,11 @@ Paystack checkout attempts whose initialization response is ambiguous are
 verified by their stored transaction reference as well. While verification is
 still pending, the attempt remains unresolved and the buyer must not start a
 second payment. A confirmed success or failure is applied through the same
-idempotent processing path as a webhook. If Paystack confirms no transaction
-exists for the stored reference after the bounded verification window, the
-attempt is timed out so the buyer can retry.
+idempotent processing path as a webhook. An initialization with an unknown
+outcome and no authorization URL is timed out only after Paystack confirms no
+transaction exists for its stored reference beyond the bounded verification
+window. An accepted checkout remains unresolved until provider verification
+returns a conclusive result.
 
 Checkout payment verification cadence is controlled by
 `PAYSTACK_RECONCILIATION_SCAN_MS`. Supplier transfer reconciliation has separate

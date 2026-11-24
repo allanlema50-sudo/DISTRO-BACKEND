@@ -31,7 +31,19 @@ public class CheckoutController {
  public org.springframework.http.ResponseEntity<Void> paystackWebhook(
          @RequestHeader(value="Paystack-Signature", required=false) String signature,
          @RequestHeader(value="X-Paystack-Signature", required=false) String legacySignature,
-         @RequestBody byte[] rawBody) {
+         jakarta.servlet.http.HttpServletRequest request) throws java.io.IOException {
+  final int maximumBodyBytes = 1_048_576;
+  if (request.getContentLengthLong() > maximumBodyBytes) {
+   throw new com.example.distrobackend.Exception.ApiException(
+           com.example.distrobackend.Exception.ErrorCode.PAYLOAD_TOO_LARGE,
+           "Webhook payload must not exceed 1 MiB");
+  }
+  byte[] rawBody = request.getInputStream().readNBytes(maximumBodyBytes + 1);
+  if (rawBody.length > maximumBodyBytes) {
+   throw new com.example.distrobackend.Exception.ApiException(
+           com.example.distrobackend.Exception.ErrorCode.PAYLOAD_TOO_LARGE,
+           "Webhook payload must not exceed 1 MiB");
+  }
   com.example.distrobackend.service.PaystackPaymentService.Webhook webhook =
           paystackPaymentService.parseAndVerifyWebhook(rawBody, signature, legacySignature);
   webhookInboxService.accept("PAYSTACK", webhook, rawBody);

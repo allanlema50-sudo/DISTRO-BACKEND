@@ -164,7 +164,11 @@ public class CheckoutPaymentAttemptStore {
                 && payment.getStatus() != CheckoutPaymentStatus.UNKNOWN)
                 || verifiedReference == null
                 || !verifiedReference.equals(payment.getProviderReference())
-                || payment.getInitiatedAt() == null || !payment.getInitiatedAt().isBefore(olderThan)) return false;
+                || payment.getInitiatedAt() == null || !payment.getInitiatedAt().isBefore(olderThan)
+                || payment.getProviderPayload() == null
+                || !java.util.Set.of("INITIALIZATION_STARTED", "REQUEST_OUTCOME_UNKNOWN")
+                .contains(payment.getProviderPayload().get("state"))
+                || payment.getProviderAuthorizationUrl() != null) return false;
         payment.setStatus(CheckoutPaymentStatus.TIMED_OUT);
         payment.setConfirmedAt(OffsetDateTime.now());
         payment.setFailureReason("Paystack verification found no transaction for this payment reference");

@@ -20,6 +20,8 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
@@ -35,6 +37,9 @@ public class PaymentDisputeService {
     private final UserRepository userRepository;
     private final NotificationService notificationService;
 
+    @PersistenceContext
+    private EntityManager entityManager;
+
     @Transactional
     public void processWebhook(PaystackPaymentService.Webhook webhook) {
         if (!Set.of("charge.dispute.create", "charge.dispute.remind", "charge.dispute.resolve")
@@ -43,6 +48,8 @@ public class PaymentDisputeService {
         if (disputeId == null || disputeId.isBlank() || disputeId.length() > 80) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack dispute event is missing its dispute ID");
         }
+        entityManager.createNativeQuery("select pg_advisory_xact_lock(hashtext(:disputeId))")
+                .setParameter("disputeId", disputeId).getSingleResult();
         PaymentDispute dispute = disputeRepository.findByProviderDisputeIdForUpdate(disputeId)
                 .orElseGet(PaymentDispute::new);
         boolean created = dispute.getId() == null;

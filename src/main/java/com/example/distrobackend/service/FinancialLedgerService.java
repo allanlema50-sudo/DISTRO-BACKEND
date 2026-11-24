@@ -17,7 +17,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.OffsetDateTime;
+import java.util.Currency;
 import java.util.Locale;
 import java.util.UUID;
 
@@ -43,14 +45,26 @@ public class FinancialLedgerService {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Payment amounts must be valid positive values");
         }
         String normalizedCurrency = normalizeCurrency(currency);
+        int currencyScale;
+        try {
+            currencyScale = Currency.getInstance(normalizedCurrency).getDefaultFractionDigits();
+        } catch (IllegalArgumentException ex) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "currency must be a supported ISO 4217 currency code");
+        }
+        if (currencyScale < 0) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "currency must have a defined minor-unit precision");
+        }
+        BigDecimal normalizedGross = requireCurrencyScale(gross, "gross", currencyScale);
+        BigDecimal normalizedProviderFee = requireCurrencyScale(providerFee, "providerFee", currencyScale);
+        if (!simulated) {
+            LedgerJournal existing = journalRepository
+                    .findBySourceTypeAndSourceIdAndEventType(sourceType, sourceId, CAPTURE_EVENT).orElse(null);
+            if (existing != null) return breakdownFromJournal(existing);
+        }
         CommissionRuleService.CommissionDecision decision = commissionRuleService.resolve(
                 beneficiary.getType(), normalizedCurrency, OffsetDateTime.now());
-        FinancialBreakdown breakdown = decision.calculate(gross, providerFee);
+        FinancialBreakdown breakdown = decision.calculate(normalizedGross, normalizedProviderFee);
         if (simulated) return breakdown;
-
-        if (journalRepository.findBySourceTypeAndSourceIdAndEventType(sourceType, sourceId, CAPTURE_EVENT).isPresent()) {
-            return breakdown;
-        }
 
         LedgerAccount clearing = platformAccount(LedgerAccountType.PROVIDER_CLEARING, normalizedCurrency);
         LedgerAccount payable = organizationAccount(LedgerAccountType.ORGANIZATION_PAYABLE,
@@ -63,6 +77,7 @@ public class FinancialLedgerService {
         journal.setSourceType(sourceType);
         journal.setSourceId(sourceId);
         journal.setEventType(CAPTURE_EVENT);
+        journal.setCommissionRuleId(breakdown.commissionRuleId());
         journal.setCurrency(normalizedCurrency);
         journal.setDescription("Confirmed payment allocation for " + beneficiary.getName());
         journal.setSimulated(false);
@@ -111,11 +126,13 @@ public class FinancialLedgerService {
     @Transactional
     public void recordSupplierPayout(SupplierSettlement settlement) {
         if (settlement == null || settlement.getId() == null || settlement.getAmount() == null
-                || settlement.getAmount().signum() <= 0 || settlement.getSupplierOrganization() == null) {
+                || settlement.getAmount().signum() <= 0 || settlement.getSupplierOrganization() == null
+                || settlement.getPayoutReference() == null || settlement.getPayoutReference().isBlank()) {
             throw new ApiException(ErrorCode.BAD_REQUEST,
                     "A valid supplier settlement is required for ledger posting");
         }
         String sourceType = "SUPPLIER_SETTLEMENT";
+        String payoutDescription = "Confirmed supplier payout " + safeReference(settlement.getPayoutReference());
         java.util.List<LedgerJournal> history = journalRepository
                 .findBySourceTypeAndSourceIdOrderByCreatedAtAsc(sourceType, settlement.getId());
         java.util.Set<String> reversedEvents = history.stream().map(LedgerJournal::getEventType)
@@ -124,6 +141,8 @@ public class FinancialLedgerService {
         java.util.List<LedgerJournal> payoutEvents = history.stream()
                 .filter(journal -> journal.getEventType().startsWith("PAYOUT_SETTLED_"))
                 .toList();
+        if (payoutEvents.stream().anyMatch(journal -> hasPayoutReference(journal,
+                settlement.getPayoutReference()))) return;
         boolean hasOpenPayout = payoutEvents.stream().anyMatch(journal -> !reversedEvents.contains(
                 journal.getEventType().replace("PAYOUT_SETTLED_", "PAYOUT_REVERSED_")));
         if (hasOpenPayout) return;
@@ -137,8 +156,9 @@ public class FinancialLedgerService {
         payout.setSourceType(sourceType);
         payout.setSourceId(settlement.getId());
         payout.setEventType("PAYOUT_SETTLED_" + attempt);
+        payout.setProviderReference(settlement.getPayoutReference());
         payout.setCurrency(currency);
-        payout.setDescription("Confirmed supplier payout " + safeReference(settlement.getPayoutReference()));
+        payout.setDescription(payoutDescription);
         payout.setSimulated(false);
         addEntry(payout, payable, LedgerEntryDirection.DEBIT, settlement.getAmount(), currency,
                 "Supplier payable discharged by confirmed provider transfer");
@@ -150,24 +170,24 @@ public class FinancialLedgerService {
 
     @Transactional
     public void recordSupplierPayoutReversal(SupplierSettlement settlement) {
-        if (settlement == null || settlement.getId() == null) {
+        if (settlement == null || settlement.getId() == null || settlement.getPayoutReference() == null
+                || settlement.getPayoutReference().isBlank()) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "A supplier settlement is required for payout reversal");
         }
         java.util.List<LedgerJournal> history = journalRepository
                 .findBySourceTypeAndSourceIdOrderByCreatedAtAsc("SUPPLIER_SETTLEMENT", settlement.getId());
-        java.util.Set<String> reversedEvents = history.stream().map(LedgerJournal::getEventType)
-                .filter(event -> event.startsWith("PAYOUT_REVERSED_"))
-                .collect(java.util.stream.Collectors.toSet());
         LedgerJournal payout = history.stream()
                 .filter(journal -> journal.getEventType().startsWith("PAYOUT_SETTLED_"))
-                .filter(journal -> !reversedEvents.contains(journal.getEventType()
-                        .replace("PAYOUT_SETTLED_", "PAYOUT_REVERSED_")))
-                .reduce((first, second) -> second).orElse(null);
+                .filter(journal -> hasPayoutReference(journal, settlement.getPayoutReference()))
+                .findFirst().orElse(null);
         if (payout == null) return;
+        String reversalEvent = payout.getEventType().replace("PAYOUT_SETTLED_", "PAYOUT_REVERSED_");
+        if (history.stream().anyMatch(journal -> reversalEvent.equals(journal.getEventType()))) return;
         LedgerJournal reversal = new LedgerJournal();
         reversal.setSourceType("SUPPLIER_SETTLEMENT");
         reversal.setSourceId(settlement.getId());
-        reversal.setEventType(payout.getEventType().replace("PAYOUT_SETTLED_", "PAYOUT_REVERSED_"));
+        reversal.setEventType(reversalEvent);
+        reversal.setProviderReference(settlement.getPayoutReference());
         reversal.setCurrency(payout.getCurrency());
         reversal.setDescription("Reversal of confirmed supplier payout "
                 + safeReference(settlement.getPayoutReference()));
@@ -180,6 +200,12 @@ public class FinancialLedgerService {
         }
         assertBalanced(reversal);
         journalRepository.save(reversal);
+    }
+
+    private static boolean hasPayoutReference(LedgerJournal journal, String payoutReference) {
+        if (payoutReference.equals(journal.getProviderReference())) return true;
+        return journal.getProviderReference() == null
+                && ("Confirmed supplier payout " + payoutReference).equals(journal.getDescription());
     }
 
     @Transactional(readOnly = true)
@@ -197,24 +223,56 @@ public class FinancialLedgerService {
     }
 
     private LedgerAccount platformAccount(LedgerAccountType type, String currency) {
-        return accountRepository.findPlatformAccount(type, currency).orElseGet(() -> {
-            LedgerAccount account = new LedgerAccount();
-            account.setAccountType(type);
-            account.setCurrency(currency);
-            account.setActive(true);
-            return accountRepository.save(account);
-        });
+        accountRepository.insertPlatformAccountIfMissing(type.name(), currency);
+        return accountRepository.findPlatformAccount(type, currency)
+                .orElseThrow(() -> new IllegalStateException("Platform ledger account could not be created"));
     }
 
     private LedgerAccount organizationAccount(LedgerAccountType type, String currency, Organization organization) {
-        return accountRepository.findOrganizationAccount(type, currency, organization.getId()).orElseGet(() -> {
-            LedgerAccount account = new LedgerAccount();
-            account.setAccountType(type);
-            account.setCurrency(currency);
-            account.setOrganization(organization);
-            account.setActive(true);
-            return accountRepository.save(account);
-        });
+        accountRepository.insertOrganizationAccountIfMissing(type.name(), organization.getId(), currency);
+        return accountRepository.findOrganizationAccount(type, currency, organization.getId())
+                .orElseThrow(() -> new IllegalStateException("Organization ledger account could not be created"));
+    }
+
+    private static FinancialBreakdown breakdownFromJournal(LedgerJournal journal) {
+        BigDecimal gross = amountFor(journal, LedgerAccountType.PROVIDER_CLEARING, LedgerEntryDirection.DEBIT);
+        if (gross == null || gross.signum() <= 0) {
+            throw new ApiException(ErrorCode.CONFLICT, "Existing capture journal is incomplete");
+        }
+        BigDecimal supplier = amountOrZero(journal, LedgerAccountType.ORGANIZATION_PAYABLE,
+                LedgerEntryDirection.CREDIT);
+        BigDecimal commission = amountOrZero(journal, LedgerAccountType.PLATFORM_REVENUE,
+                LedgerEntryDirection.CREDIT);
+        BigDecimal providerFee = amountOrZero(journal, LedgerAccountType.PAYMENT_PROCESSING_PAYABLE,
+                LedgerEntryDirection.CREDIT);
+        if (gross.compareTo(supplier.add(commission).add(providerFee)) != 0) {
+            throw new ApiException(ErrorCode.CONFLICT, "Existing capture journal is unbalanced");
+        }
+        return new FinancialBreakdown(gross, providerFee, commission, supplier,
+                journal.getCurrency(), journal.getCommissionRuleId());
+    }
+
+    private static BigDecimal amountOrZero(LedgerJournal journal, LedgerAccountType type,
+                                           LedgerEntryDirection direction) {
+        BigDecimal amount = amountFor(journal, type, direction);
+        return amount == null ? BigDecimal.ZERO : amount;
+    }
+
+    private static BigDecimal amountFor(LedgerJournal journal, LedgerAccountType type,
+                                        LedgerEntryDirection direction) {
+        var entries = journal.getEntries().stream()
+                .filter(entry -> entry.getAccount().getAccountType() == type && entry.getDirection() == direction)
+                .map(LedgerEntry::getAmount).toList();
+        return entries.isEmpty() ? null : entries.stream().reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    private static BigDecimal requireCurrencyScale(BigDecimal amount, String field, int currencyScale) {
+        try {
+            return amount.setScale(currencyScale, RoundingMode.UNNECESSARY);
+        } catch (ArithmeticException ex) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    field + " exceeds the minor-unit precision for the selected currency");
+        }
     }
 
     private static void addEntry(LedgerJournal journal, LedgerAccount account, LedgerEntryDirection direction,

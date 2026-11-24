@@ -36,6 +36,13 @@ public class LedgerJournal {
     @Column(name = "event_type", nullable = false, length = 50)
     private String eventType;
 
+    @Column(name = "commission_rule_id")
+    @JdbcTypeCode(SqlTypes.UUID)
+    private UUID commissionRuleId;
+
+    @Column(name = "provider_reference", length = 120)
+    private String providerReference;
+
     @Column(name = "currency", nullable = false, length = 3)
     private String currency;
 

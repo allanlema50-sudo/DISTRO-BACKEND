@@ -9,7 +9,6 @@ import com.example.distrobackend.Domain.entity.PaymentRefund;
 import com.example.distrobackend.Domain.entity.SupplierSettlement;
 import com.example.distrobackend.Domain.enums.CheckoutPaymentStatus;
 import com.example.distrobackend.Domain.enums.LedgerEntryDirection;
-import com.example.distrobackend.Domain.enums.PaymentDisputeStatus;
 import com.example.distrobackend.Domain.enums.PaymentProvider;
 import com.example.distrobackend.Domain.enums.RefundStatus;
 import com.example.distrobackend.Domain.enums.SupplierSettlementStatus;
@@ -30,12 +29,16 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.LinkedHashSet;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -57,7 +60,7 @@ public class FinancialReconciliationReportService {
     private final PaymentDisputeRepository disputeRepository;
     private final LedgerJournalRepository journalRepository;
 
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public Page<FinancialReconciliationItem> report(AuthenticatedUser actor, OffsetDateTime from,
                                                      OffsetDateTime to, Pageable pageable) {
         requireSuperAdmin(actor);
@@ -68,9 +71,10 @@ public class FinancialReconciliationReportService {
         }
         int page = Math.max(0, pageable.getPageNumber());
         int size = Math.max(1, Math.min(pageable.getPageSize(), 100));
-        Pageable bounded = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "initiatedAt"));
+        Pageable bounded = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "initiatedAt")
+                .and(Sort.by(Sort.Direction.DESC, "id")));
         Page<CheckoutPayment> payments = paymentRepository
-                .findByProviderAndDemoFalseAndStatusInAndInitiatedAtGreaterThanEqualAndInitiatedAtLessThanOrderByInitiatedAtDesc(
+                .findByProviderAndDemoFalseAndStatusInAndInitiatedAtGreaterThanEqualAndInitiatedAtLessThan(
                         PaymentProvider.PAYSTACK, INCLUDED_STATUSES, from, to, bounded);
         if (payments.isEmpty()) return payments.map(ignored -> null);
 
@@ -78,7 +82,16 @@ public class FinancialReconciliationReportService {
         List<PaymentAllocation> allocations = allocationRepository.findByPayment_IdInOrderByCreatedAtAsc(paymentIds);
         List<SupplierSettlement> settlements = settlementRepository.findByAllocation_Payment_IdIn(paymentIds);
         List<PaymentRefund> refunds = refundRepository.findByPayment_IdInOrderByCreatedAtDesc(paymentIds);
-        List<PaymentDispute> disputes = disputeRepository.findByPayment_IdIn(paymentIds);
+        List<String> providerReferences = payments.getContent().stream().map(CheckoutPayment::getProviderReference)
+                .filter(java.util.Objects::nonNull).distinct().toList();
+        Map<UUID, PaymentDispute> disputesById = new LinkedHashMap<>();
+        disputeRepository.findByPayment_IdIn(paymentIds)
+                .forEach(dispute -> disputesById.put(dispute.getId(), dispute));
+        if (!providerReferences.isEmpty()) {
+            disputeRepository.findByTransactionReferenceIn(providerReferences)
+                    .forEach(dispute -> disputesById.putIfAbsent(dispute.getId(), dispute));
+        }
+        List<PaymentDispute> disputes = List.copyOf(disputesById.values());
         List<UUID> allocationIds = allocations.stream().map(PaymentAllocation::getId).toList();
         List<LedgerJournal> journals = allocationIds.isEmpty() ? List.of()
                 : journalRepository.findBySourceTypeAndSourceIdInAndEventTypeIn(
@@ -93,8 +106,19 @@ public class FinancialReconciliationReportService {
                 Collectors.groupingBy(item -> item.getAllocation().getPayment().getId()));
         Map<UUID, List<PaymentRefund>> refundsByPayment = refunds.stream().collect(
                 Collectors.groupingBy(item -> item.getPayment().getId()));
-        Map<UUID, List<PaymentDispute>> disputesByPayment = disputes.stream().collect(
-                Collectors.groupingBy(item -> item.getPayment().getId()));
+        Map<String, UUID> paymentIdByReference = payments.getContent().stream()
+                .filter(payment -> payment.getProviderReference() != null).collect(Collectors.toMap(
+                CheckoutPayment::getProviderReference, CheckoutPayment::getId, (first, ignored) -> first));
+        Map<UUID, List<PaymentDispute>> disputesByPayment = new HashMap<>();
+        for (PaymentDispute dispute : disputes) {
+            UUID ownerPaymentId = dispute.getPayment() == null ? null : dispute.getPayment().getId();
+            if (ownerPaymentId == null || !paymentIds.contains(ownerPaymentId)) {
+                ownerPaymentId = paymentIdByReference.get(dispute.getTransactionReference());
+            }
+            if (ownerPaymentId != null) {
+                disputesByPayment.computeIfAbsent(ownerPaymentId, ignored -> new ArrayList<>()).add(dispute);
+            }
+        }
         Map<UUID, List<LedgerJournal>> journalsByAllocation = journals.stream().collect(
                 Collectors.groupingBy(LedgerJournal::getSourceId));
         Map<UUID, List<LedgerJournal>> journalsBySettlement = payoutJournals.stream().collect(
@@ -151,6 +175,8 @@ public class FinancialReconciliationReportService {
             List<LedgerJournal> payoutEvents = settlementJournals.stream()
                     .filter(journal -> journal.getEventType().startsWith("PAYOUT_SETTLED_"))
                     .toList();
+            Map<String, LedgerJournal> payoutByEvent = payoutEvents.stream().collect(Collectors.toMap(
+                    LedgerJournal::getEventType, journal -> journal));
             long openPayouts = payoutEvents.stream().filter(journal -> !reversedEvents.contains(
                     journal.getEventType().replace("PAYOUT_SETTLED_", "PAYOUT_REVERSED_"))).count();
             payoutJournalCount += payoutEvents.size();
@@ -180,10 +206,24 @@ public class FinancialReconciliationReportService {
                         || !settlement.getCurrency().equalsIgnoreCase(journal.getCurrency()))) {
                     issues.add("PAYOUT_JOURNAL_AMOUNT_MISMATCH");
                 }
+                if (journal.getEventType().startsWith("PAYOUT_REVERSED_")) {
+                    String payoutEvent = journal.getEventType().replace("PAYOUT_REVERSED_", "PAYOUT_SETTLED_");
+                    LedgerJournal originalPayout = payoutByEvent.get(payoutEvent);
+                    BigDecimal originalDebits = originalPayout == null ? ZERO : originalPayout.getEntries().stream()
+                            .filter(entry -> entry.getDirection() == LedgerEntryDirection.DEBIT)
+                            .map(LedgerEntry::getAmount).reduce(ZERO, BigDecimal::add);
+                    if (originalPayout == null || debits.compareTo(originalDebits) != 0
+                            || !journal.getCurrency().equalsIgnoreCase(originalPayout.getCurrency())) {
+                        issues.add("PAYOUT_REVERSAL_AMOUNT_MISMATCH");
+                    }
+                }
             }
         }
-        PaymentRefund latestRefund = refunds.stream().max(java.util.Comparator.comparing(
-                PaymentRefund::getCreatedAt, java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder())))
+        PaymentRefund latestRefund = refunds.stream().max(java.util.Comparator
+                .comparing(PaymentRefund::getCreatedAt,
+                        java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder()))
+                .thenComparing(PaymentRefund::getId,
+                        java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder())))
                 .orElse(null);
         if (allocations.isEmpty()) issues.add("MISSING_ALLOCATIONS");
         if (!allocations.isEmpty() && allocationTotal.compareTo(payment.getAmount()) != 0) {

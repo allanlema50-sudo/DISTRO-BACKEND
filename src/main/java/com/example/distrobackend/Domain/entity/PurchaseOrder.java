@@ -63,6 +63,15 @@ public class PurchaseOrder {
     @Column(name = "fulfilment_status", nullable = false, length = 40)
     private String fulfilmentStatus = "PAYMENT_PENDING";
 
+    @Column(name = "fulfilment_recovery_attempts", nullable = false)
+    private int fulfilmentRecoveryAttempts;
+
+    @Column(name = "fulfilment_next_recovery_at")
+    private OffsetDateTime fulfilmentNextRecoveryAt;
+
+    @Column(name = "fulfilment_last_recovery_error", columnDefinition = "TEXT")
+    private String fulfilmentLastRecoveryError;
+
     @Column(name = "total_amount", nullable = false, precision = 12, scale = 2)
     private BigDecimal totalAmount = BigDecimal.ZERO;
 

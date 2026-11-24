@@ -12,14 +12,9 @@ import org.springframework.data.repository.query.Param;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.time.OffsetDateTime;
 
 public interface SupplierSettlementRepository extends JpaRepository<SupplierSettlement, UUID> {
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("select s from SupplierSettlement s where s.provider = com.example.distrobackend.Domain.enums.PaymentProvider.PAYSTACK "
-            + "and s.status = com.example.distrobackend.Domain.enums.SupplierSettlementStatus.PROCESSING "
-            + "and (s.nextReconciliationAt is null or s.nextReconciliationAt <= :now) order by s.lastAttemptAt asc")
-    List<SupplierSettlement> lockDuePaystackReconciliation(@Param("now") java.time.OffsetDateTime now,
-                                                           org.springframework.data.domain.Pageable pageable);
     List<SupplierSettlement> findBySupplierOrganization_IdOrderByCreatedAtDesc(UUID supplierId);
     Optional<SupplierSettlement> findByAllocation_Id(UUID allocationId);
     Page<SupplierSettlement> findByStatusOrderByCreatedAtAsc(SupplierSettlementStatus status, Pageable pageable);
@@ -29,6 +24,25 @@ public interface SupplierSettlementRepository extends JpaRepository<SupplierSett
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from SupplierSettlement s where s.allocation.payment.id = :paymentId")
     List<SupplierSettlement> findByPaymentForUpdate(@Param("paymentId") UUID paymentId);
+    Optional<SupplierSettlement> findByPayoutReference(String reference);
+    @Query(value = "select * from supplier_settlements s "
+            + "where s.provider = 'PAYSTACK' and s.status = 'PROCESSING' "
+            + "and s.last_attempt_at <= :attemptCutoff "
+            + "and (s.last_status_check_at is null or s.last_status_check_at <= :checkBefore) "
+            + "order by coalesce(s.last_status_check_at, s.last_attempt_at) asc limit :batchSize",
+            nativeQuery = true)
+    List<SupplierSettlement> findPaystackTransfersNeedingVerification(
+            @Param("attemptCutoff") OffsetDateTime attemptCutoff,
+            @Param("checkBefore") OffsetDateTime checkBefore,
+            @Param("batchSize") int batchSize);
+    @Query(value = "select s.id from supplier_settlements s "
+            + "join settlement_batches b on b.id = s.settlement_batch_id "
+            + "where s.provider = 'PAYSTACK' and s.status = 'PENDING' and b.status = 'PROCESSING' "
+            + "order by s.created_at asc limit :batchSize", nativeQuery = true)
+    List<UUID> findPendingPaystackSettlementsInProcessingBatches(@Param("batchSize") int batchSize);
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from SupplierSettlement s where s.settlementBatch.id = :batchId order by s.createdAt asc")
+    List<SupplierSettlement> findBySettlementBatchIdForUpdate(@Param("batchId") UUID batchId);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from SupplierSettlement s where s.id = :id")
     Optional<SupplierSettlement> findByIdForUpdate(@Param("id") UUID id);

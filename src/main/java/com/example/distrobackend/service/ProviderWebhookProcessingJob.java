@@ -27,8 +27,9 @@ public class ProviderWebhookProcessingJob {
         inbox.recoverStaleProcessing();
         int limit = Math.max(1, Math.min(batchSize, 100));
         for (int i = 0; i < limit; i++) {
-            UUID eventId = inbox.claimNext();
-            if (eventId == null) return;
+            ProviderWebhookInboxService.Claim claim = inbox.claimNext();
+            if (claim == null) return;
+            UUID eventId = claim.eventId();
             try {
                 ProviderWebhookEvent event = inbox.load(eventId);
                 if (!"PAYSTACK".equals(event.getProvider())) {
@@ -38,15 +39,16 @@ public class ProviderWebhookProcessingJob {
                         event.getEventName(), event.getProviderReference(), event.getProviderStatus(),
                         event.getAmountMinor(), event.getCurrency(), event.getGatewayResponse(), event.getTransferCode(),
                         event.getProviderDisputeId(), event.getDisputeResolution(), event.getDisputeDueAt(),
-                        event.getProviderReference());
+                        event.getProviderTransactionReference() == null
+                                ? event.getProviderReference() : event.getProviderTransactionReference());
                 if (event.getEventName().startsWith("transfer.")) settlementService.processPaystackWebhook(webhook);
                 else if (event.getEventName().startsWith("refund.")) refundService.processWebhook(webhook);
                 else if (event.getEventName().startsWith("charge.dispute.")) disputeService.processWebhook(webhook);
                 else checkoutService.processPaystackWebhook(webhook);
-                inbox.markProcessed(eventId);
+                inbox.markProcessed(eventId, claim.claimToken());
             } catch (Exception ex) {
                 log.warn("Provider webhook event {} processing attempt failed", eventId, ex);
-                inbox.markFailed(eventId, ex);
+                inbox.markFailed(eventId, claim.claimToken(), ex);
             }
         }
     }

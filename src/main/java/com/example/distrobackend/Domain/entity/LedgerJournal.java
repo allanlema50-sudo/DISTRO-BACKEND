@@ -40,6 +40,9 @@ public class LedgerJournal {
     @JdbcTypeCode(SqlTypes.UUID)
     private UUID commissionRuleId;
 
+    @Column(name = "provider_reference", length = 120)
+    private String providerReference;
+
     @Column(name = "currency", nullable = false, length = 3)
     private String currency;
 

@@ -123,6 +123,91 @@ public class FinancialLedgerService {
         journalRepository.save(reversal);
     }
 
+    @Transactional
+    public void recordSupplierPayout(SupplierSettlement settlement) {
+        if (settlement == null || settlement.getId() == null || settlement.getAmount() == null
+                || settlement.getAmount().signum() <= 0 || settlement.getSupplierOrganization() == null
+                || settlement.getPayoutReference() == null || settlement.getPayoutReference().isBlank()) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    "A valid supplier settlement is required for ledger posting");
+        }
+        String sourceType = "SUPPLIER_SETTLEMENT";
+        String payoutDescription = "Confirmed supplier payout " + safeReference(settlement.getPayoutReference());
+        java.util.List<LedgerJournal> history = journalRepository
+                .findBySourceTypeAndSourceIdOrderByCreatedAtAsc(sourceType, settlement.getId());
+        java.util.Set<String> reversedEvents = history.stream().map(LedgerJournal::getEventType)
+                .filter(event -> event.startsWith("PAYOUT_REVERSED_"))
+                .collect(java.util.stream.Collectors.toSet());
+        java.util.List<LedgerJournal> payoutEvents = history.stream()
+                .filter(journal -> journal.getEventType().startsWith("PAYOUT_SETTLED_"))
+                .toList();
+        if (payoutEvents.stream().anyMatch(journal -> hasPayoutReference(journal,
+                settlement.getPayoutReference()))) return;
+        boolean hasOpenPayout = payoutEvents.stream().anyMatch(journal -> !reversedEvents.contains(
+                journal.getEventType().replace("PAYOUT_SETTLED_", "PAYOUT_REVERSED_")));
+        if (hasOpenPayout) return;
+
+        int attempt = payoutEvents.size() + 1;
+        String currency = normalizeCurrency(settlement.getCurrency());
+        LedgerAccount payable = organizationAccount(LedgerAccountType.ORGANIZATION_PAYABLE, currency,
+                settlement.getSupplierOrganization());
+        LedgerAccount clearing = platformAccount(LedgerAccountType.PROVIDER_CLEARING, currency);
+        LedgerJournal payout = new LedgerJournal();
+        payout.setSourceType(sourceType);
+        payout.setSourceId(settlement.getId());
+        payout.setEventType("PAYOUT_SETTLED_" + attempt);
+        payout.setProviderReference(settlement.getPayoutReference());
+        payout.setCurrency(currency);
+        payout.setDescription(payoutDescription);
+        payout.setSimulated(false);
+        addEntry(payout, payable, LedgerEntryDirection.DEBIT, settlement.getAmount(), currency,
+                "Supplier payable discharged by confirmed provider transfer");
+        addEntry(payout, clearing, LedgerEntryDirection.CREDIT, settlement.getAmount(), currency,
+                "Provider clearing balance paid to supplier");
+        assertBalanced(payout);
+        journalRepository.save(payout);
+    }
+
+    @Transactional
+    public void recordSupplierPayoutReversal(SupplierSettlement settlement) {
+        if (settlement == null || settlement.getId() == null || settlement.getPayoutReference() == null
+                || settlement.getPayoutReference().isBlank()) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "A supplier settlement is required for payout reversal");
+        }
+        java.util.List<LedgerJournal> history = journalRepository
+                .findBySourceTypeAndSourceIdOrderByCreatedAtAsc("SUPPLIER_SETTLEMENT", settlement.getId());
+        LedgerJournal payout = history.stream()
+                .filter(journal -> journal.getEventType().startsWith("PAYOUT_SETTLED_"))
+                .filter(journal -> hasPayoutReference(journal, settlement.getPayoutReference()))
+                .findFirst().orElse(null);
+        if (payout == null) return;
+        String reversalEvent = payout.getEventType().replace("PAYOUT_SETTLED_", "PAYOUT_REVERSED_");
+        if (history.stream().anyMatch(journal -> reversalEvent.equals(journal.getEventType()))) return;
+        LedgerJournal reversal = new LedgerJournal();
+        reversal.setSourceType("SUPPLIER_SETTLEMENT");
+        reversal.setSourceId(settlement.getId());
+        reversal.setEventType(reversalEvent);
+        reversal.setProviderReference(settlement.getPayoutReference());
+        reversal.setCurrency(payout.getCurrency());
+        reversal.setDescription("Reversal of confirmed supplier payout "
+                + safeReference(settlement.getPayoutReference()));
+        reversal.setSimulated(false);
+        for (LedgerEntry original : payout.getEntries()) {
+            addEntry(reversal, original.getAccount(),
+                    original.getDirection() == LedgerEntryDirection.CREDIT
+                            ? LedgerEntryDirection.DEBIT : LedgerEntryDirection.CREDIT,
+                    original.getAmount(), original.getCurrency(), "Provider-reversed supplier payout");
+        }
+        assertBalanced(reversal);
+        journalRepository.save(reversal);
+    }
+
+    private static boolean hasPayoutReference(LedgerJournal journal, String payoutReference) {
+        if (payoutReference.equals(journal.getProviderReference())) return true;
+        return journal.getProviderReference() == null
+                && ("Confirmed supplier payout " + payoutReference).equals(journal.getDescription());
+    }
+
     @Transactional(readOnly = true)
     public Page<LedgerJournalResponse> list(AuthenticatedUser actor, Pageable pageable) {
         requirePlatformAdmin(actor);
@@ -220,6 +305,10 @@ public class FinancialLedgerService {
             throw new ApiException(ErrorCode.BAD_REQUEST, "currency must be a three-letter ISO currency code");
         }
         return normalized;
+    }
+
+    private static String safeReference(String reference) {
+        return reference == null || reference.isBlank() ? "unknown reference" : reference;
     }
 
     private static void requirePlatformAdmin(AuthenticatedUser actor) {

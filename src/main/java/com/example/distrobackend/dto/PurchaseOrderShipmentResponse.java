@@ -64,7 +64,7 @@ public record PurchaseOrderShipmentResponse(
                 shipment.getReceiptLines().stream().map(line -> new PurchaseOrderShipmentReceiptLineResponse(
                         line.getPurchaseOrderItem().getId(),
                         line.getPurchaseOrderItem().getStockItem().getId(),
-                        line.getPurchaseOrderItem().getStockItem().getName(),
+                        line.getPurchaseOrderItem().getProductNameSnapshot() == null ? line.getPurchaseOrderItem().getStockItem().getName() : line.getPurchaseOrderItem().getProductNameSnapshot(),
                         line.getExpectedQuantity(), line.getAcceptedQuantity(),
                         line.getDamagedQuantity(), line.getMissingQuantity())).toList(),
                 shipment.getOriginWarehouse() == null ? null : shipment.getOriginWarehouse().getId(),

@@ -119,6 +119,8 @@ public class PurchaseOrderService {
             }
             PurchaseOrderItem item = new PurchaseOrderItem();
             item.setStockItem(stockItem);
+            item.setProductSkuSnapshot(stockItem.getSku());
+            item.setProductNameSnapshot(stockItem.getName());
             if (requestItem.distributorOfferId() != null) {
                 StockItem offer = stockItemRepository.findByIdAndOrganizationIdForUpdate(
                                 requestItem.distributorOfferId(), buyer.getId())
@@ -396,8 +398,8 @@ public class PurchaseOrderService {
                 purchaseOrder.getItems().stream().map(item -> new PurchaseOrderItemResponse(
                         item.getId(), item.getStockItem().getId(),
                         item.getDistributorOffer() == null ? null : item.getDistributorOffer().getId(),
-                        item.getStockItem().getSku(),
-                        item.getStockItem().getName(), item.getQuantity(), item.getUnitPrice(),
+                        item.getProductSkuSnapshot() == null ? item.getStockItem().getSku() : item.getProductSkuSnapshot(),
+                        item.getProductNameSnapshot() == null ? item.getStockItem().getName() : item.getProductNameSnapshot(), item.getQuantity(), item.getUnitPrice(),
                         item.getLineTotal() != null ? item.getLineTotal() : item.getUnitPrice()
                                 .multiply(BigDecimal.valueOf(item.getQuantity())),
                         item.getPickedQuantity(), item.getPackedQuantity())).toList(),

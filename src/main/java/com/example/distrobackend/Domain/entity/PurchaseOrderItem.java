@@ -34,6 +34,12 @@ public class PurchaseOrderItem {
     @JoinColumn(name = "stock_item_id", nullable = false)
     private StockItem stockItem;
 
+    @Column(name = "product_sku_snapshot", length = 50)
+    private String productSkuSnapshot;
+
+    @Column(name = "product_name_snapshot", length = 150)
+    private String productNameSnapshot;
+
     /** Optional distributor offer selected for receipt into a warehouse. */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "distributor_offer_id")

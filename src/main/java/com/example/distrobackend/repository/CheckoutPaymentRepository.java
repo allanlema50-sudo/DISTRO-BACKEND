@@ -24,6 +24,9 @@ public interface CheckoutPaymentRepository extends JpaRepository<CheckoutPayment
  Optional<CheckoutPayment> findByMpesaCheckoutRequestId(String checkoutRequestId);
  Optional<CheckoutPayment> findByIdempotencyKey(String idempotencyKey);
  Optional<CheckoutPayment> findByProviderReference(String providerReference);
+ java.util.List<CheckoutPayment> findByProviderAndProviderReferenceIn(
+         com.example.distrobackend.Domain.enums.PaymentProvider provider,
+         java.util.Collection<String> providerReferences);
  @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {"checkout"})
  org.springframework.data.domain.Page<CheckoutPayment> findByProviderAndDemoFalseAndStatusInAndInitiatedAtGreaterThanEqualAndInitiatedAtLessThan(
          com.example.distrobackend.Domain.enums.PaymentProvider provider,

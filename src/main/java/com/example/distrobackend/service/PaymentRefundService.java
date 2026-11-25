@@ -1,7 +1,6 @@
 package com.example.distrobackend.service;
 
 import com.example.distrobackend.Domain.entity.PaymentRefund;
-import com.example.distrobackend.Domain.enums.RefundStatus;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.dto.CreatePaymentRefundRequest;

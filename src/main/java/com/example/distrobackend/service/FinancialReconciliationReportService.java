@@ -28,6 +28,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.core.TypedPropertyPath;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
@@ -71,8 +72,9 @@ public class FinancialReconciliationReportService {
         }
         int page = Math.max(0, pageable.getPageNumber());
         int size = Math.max(1, Math.min(pageable.getPageSize(), 100));
-        Pageable bounded = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "initiatedAt")
-                .and(Sort.by(Sort.Direction.DESC, "id")));
+        Pageable bounded = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC,
+                TypedPropertyPath.of(CheckoutPayment::getInitiatedAt),
+                TypedPropertyPath.of(CheckoutPayment::getId)));
         Page<CheckoutPayment> payments = paymentRepository
                 .findByProviderAndDemoFalseAndStatusInAndInitiatedAtGreaterThanEqualAndInitiatedAtLessThan(
                         PaymentProvider.PAYSTACK, INCLUDED_STATUSES, from, to, bounded);

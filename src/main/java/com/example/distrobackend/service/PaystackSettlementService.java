@@ -285,6 +285,12 @@ public class PaystackSettlementService {
     }
 
     @Transactional
+    public Optional<PaystackSettlementDispatchStore.AttemptVerification> claimAttemptVerification(
+            UUID attemptId, OffsetDateTime startedBefore, OffsetDateTime checkedBefore, OffsetDateTime checkedAt) {
+        return dispatchStore.claimAttemptVerification(attemptId, startedBefore, checkedBefore, checkedAt);
+    }
+
+    @Transactional
     public void markPaystackTransferNotFound(String reference) {
         dispatchStore.markPaystackTransferNotFound(reference);
     }

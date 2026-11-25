@@ -162,12 +162,12 @@ public class PaystackPaymentService {
         }
         if (!root.path("status").asBoolean()) {
             throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED,
-                    root.path("message").asText("Paystack rejected the payment request"));
+                    root.path("message").asString("Paystack rejected the payment request"));
         }
         JsonNode data = root.path("data");
-        String providerReference = data.path("reference").asText("");
-        String authorizationUrl = data.path("authorization_url").asText("");
-        String accessCode = data.path("access_code").asText("");
+        String providerReference = data.path("reference").asString("");
+        String authorizationUrl = data.path("authorization_url").asString("");
+        String accessCode = data.path("access_code").asString("");
         if (providerReference.isBlank() || !reference.equals(providerReference)
                 || authorizationUrl.isBlank() || accessCode.isBlank()) {
             throw new ProviderOutcomeUnknownException("Paystack returned an incomplete initialization response", null);
@@ -187,20 +187,20 @@ public class PaystackPaymentService {
         try {
             JsonNode root = jsonMapper.readTree(rawBody);
             JsonNode data = root.path("data");
-            String event = root.path("event").asText("").trim();
-            String reference = data.path("reference").asText("").trim();
+            String event = root.path("event").asString("").trim();
+            String reference = data.path("reference").asString("").trim();
             JsonNode disputeTransaction = data.path("transaction");
-            String transactionReference = data.path("transaction_reference").asText("").trim();
+            String transactionReference = data.path("transaction_reference").asString("").trim();
             if (transactionReference.isBlank() && !disputeTransaction.isMissingNode()) {
-                transactionReference = disputeTransaction.path("reference").asText("").trim();
+                transactionReference = disputeTransaction.path("reference").asString("").trim();
             }
             if (reference.isBlank() && !disputeTransaction.isMissingNode()) {
-                reference = disputeTransaction.path("reference").asText("").trim();
+                reference = disputeTransaction.path("reference").asString("").trim();
             }
             if (reference.isBlank() && event.startsWith("refund.")) reference = transactionReference;
             JsonNode disputeIdNode = data.path("id");
             String disputeId = disputeIdNode.isMissingNode() || disputeIdNode.isNull()
-                    ? null : disputeIdNode.asText(null);
+                    ? null : disputeIdNode.asString(null);
             boolean disputeEvent = event.startsWith("charge.dispute.");
             if (disputeEvent && reference.isBlank() && disputeId != null) reference = disputeId;
             if (event.isBlank() || reference.isBlank()
@@ -208,9 +208,9 @@ public class PaystackPaymentService {
                 throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack webhook is missing event or reference");
             }
             if (transactionReference.isBlank() && !event.startsWith("refund.")) {
-                transactionReference = disputeTransaction.path("reference").asText(reference);
+                transactionReference = disputeTransaction.path("reference").asString(reference);
             }
-            String dueAtValue = data.path("due_at").asText(null);
+            String dueAtValue = data.path("due_at").asString(null);
             java.time.OffsetDateTime dueAt = null;
             if (dueAtValue != null && !dueAtValue.isBlank()) {
                 try {
@@ -219,11 +219,11 @@ public class PaystackPaymentService {
                     throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack dispute due_at is invalid");
                 }
             }
-            return new Webhook(event, reference, data.path("status").asText(""),
+            return new Webhook(event, reference, data.path("status").asString(""),
                     parseMinorAmount(data),
-                    data.path("currency").asText(null), data.path("gateway_response").asText(null),
-                    data.path("transfer_code").asText(null), disputeId,
-                    data.path("resolution").asText(null), dueAt,
+                    data.path("currency").asString(null), data.path("gateway_response").asString(null),
+                    data.path("transfer_code").asString(null), disputeId,
+                    data.path("resolution").asString(null), dueAt,
                     transactionReference.isBlank() ? reference : transactionReference);
         } catch (JacksonException ex) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Paystack webhook body is not valid JSON");
@@ -235,8 +235,8 @@ public class PaystackPaymentService {
         if (amount.isMissingNode() || amount.isNull()) amount = data.path("refund_amount");
         if (amount.isMissingNode() || amount.isNull()) return null;
         if (amount.isIntegralNumber() && amount.canConvertToLong()) return amount.longValue();
-        if (amount.isTextual()) {
-            String value = amount.asText().trim();
+        if (amount.isString()) {
+            String value = amount.asString().trim();
             try {
                 if (value.matches("-?[0-9]+")) return Long.parseLong(value);
             } catch (NumberFormatException ignored) {
@@ -272,13 +272,13 @@ public class PaystackPaymentService {
             if (root == null || !root.path("status").asBoolean(false) || data == null || data.isMissingNode()) {
                 throw new ProviderOutcomeUnknownException("Paystack returned an incomplete verification response", null);
             }
-            String verifiedReference = data.path("reference").asText("");
-            String status = data.path("status").asText("").trim().toLowerCase(Locale.ROOT);
+            String verifiedReference = data.path("reference").asString("");
+            String status = data.path("status").asString("").trim().toLowerCase(Locale.ROOT);
             if (!reference.equals(verifiedReference) || status.isBlank()) {
                 throw new ProviderOutcomeUnknownException("Paystack returned incomplete transaction verification", null);
             }
             Long amount = data.path("amount").canConvertToLong() ? data.path("amount").longValue() : null;
-            String verifiedCurrency = data.path("currency").asText(null);
+            String verifiedCurrency = data.path("currency").asString(null);
             return new Verification(verifiedReference, status, amount, verifiedCurrency);
         } catch (JacksonException ex) {
             throw new ProviderOutcomeUnknownException("Paystack returned invalid verification data", ex);
@@ -409,7 +409,7 @@ public class PaystackPaymentService {
         }
         if (email != null && !email.isBlank()) body.put("email", email.trim());
         JsonNode data = postJson("/transferrecipient", body, "Paystack recipient creation failed");
-        String recipientCode = data.path("data").path("recipient_code").asText("");
+        String recipientCode = data.path("data").path("recipient_code").asString("");
         if (recipientCode.isBlank()) {
             throw new ProviderOutcomeUnknownException("Paystack returned no recipient code", null);
         }
@@ -431,15 +431,15 @@ public class PaystackPaymentService {
         body.put("reason", reason);
         JsonNode data = postJson("/transfer", body, "Paystack transfer creation failed");
         JsonNode transfer = data.path("data");
-        String returnedReference = transfer.path("reference").asText("");
-        String status = transfer.path("status").asText("");
-        String transferCode = transfer.path("transfer_code").asText(null);
+        String returnedReference = transfer.path("reference").asString("");
+        String status = transfer.path("status").asString("");
+        String transferCode = transfer.path("transfer_code").asString(null);
         if (!reference.equals(returnedReference) || status.isBlank()) {
             throw new ProviderOutcomeUnknownException("Paystack returned an incomplete transfer response", null);
         }
         return new Transfer(returnedReference, transferCode, status,
                 transfer.path("amount").canConvertToLong() ? transfer.path("amount").longValue() : null,
-                transfer.path("currency").asText(null));
+                transfer.path("currency").asString(null));
     }
 
     public Optional<VerifiedTransfer> verifyTransfer(String reference) {
@@ -450,17 +450,17 @@ public class PaystackPaymentService {
         JsonNode data = getVerifiedData("/transfer/verify/" + encodePath(reference),
                 "Paystack transfer verification failed");
         if (data == null) return Optional.empty();
-        String verifiedReference = data.path("reference").asText("");
+        String verifiedReference = data.path("reference").asString("");
         if (!reference.equals(verifiedReference)) {
             throw new ProviderOutcomeUnknownException("Paystack verified a different transfer reference", null);
         }
-        if (data.path("status").asText("").isBlank()) {
+        if (data.path("status").asString("").isBlank()) {
             throw new ProviderOutcomeUnknownException("Paystack returned an incomplete transfer verification", null);
         }
         return Optional.of(new VerifiedTransfer(verifiedReference,
-                data.path("transfer_code").asText(null), data.path("status").asText(""),
+                data.path("transfer_code").asString(null), data.path("status").asString(""),
                 data.path("amount").canConvertToLong() ? data.path("amount").longValue() : null,
-                data.path("currency").asText(null), data.path("failures").asText(null)));
+                data.path("currency").asString(null), data.path("failures").asString(null)));
     }
 
     public Refund createRefund(String reference, String transactionReference, BigDecimal amount,
@@ -477,14 +477,14 @@ public class PaystackPaymentService {
         body.put("customer_note", customerNote);
         body.put("merchant_note", merchantNote);
         JsonNode data = postJson("/refund", body, "Paystack rejected the refund request").path("data");
-        String returnedReference = data.path("reference").asText("");
-        String status = data.path("status").asText("");
+        String returnedReference = data.path("reference").asString("");
+        String status = data.path("status").asString("");
         if (!reference.equalsIgnoreCase(returnedReference) || status.isBlank()) {
             throw new ProviderOutcomeUnknownException("Paystack returned an incomplete refund response", null);
         }
-        return new Refund(returnedReference, data.path("id").asText(null), status,
+        return new Refund(returnedReference, data.path("id").asString(null), status,
                 data.path("amount").isNumber() ? data.path("amount").longValue() : null,
-                data.path("currency").asText(null));
+                data.path("currency").asString(null));
     }
 
     public Refund verifyRefund(String reference) {
@@ -512,10 +512,10 @@ public class PaystackPaymentService {
         JsonNode refunds = root.path("data");
         if (!refunds.isArray()) throw new ProviderOutcomeUnknownException("Paystack refund response was incomplete", null);
         for (JsonNode refund : refunds) {
-            if (reference.equalsIgnoreCase(refund.path("reference").asText(""))) {
-                return new Refund(reference, refund.path("id").asText(null), refund.path("status").asText(""),
+            if (reference.equalsIgnoreCase(refund.path("reference").asString(""))) {
+                return new Refund(reference, refund.path("id").asString(null), refund.path("status").asString(""),
                         refund.path("amount").isNumber() ? refund.path("amount").longValue() : null,
-                        refund.path("currency").asText(null));
+                        refund.path("currency").asString(null));
             }
         }
         throw new ProviderOutcomeUnknownException("Paystack has not returned the refund reference yet", null);
@@ -539,15 +539,15 @@ public class PaystackPaymentService {
         }
         List<ProviderTransaction> transactions = new ArrayList<>();
         for (JsonNode item : data) {
-            String reference = item.path("reference").asText("").trim();
-            String status = item.path("status").asText("").trim();
+            String reference = item.path("reference").asString("").trim();
+            String status = item.path("status").asString("").trim();
             if (reference.isBlank() || status.isBlank() || !item.path("amount").canConvertToLong()) {
                 throw new ProviderOutcomeUnknownException("Paystack transaction row is missing required fields", null);
             }
             JsonNode id = item.path("id");
-            transactions.add(new ProviderTransaction(id.isMissingNode() ? null : id.asText(), reference,
-                    status, item.path("amount").longValue(), item.path("currency").asText(null),
-                    item.path("paid_at").asText(null)));
+            transactions.add(new ProviderTransaction(id.isMissingNode() ? null : id.asString(), reference,
+                    status, item.path("amount").longValue(), item.path("currency").asString(null),
+                    item.path("paid_at").asString(null)));
         }
         JsonNode meta = root.path("meta");
         int returnedPage = meta.path("page").canConvertToInt() ? meta.path("page").intValue() : page;
@@ -555,19 +555,6 @@ public class PaystackPaymentService {
                 ? meta.path("perPage").intValue() : perPage;
         long total = meta.path("total").canConvertToLong() ? meta.path("total").longValue() : -1;
         return new ProviderTransactionPage(transactions, returnedPage, returnedPerPage, total);
-    }
-
-    private Verification verification(JsonNode root, boolean transfer) {
-        JsonNode data = root.path("data");
-        String reference = data.path("reference").asText("");
-        String status = data.path("status").asText("");
-        if (reference.isBlank() || status.isBlank() || !root.path("status").asBoolean(false)) {
-            throw new ProviderOutcomeUnknownException("Paystack returned an incomplete verification response", null);
-        }
-        return new Verification(reference, status,
-                data.path("amount").isNumber() ? data.path("amount").longValue() : null,
-                data.path("currency").asText(null), data.path("gateway_response").asText(null),
-                transfer ? data.path("transfer_code").asText(null) : null);
     }
 
     private JsonNode getJson(String path, String rejectionMessage) {

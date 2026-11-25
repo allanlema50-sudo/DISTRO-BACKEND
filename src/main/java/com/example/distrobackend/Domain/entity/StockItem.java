@@ -69,6 +69,10 @@ public class StockItem {
     @Column(name = "reserved_quantity", nullable = false)
     private int reservedQuantity = 0;
 
+    /** Units moved from a bin into the order staging area and awaiting dispatch. */
+    @Column(name = "picked_quantity", nullable = false)
+    private int pickedQuantity = 0;
+
     @Column(name = "reorder_threshold", nullable = false)
     private int reorderThreshold = 0;
 

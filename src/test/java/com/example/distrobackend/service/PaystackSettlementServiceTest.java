@@ -13,6 +13,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
+import java.time.OffsetDateTime;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -34,6 +35,7 @@ class PaystackSettlementServiceTest {
     @Mock CheckoutPaymentRepository checkoutPaymentRepository;
     @Mock PaymentRefundRepository paymentRefundRepository;
     @Mock PaystackSettlementDispatchStore dispatchStore;
+    @Mock PurchaseOrderShipmentRepository purchaseOrderShipmentRepository;
     @Mock FinancialLedgerService financialLedgerService;
     @InjectMocks PaystackSettlementService service;
 
@@ -54,9 +56,17 @@ class PaystackSettlementServiceTest {
         CheckoutPayment payment = new CheckoutPayment();
         payment.setId(UUID.randomUUID());
         payment.setProviderReference("TX-123");
+        PurchaseOrder purchaseOrder = new PurchaseOrder();
+        purchaseOrder.setId(UUID.randomUUID());
         PaymentAllocation allocation = new PaymentAllocation();
         allocation.setPayment(payment);
+        allocation.setPurchaseOrder(purchaseOrder);
         settlement.setAllocation(allocation);
+        PurchaseOrderShipment shipment = new PurchaseOrderShipment();
+        shipment.setStatus(PurchaseOrderShipmentStatus.RECEIVED);
+        shipment.setReceivedAt(OffsetDateTime.now().minusDays(8));
+        when(purchaseOrderShipmentRepository.findByPurchaseOrderIdForUpdate(purchaseOrder.getId()))
+                .thenReturn(Optional.of(shipment));
         PayoutBeneficiary beneficiary = new PayoutBeneficiary();
         beneficiary.setId(UUID.randomUUID());
         beneficiary.setOrganization(supplier);
@@ -87,6 +97,75 @@ class PaystackSettlementServiceTest {
         assertThat(settlement.getBeneficiary()).isSameAs(beneficiary);
         assertThat(settlement.getPayoutReference()).startsWith("lf_settlement_");
         verify(batchRepository).saveAndFlush(any(SettlementBatch.class));
+    }
+
+    @Test
+    void doesNotBatchSettlementBeforeDistributorConfirmsReceipt() {
+        UUID settlementId = UUID.randomUUID();
+        UUID adminId = UUID.randomUUID();
+        UUID purchaseOrderId = UUID.randomUUID();
+        SupplierSettlement settlement = settlement(settlementId, purchaseOrderId);
+        CheckoutPayment payment = settlement.getAllocation().getPayment();
+        PurchaseOrderShipment shipment = new PurchaseOrderShipment();
+        shipment.setStatus(PurchaseOrderShipmentStatus.DELIVERED);
+        shipment.setDeliveredAt(OffsetDateTime.now().minusDays(8));
+        when(settlementRepository.findAllById(java.util.List.of(settlementId))).thenReturn(java.util.List.of(settlement));
+        when(settlementRepository.findByIdForUpdate(settlementId)).thenReturn(Optional.of(settlement));
+        when(checkoutPaymentRepository.findByIdForUpdate(payment.getId())).thenReturn(Optional.of(payment));
+        when(purchaseOrderShipmentRepository.findByPurchaseOrderIdForUpdate(purchaseOrderId))
+                .thenReturn(Optional.of(shipment));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.createBatch(
+                new AuthenticatedUser(adminId, UserRole.SUPER_ADMIN, null, null, null),
+                new CreateSettlementBatchRequest(java.util.List.of(settlementId), "weekly settlement")))
+                .isInstanceOf(com.example.distrobackend.Exception.ApiException.class)
+                .hasMessageContaining("confirms shipment receipt");
+        verify(batchRepository, never()).saveAndFlush(any(SettlementBatch.class));
+    }
+
+    @Test
+    void doesNotBatchSettlementWhilePostReceiptHoldIsActive() {
+        UUID settlementId = UUID.randomUUID();
+        UUID adminId = UUID.randomUUID();
+        UUID purchaseOrderId = UUID.randomUUID();
+        SupplierSettlement settlement = settlement(settlementId, purchaseOrderId);
+        CheckoutPayment payment = settlement.getAllocation().getPayment();
+        PurchaseOrderShipment shipment = new PurchaseOrderShipment();
+        shipment.setStatus(PurchaseOrderShipmentStatus.RECEIVED);
+        shipment.setReceivedAt(OffsetDateTime.now());
+        when(settlementRepository.findAllById(java.util.List.of(settlementId))).thenReturn(java.util.List.of(settlement));
+        when(settlementRepository.findByIdForUpdate(settlementId)).thenReturn(Optional.of(settlement));
+        when(checkoutPaymentRepository.findByIdForUpdate(payment.getId())).thenReturn(Optional.of(payment));
+        when(purchaseOrderShipmentRepository.findByPurchaseOrderIdForUpdate(purchaseOrderId))
+                .thenReturn(Optional.of(shipment));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.createBatch(
+                new AuthenticatedUser(adminId, UserRole.SUPER_ADMIN, null, null, null),
+                new CreateSettlementBatchRequest(java.util.List.of(settlementId), "weekly settlement")))
+                .isInstanceOf(com.example.distrobackend.Exception.ApiException.class)
+                .hasMessageContaining("post-receipt return period ends");
+        verify(batchRepository, never()).saveAndFlush(any(SettlementBatch.class));
+    }
+
+    private static SupplierSettlement settlement(UUID settlementId, UUID purchaseOrderId) {
+        Organization supplier = new Organization();
+        supplier.setId(UUID.randomUUID());
+        CheckoutPayment payment = new CheckoutPayment();
+        payment.setId(UUID.randomUUID());
+        payment.setProviderReference("TX-123");
+        PurchaseOrder purchaseOrder = new PurchaseOrder();
+        purchaseOrder.setId(purchaseOrderId);
+        PaymentAllocation allocation = new PaymentAllocation();
+        allocation.setPayment(payment);
+        allocation.setPurchaseOrder(purchaseOrder);
+        SupplierSettlement settlement = new SupplierSettlement();
+        settlement.setId(settlementId);
+        settlement.setSupplierOrganization(supplier);
+        settlement.setAllocation(allocation);
+        settlement.setStatus(SupplierSettlementStatus.PENDING);
+        settlement.setAmount(new BigDecimal("100.00"));
+        settlement.setCurrency("KES");
+        return settlement;
     }
 
     @Test

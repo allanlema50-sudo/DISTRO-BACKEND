@@ -64,5 +64,6 @@
     ,{ "name": "paystack.settlement.reconciliation.batch-size", "type": "java.lang.Integer", "description": "Maximum supplier transfers checked in one reconciliation pass." }
     ,{ "name": "paystack.settlement.reconciliation.initial-delay-ms", "type": "java.lang.Long", "description": "Wait before first verification of an ambiguous supplier transfer." }
     ,{ "name": "paystack.settlement.reconciliation.repeat-delay-ms", "type": "java.lang.Long", "description": "Wait between repeated verifications of unresolved supplier transfers." }
+    ,{ "name": "logiflow.settlements.delivery-hold-days", "type": "java.lang.Integer", "description": "Calendar days after distributor receipt before a Paystack supplier settlement can be batched (0 to 365)." }
   ]
 }

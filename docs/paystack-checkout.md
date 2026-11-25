@@ -106,9 +106,15 @@ enable payouts. After Paystack approves transfers, set
    Paystack and retains only the provider recipient code and a masked account.
 2. A Super Admin reviews the beneficiary. Only an `ACTIVE` beneficiary can be
    attached to a settlement.
-3. A Super Admin creates and approves a settlement batch. The API refuses
-   demo, already batched, unpaid, or beneficiary-less settlements.
-4. A Super Admin executes the approved batch. LogiFlow commits each transfer
+3. The distributor confirms receipt of the purchase-order shipment. A settlement
+   cannot enter a batch before receipt is confirmed and the configured post-receipt
+   hold has elapsed. The hold is controlled by
+   `SUPPLIER_SETTLEMENT_DELIVERY_HOLD_DAYS` (default: 7 calendar days; set to `0`
+   for immediate release after receipt in a controlled demo).
+4. A Super Admin creates and approves a settlement batch. The API refuses demo,
+   already batched, unpaid, unreceived, still-held, disputed, or beneficiary-less
+   settlements.
+5. A Super Admin executes the approved batch. LogiFlow commits each transfer
    attempt before contacting Paystack. If the API response is ambiguous, it
    retains that reference and verifies it; a recovery worker resumes batch
    members that were not yet dispatched. A new reference is created only after
@@ -121,7 +127,7 @@ settlement with `PATCH /api/v1/admin/financial/settlements/{settlementId}/benefi
 before retrying it. A Paystack `needs-attention` refund remains on hold and is
 reconciled using its existing reference; an operator must complete any required
 bank-detail action in Paystack rather than starting a second refund.
-5. Signed `transfer.success`, `transfer.failed`, and `transfer.reversed`
+6. Signed `transfer.success`, `transfer.failed`, and `transfer.reversed`
    webhooks also update the settlement and batch status. Webhooks are stored
    before acknowledgement and processed asynchronously with bounded retries.
    After the configured attempt limit, Super Admins can inspect a

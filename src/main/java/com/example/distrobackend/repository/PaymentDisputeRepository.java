@@ -12,7 +12,6 @@ import org.springframework.data.repository.query.Param;
 
 import java.util.Optional;
 import java.util.UUID;
-import org.springframework.data.repository.query.Param;
 
 public interface PaymentDisputeRepository extends JpaRepository<PaymentDispute, UUID> {
     Page<PaymentDispute> findAllByOrderByLastEventAtDesc(Pageable pageable);
@@ -21,6 +20,9 @@ public interface PaymentDisputeRepository extends JpaRepository<PaymentDispute, 
             PaymentDisputeStatus status, Pageable pageable);
 
     Optional<PaymentDispute> findByProviderDisputeId(String providerDisputeId);
+
+    java.util.List<PaymentDispute> findByPayment_IdIn(java.util.Collection<UUID> paymentIds);
+    java.util.List<PaymentDispute> findByTransactionReferenceIn(java.util.Collection<String> references);
 
     boolean existsByPayment_IdAndClearedAtIsNull(UUID paymentId);
 

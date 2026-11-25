@@ -19,6 +19,7 @@ import java.util.Collection;
 public interface PaymentRefundRepository extends JpaRepository<PaymentRefund, UUID> {
     Optional<PaymentRefund> findTopByPayment_IdOrderByCreatedAtDescIdDesc(UUID paymentId);
     Optional<PaymentRefund> findByProviderReference(String reference);
+    List<PaymentRefund> findByPayment_IdInOrderByCreatedAtDesc(java.util.Collection<UUID> paymentIds);
     boolean existsByPayment_IdAndStatusIn(UUID paymentId, Collection<RefundStatus> statuses);
     Optional<PaymentRefund> findFirstByPayment_ProviderReferenceAndStatusInOrderByCreatedAtDescIdDesc(
             String transactionReference, Collection<RefundStatus> statuses);

@@ -20,6 +20,7 @@ public interface SupplierSettlementRepository extends JpaRepository<SupplierSett
     Page<SupplierSettlement> findByStatusOrderByCreatedAtAsc(SupplierSettlementStatus status, Pageable pageable);
     List<SupplierSettlement> findBySettlementBatch_IdOrderByCreatedAtAsc(UUID batchId);
     List<SupplierSettlement> findByAllocation_Payment_Id(UUID paymentId);
+    List<SupplierSettlement> findByAllocation_Payment_IdIn(java.util.Collection<UUID> paymentIds);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from SupplierSettlement s where s.allocation.payment.id = :paymentId")
     List<SupplierSettlement> findByPaymentForUpdate(@Param("paymentId") UUID paymentId);

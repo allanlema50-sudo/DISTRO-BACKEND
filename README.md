@@ -1054,6 +1054,12 @@ settlement only after documenting a review note. This records internal review;
 Paystack remains responsible for provider-side dispute resolution. Transfers
 already initiated before a dispute arrives cannot be recalled by this API.
 
+For checkout-backed manufacturer settlements, the distributor must first record
+the purchase-order shipment as received. Settlement batching is then held for
+`SUPPLIER_SETTLEMENT_DELIVERY_HOLD_DAYS` (default `7` calendar days). Set it to
+`0` only for a controlled demo that intentionally skips the post-receipt waiting
+period; this does not enable Paystack transfers or move real money by itself.
+
 The reconciliation report checks LogiFlow's own stored data. The separate
 provider transaction match endpoint reads the Paystack transaction feed on
 demand, compares the returned page with local payment references, and limits the

@@ -7,7 +7,9 @@ import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.dto.*;
 import com.example.distrobackend.repository.*;
 import com.example.distrobackend.security.AuthenticatedUser;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -31,6 +33,18 @@ public class PaystackSettlementService {
     private final SupplierPayoutAttemptRepository payoutAttemptRepository;
     private final PaymentRefundRepository paymentRefundRepository;
     private final PaystackSettlementDispatchStore dispatchStore;
+    private final PurchaseOrderShipmentRepository purchaseOrderShipmentRepository;
+
+    @Value("${logiflow.settlements.delivery-hold-days:7}")
+    private int deliveryHoldDays = 7;
+
+    @PostConstruct
+    void validateDeliveryHoldConfiguration() {
+        if (deliveryHoldDays < 0 || deliveryHoldDays > 365) {
+            throw new IllegalStateException(
+                    "logiflow.settlements.delivery-hold-days must be between 0 and 365");
+        }
+    }
 
     @Transactional
     public PayoutBeneficiaryResponse createBeneficiary(AuthenticatedUser actor,
@@ -305,6 +319,7 @@ public class PaystackSettlementService {
         UUID paymentId = settlement.getAllocation().getPayment().getId();
         CheckoutPayment payment = checkoutPaymentRepository.findByIdForUpdate(paymentId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Checkout payment not found"));
+        requireDeliveryHoldElapsed(settlement);
         boolean hasUnclearedDispute = disputeRepository.existsUnclearedForPaymentOrReference(
                 paymentId, payment.getProviderReference());
         boolean hasOpenRefund = paymentRefundRepository.existsByPayment_IdAndStatusIn(paymentId,
@@ -312,6 +327,23 @@ public class PaystackSettlementService {
         if (hasUnclearedDispute || hasOpenRefund) {
             throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
                     "This settlement is blocked by an open refund or unresolved/unreviewed payment dispute");
+        }
+    }
+
+    private void requireDeliveryHoldElapsed(SupplierSettlement settlement) {
+        UUID purchaseOrderId = settlement.getAllocation().getPurchaseOrder().getId();
+        PurchaseOrderShipment shipment = purchaseOrderShipmentRepository
+                .findByPurchaseOrderIdForUpdate(purchaseOrderId)
+                .orElseThrow(() -> new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                        "Supplier settlement is unavailable until its purchase order shipment is received"));
+        if (shipment.getStatus() != PurchaseOrderShipmentStatus.RECEIVED || shipment.getReceivedAt() == null) {
+            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                    "Supplier settlement is unavailable until the distributor confirms shipment receipt");
+        }
+        OffsetDateTime releaseAt = shipment.getReceivedAt().plusDays(deliveryHoldDays);
+        if (OffsetDateTime.now().isBefore(releaseAt)) {
+            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                    "Supplier settlement is held until the post-receipt return period ends at " + releaseAt);
         }
     }
 

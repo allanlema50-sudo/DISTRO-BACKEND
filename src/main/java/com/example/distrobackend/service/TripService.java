@@ -687,6 +687,10 @@ public class TripService {
             throw new ApiException(ErrorCode.CONFLICT, "A trip needs at least one stop before dispatch");
         }
         if (trip.getTripType() == TripType.DELIVERY) {
+            // Standalone freight shipments are linked on shipment.trip; their stops
+            // do not carry a customer order or manufacturer shipment group.
+            List<Shipment> freightShipments = shipmentRepository.findByTrip_Id(trip.getId());
+            boolean hasFreightShipments = !freightShipments.isEmpty();
             for (TripStop stop : trip.getStops()) {
                 if (stop.getPurchaseOrderShipmentGroup() != null) {
                     PurchaseOrderShipmentGroup group = stop.getPurchaseOrderShipmentGroup();
@@ -704,13 +708,22 @@ public class TripService {
                     purchaseOrderShipmentGroupRepository.save(group);
                     continue;
                 }
-                if (stop.getOrder() == null) {
+                if (stop.getOrder() != null) {
+                    orderService.dispatchFromTrip(actor, stop.getOrder().getId());
+                    shipmentService.updateOrderDispatched(stop.getOrder().getId(), trip.getId(), actor);
+                    otpService.issueDelivery(stop.getOrder().getCustomer(), stop);
+                    continue;
+                }
+                if (!hasFreightShipments) {
                     throw new ApiException(ErrorCode.CONFLICT,
                             "Every delivery trip stop must reference a customer order");
                 }
-                orderService.dispatchFromTrip(actor, stop.getOrder().getId());
-                shipmentService.updateOrderDispatched(stop.getOrder().getId(), trip.getId(), actor);
-                otpService.issueDelivery(stop.getOrder().getCustomer(), stop);
+            }
+            for (Shipment shipment : freightShipments) {
+                if (shipment.getStatus() == ShipmentStatus.ASSIGNED) {
+                    shipment.setStatus(ShipmentStatus.IN_TRANSIT);
+                    shipmentRepository.save(shipment);
+                }
             }
         }
         TripStatus previous = trip.getStatus();

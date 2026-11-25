@@ -397,12 +397,16 @@ public class PurchaseOrderShipmentService {
             throw new ApiException(ErrorCode.CONFLICT, "The destination warehouse is inactive");
         }
 
-        // Select and lock every destination offer before creating the shipment.
-        // This makes receipt deterministic even when a distributor has several offers.
         for (PurchaseOrderItem item : purchaseOrder.getItems()) {
-            StockItem offer = resolveOffer(item, purchaseOrder.getBuyerOrganization(), warehouse);
-            item.setDistributorOffer(offer);
+            if (item.getId() == null || item.getStockItem() == null || item.getQuantity() <= 0
+                    || item.getProductSkuSnapshot() == null || item.getProductSkuSnapshot().isBlank()
+                    || item.getProductNameSnapshot() == null || item.getProductNameSnapshot().isBlank()) {
+                throw new ApiException(ErrorCode.CONFLICT,
+                        "Purchase order line is missing its persisted product ID, SKU, name, or ordered quantity; repair the PO line before creating a shipment");
+            }
         }
+        if (purchaseOrder.getItems().isEmpty())
+            throw new ApiException(ErrorCode.CONFLICT, "Purchase order has no persisted lines to ship");
 
         if (shipment == null) {
             shipment = new PurchaseOrderShipment();

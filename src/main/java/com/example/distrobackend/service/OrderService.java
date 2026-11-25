@@ -44,6 +44,7 @@ public class OrderService {
     private final UserRepository userRepository;
     private final OrganizationRepository organizationRepository;
     private final PaymentRepository paymentRepository;
+    private final FinancialLedgerService financialLedgerService;
     private final OrganizationNotificationService notificationService;
     private final PlatformSettingsService platformSettingsService;
 
@@ -323,6 +324,9 @@ public class OrderService {
             order.setReservationExpiresAt(null);
         }
         if (update.status() == OrderStatus.DELIVERED) order.setDeliveredAt(java.time.OffsetDateTime.now());
+        if (update.status() == OrderStatus.REFUNDED) {
+            reverseCapturedCustomerPayment(orderId);
+        }
         if (update.status() == OrderStatus.CANCELLED) {
             order.setCancelledAt(java.time.OffsetDateTime.now());
             order.setReservationExpiresAt(null);
@@ -435,6 +439,50 @@ public class OrderService {
         orderRepository.save(order);
     }
 
+    /**
+     * After an admin reverses a captured payment, stop warehouse fulfilment.
+     * Pre-dispatch orders are cancelled and stock is released; delivered orders
+     * become REFUNDED. In-transit orders keep their status (custody already left
+     * the warehouse) but pick/pack/dispatch reject a REVERSED payment.
+     */
+    @Transactional
+    public void markUnfulfillableAfterPaymentReversal(UUID orderId, String reason) {
+        Order order = orderRepository.findByIdWithItemsForUpdate(orderId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
+        OrderStatus status = order.getStatus();
+        if (status == OrderStatus.CANCELLED || status == OrderStatus.FAILED
+                || status == OrderStatus.REFUNDED) {
+            return;
+        }
+        String note = reason == null || reason.isBlank()
+                ? "Payment reversed; order is no longer fulfillable" : reason.trim();
+        if (status == OrderStatus.DELIVERED) {
+            OrderStatusHistory history = new OrderStatusHistory();
+            history.setFromStatus(status);
+            history.setToStatus(OrderStatus.REFUNDED);
+            history.setNote(note);
+            order.addStatusHistory(history);
+            order.setStatus(OrderStatus.REFUNDED);
+            orderRepository.save(order);
+            return;
+        }
+        if (status == OrderStatus.PENDING || status == OrderStatus.CONFIRMED
+                || status == OrderStatus.PROCESSING || status == OrderStatus.READY_TO_PACK
+                || status == OrderStatus.AWAITING_DISPATCH) {
+            releaseOrRestoreInventory(order);
+            OrderStatusHistory history = new OrderStatusHistory();
+            history.setFromStatus(status);
+            history.setToStatus(OrderStatus.CANCELLED);
+            history.setNote(note);
+            order.addStatusHistory(history);
+            order.setStatus(OrderStatus.CANCELLED);
+            order.setCancelledAt(OffsetDateTime.now());
+            order.setCancellationReason(note);
+            order.setReservationExpiresAt(null);
+            orderRepository.save(order);
+        }
+    }
+
     /** Releases an abandoned unpaid reservation after its payment window expires. */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean expireReservationAndFailOrder(UUID orderId, OffsetDateTime now) {
@@ -469,6 +517,20 @@ public class OrderService {
         return true;
     }
 
+    private void reverseCapturedCustomerPayment(UUID orderId) {
+        Payment payment = paymentRepository.findByOrderIdForUpdate(orderId).orElse(null);
+        if (payment == null) {
+            return;
+        }
+        if (payment.getStatus() != PaymentStatus.CONFIRMED
+                && payment.getStatus() != PaymentStatus.RECONCILED) {
+            return;
+        }
+        financialLedgerService.reverseCapturedPayment("CUSTOMER_ORDER_PAYMENT", payment.getId());
+        payment.setStatus(PaymentStatus.REVERSED);
+        paymentRepository.save(payment);
+    }
+
     @Transactional
     public OrderResponse dispatchFromTrip(AuthenticatedUser actor, UUID orderId) {
         if (actor == null || actor.organizationId() == null
@@ -485,6 +547,7 @@ public class OrderService {
             throw new ApiException(ErrorCode.INVALID_STATE_TRANSITION,
                     "Only an order ready for dispatch can enter transit");
         }
+        rejectIfPaymentReversed(orderId);
         User changedBy = userRepository.findById(actor.userId())
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "User not found"));
         OrderStatusHistory history = new OrderStatusHistory();
@@ -502,6 +565,7 @@ public class OrderService {
     public OrderResponse pickOrderItem(AuthenticatedUser actor, UUID orderId,
                                        PickOrderItemRequest request) {
         Order order = findWarehouseOrderForUpdate(actor, orderId);
+        rejectIfPaymentReversed(orderId);
         if (order.getStatus() != OrderStatus.CONFIRMED && order.getStatus() != OrderStatus.PROCESSING) {
             throw new ApiException(ErrorCode.INVALID_STATE_TRANSITION,
                     "Only paid orders awaiting picking can be picked");
@@ -532,6 +596,7 @@ public class OrderService {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Package count must be a positive integer");
         }
         Order order = findWarehouseOrderForUpdate(actor, orderId);
+        rejectIfPaymentReversed(orderId);
         if (order.getStatus() == OrderStatus.AWAITING_DISPATCH
                 && order.getPackageCount() == request.packageCount()) return mapToResponse(order);
         if (order.getStatus() != OrderStatus.READY_TO_PACK
@@ -546,6 +611,14 @@ public class OrderService {
         recordWarehouseHistory(order, actor, previous, order.getStatus(),
                 "Packed into " + request.packageCount() + " package(s)");
         return mapToResponse(orderRepository.save(order));
+    }
+
+    private void rejectIfPaymentReversed(UUID orderId) {
+        Payment payment = paymentRepository.findByOrderId(orderId).orElse(null);
+        if (payment != null && payment.getStatus() == PaymentStatus.REVERSED) {
+            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                    "This order's payment was reversed and cannot be fulfilled");
+        }
     }
 
     private Order findWarehouseOrderForUpdate(AuthenticatedUser actor, UUID orderId) {

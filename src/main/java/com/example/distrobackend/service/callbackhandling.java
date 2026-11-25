@@ -18,8 +18,9 @@ public class callbackhandling {
      * Exceptions intentionally propagate so rejected or unverifiable callbacks
      * are never acknowledged as successful.
      */
-    public String handle(String callbackSecret, MpesaCallbackRequest callbackRequest) {
-        paymentService.processMpesaCallback(callbackSecret, callbackRequest);
+    public String handle(String callbackSecret, String callbackToken, String remoteAddress,
+                         MpesaCallbackRequest callbackRequest) {
+        paymentService.processMpesaCallback(callbackSecret, callbackToken, remoteAddress, callbackRequest);
         return ACCEPTED_RESPONSE;
     }
 }

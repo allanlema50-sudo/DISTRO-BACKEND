@@ -8,6 +8,7 @@ import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.dto.LedgerJournalResponse;
 import com.example.distrobackend.repository.LedgerAccountRepository;
+import com.example.distrobackend.repository.LedgerEntryRepository;
 import com.example.distrobackend.repository.LedgerJournalRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
 import lombok.RequiredArgsConstructor;
@@ -28,9 +29,13 @@ import java.util.UUID;
 public class FinancialLedgerService {
     private static final String CAPTURE_EVENT = "PAYMENT_CAPTURED";
     private static final String REFUND_EVENT = "PAYMENT_REFUNDED";
+    private static final String REVERSAL_EVENT = "PAYMENT_REVERSED";
+    private static final String PAYOUT_EVENT = "PAYOUT";
+    static final String CUSTOMER_ORDER_PAYMENT = "CUSTOMER_ORDER_PAYMENT";
 
     private final LedgerAccountRepository accountRepository;
     private final LedgerJournalRepository journalRepository;
+    private final LedgerEntryRepository entryRepository;
     private final CommissionRuleService commissionRuleService;
 
     @Transactional
@@ -96,10 +101,17 @@ public class FinancialLedgerService {
 
     @Transactional
     public void recordRefund(String sourceType, UUID sourceId) {
+        if (journalRepository.findBySourceTypeAndSourceIdAndEventType(sourceType, sourceId, REFUND_EVENT).isPresent()
+                || journalRepository.findBySourceTypeAndSourceIdAndEventType(sourceType, sourceId, REVERSAL_EVENT)
+                        .isPresent()) {
+            // A capture is reversed once, by either the refund or the reversal path.
+            return;
+        }
         LedgerJournal capture = journalRepository
                 .findBySourceTypeAndSourceIdAndEventType(sourceType, sourceId, CAPTURE_EVENT)
-                .orElseThrow(() -> new ApiException(ErrorCode.CONFLICT, "Original captured ledger entry was not found"));
-        if (journalRepository.findBySourceTypeAndSourceIdAndEventType(sourceType, sourceId, REFUND_EVENT).isPresent()) {
+                .orElse(null);
+        if (capture == null) {
+            // Pre-ledger CONFIRMED/RECONCILED payments have nothing to reverse in the books.
             return;
         }
         LedgerJournal reversal = new LedgerJournal();
@@ -121,6 +133,132 @@ public class FinancialLedgerService {
         }
         assertBalanced(reversal);
         journalRepository.save(reversal);
+    }
+
+    /**
+     * Customer M-Pesa is collected on the platform till and owed in full to the
+     * distributor. Checkout commission is not applied.
+     */
+    @Transactional
+    public void recordCustomerOrderCapture(UUID paymentId, Organization beneficiary,
+                                           BigDecimal gross, String currency) {
+        if (paymentId == null || beneficiary == null) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "A payment ledger source and beneficiary are required");
+        }
+        LedgerJournal existing = journalRepository
+                .findBySourceTypeAndSourceIdAndEventType(CUSTOMER_ORDER_PAYMENT, paymentId, CAPTURE_EVENT)
+                .orElse(null);
+        if (existing != null) {
+            return;
+        }
+        String normalizedCurrency = normalizeCurrency(currency);
+        BigDecimal normalizedGross = requireCurrencyScale(gross, "gross", currencyScale(normalizedCurrency));
+        if (normalizedGross.signum() <= 0) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Payment amounts must be valid positive values");
+        }
+        LedgerAccount clearing = platformAccount(LedgerAccountType.PROVIDER_CLEARING, normalizedCurrency);
+        LedgerAccount payable = organizationAccount(LedgerAccountType.ORGANIZATION_PAYABLE,
+                normalizedCurrency, beneficiary);
+        LedgerJournal journal = new LedgerJournal();
+        journal.setSourceType(CUSTOMER_ORDER_PAYMENT);
+        journal.setSourceId(paymentId);
+        journal.setEventType(CAPTURE_EVENT);
+        journal.setCurrency(normalizedCurrency);
+        journal.setDescription("Customer M-Pesa collected for " + beneficiary.getName());
+        journal.setSimulated(false);
+        addEntry(journal, clearing, LedgerEntryDirection.DEBIT, normalizedGross, normalizedCurrency,
+                "Customer payment received by provider");
+        addEntry(journal, payable, LedgerEntryDirection.CREDIT, normalizedGross, normalizedCurrency,
+                "Amount payable to distributor");
+        assertBalanced(journal);
+        journalRepository.save(journal);
+    }
+
+    @Transactional(readOnly = true)
+    public java.util.Optional<BigDecimal> capturedGross(String sourceType, UUID sourceId) {
+        return journalRepository.findBySourceTypeAndSourceIdAndEventType(sourceType, sourceId, CAPTURE_EVENT)
+                .map(journal -> amountFor(journal, LedgerAccountType.PROVIDER_CLEARING, LedgerEntryDirection.DEBIT));
+    }
+
+    /**
+     * Flips the captured journal. A second call for the same source is a no-op.
+     * Payments confirmed before ledger posting also no-op: there is nothing to reverse.
+     */
+    @Transactional
+    public void reverseCapturedPayment(String sourceType, UUID sourceId) {
+        if (sourceType == null || sourceType.isBlank() || sourceId == null) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "A payment ledger source is required");
+        }
+        if (journalRepository.findBySourceTypeAndSourceIdAndEventType(sourceType, sourceId, REVERSAL_EVENT)
+                .isPresent()
+                || journalRepository.findBySourceTypeAndSourceIdAndEventType(sourceType, sourceId, REFUND_EVENT)
+                        .isPresent()) {
+            return;
+        }
+        LedgerJournal capture = journalRepository
+                .findBySourceTypeAndSourceIdAndEventType(sourceType, sourceId, CAPTURE_EVENT)
+                .orElse(null);
+        if (capture == null) {
+            return;
+        }
+        LedgerJournal reversal = new LedgerJournal();
+        reversal.setSourceType(sourceType);
+        reversal.setSourceId(sourceId);
+        reversal.setEventType(REVERSAL_EVENT);
+        reversal.setCurrency(capture.getCurrency());
+        reversal.setCommissionRuleId(capture.getCommissionRuleId());
+        reversal.setDescription("Reversal of captured payment");
+        reversal.setSimulated(false);
+        for (LedgerEntry entry : capture.getEntries()) {
+            LedgerEntryDirection flipped = entry.getDirection() == LedgerEntryDirection.DEBIT
+                    ? LedgerEntryDirection.CREDIT : LedgerEntryDirection.DEBIT;
+            addEntry(reversal, entry.getAccount(), flipped, entry.getAmount(), entry.getCurrency(),
+                    "Reversal: " + entry.getDescription());
+        }
+        assertBalanced(reversal);
+        journalRepository.save(reversal);
+    }
+
+    @Transactional
+    public void recordOrganizationPayout(UUID payoutId, Organization organization, BigDecimal amount,
+                                         String currency, String bankReference) {
+        LedgerJournal existing = journalRepository
+                .findBySourceTypeAndSourceIdAndEventType("ORGANIZATION_PAYOUT", payoutId, PAYOUT_EVENT)
+                .orElse(null);
+        if (existing != null) {
+            return;
+        }
+        String normalizedCurrency = normalizeCurrency(currency);
+        BigDecimal normalizedAmount = requireCurrencyScale(amount, "amount", currencyScale(normalizedCurrency));
+        if (normalizedAmount.signum() <= 0) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Payout amount must be positive");
+        }
+        LedgerAccount payable = organizationAccount(LedgerAccountType.ORGANIZATION_PAYABLE,
+                normalizedCurrency, organization);
+        LedgerAccount clearing = platformAccount(LedgerAccountType.PAYOUT_CLEARING, normalizedCurrency);
+        LedgerJournal journal = new LedgerJournal();
+        journal.setSourceType("ORGANIZATION_PAYOUT");
+        journal.setSourceId(payoutId);
+        journal.setEventType(PAYOUT_EVENT);
+        journal.setCurrency(normalizedCurrency);
+        journal.setDescription("Payout to " + organization.getName() + " reference " + bankReference);
+        journal.setSimulated(false);
+        addEntry(journal, payable, LedgerEntryDirection.DEBIT, normalizedAmount, normalizedCurrency,
+                "Payable reduced by bank payout");
+        addEntry(journal, clearing, LedgerEntryDirection.CREDIT, normalizedAmount, normalizedCurrency,
+                "Payout clearing");
+        assertBalanced(journal);
+        journalRepository.save(journal);
+    }
+
+    @Transactional(readOnly = true)
+    public BigDecimal payableBalance(UUID organizationId, String currency) {
+        String normalizedCurrency = normalizeCurrency(currency);
+        BigDecimal balance = entryRepository.organizationPayableBalance(organizationId, normalizedCurrency);
+        if (balance == null) {
+            return BigDecimal.ZERO.setScale(currencyScale(normalizedCurrency), RoundingMode.HALF_UP);
+        }
+        return balance.setScale(currencyScale(normalizedCurrency), RoundingMode.HALF_UP);
     }
 
     @Transactional
@@ -316,6 +454,18 @@ public class FinancialLedgerService {
                 .filter(entry -> entry.getAccount().getAccountType() == type && entry.getDirection() == direction)
                 .map(LedgerEntry::getAmount).toList();
         return entries.isEmpty() ? null : entries.stream().reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    private static int currencyScale(String normalizedCurrency) {
+        try {
+            int currencyScale = Currency.getInstance(normalizedCurrency).getDefaultFractionDigits();
+            if (currencyScale < 0) {
+                throw new ApiException(ErrorCode.BAD_REQUEST, "currency must have a defined minor-unit precision");
+            }
+            return currencyScale;
+        } catch (IllegalArgumentException ex) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "currency must be a supported ISO 4217 currency code");
+        }
     }
 
     private static BigDecimal requireCurrencyScale(BigDecimal amount, String field, int currencyScale) {

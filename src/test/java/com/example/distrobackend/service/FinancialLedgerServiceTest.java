@@ -9,6 +9,7 @@ import com.example.distrobackend.Domain.enums.LedgerAccountType;
 import com.example.distrobackend.Domain.enums.LedgerEntryDirection;
 import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.repository.LedgerAccountRepository;
+import com.example.distrobackend.repository.LedgerEntryRepository;
 import com.example.distrobackend.repository.LedgerJournalRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -28,12 +29,13 @@ import static org.mockito.Mockito.*;
 class FinancialLedgerServiceTest {
     @Mock private LedgerAccountRepository accountRepository;
     @Mock private LedgerJournalRepository journalRepository;
+    @Mock private LedgerEntryRepository entryRepository;
     @Mock private CommissionRuleService commissionRuleService;
 
     @Test
     void recordsABalancedCaptureJournalAndCommission() {
         FinancialLedgerService service = new FinancialLedgerService(
-                accountRepository, journalRepository, commissionRuleService);
+                accountRepository, journalRepository, entryRepository, commissionRuleService);
         Organization distributor = new Organization();
         distributor.setId(UUID.randomUUID());
         distributor.setName("Distributor");
@@ -70,7 +72,7 @@ class FinancialLedgerServiceTest {
     @Test
     void doesNotCreateASecondJournalForTheSamePaymentEvent() {
         FinancialLedgerService service = new FinancialLedgerService(
-                accountRepository, journalRepository, commissionRuleService);
+                accountRepository, journalRepository, entryRepository, commissionRuleService);
         Organization distributor = new Organization();
         distributor.setId(UUID.randomUUID());
         distributor.setType(Organizationtype.DISTRIBUTOR);
@@ -91,7 +93,7 @@ class FinancialLedgerServiceTest {
     @Test
     void aDelayedSuccessForAReversedTransferDoesNotCreateAnotherPayout() {
         FinancialLedgerService service = new FinancialLedgerService(
-                accountRepository, journalRepository, commissionRuleService);
+                accountRepository, journalRepository, entryRepository, commissionRuleService);
         SupplierSettlement settlement = settlement("transfer-1");
         LedgerJournal payout = payoutJournal("PAYOUT_SETTLED_1", "transfer-1", "Confirmed supplier payout transfer-1");
         LedgerJournal reversal = payoutJournal("PAYOUT_REVERSED_1", "transfer-1",
@@ -107,7 +109,7 @@ class FinancialLedgerServiceTest {
     @Test
     void recordsANewPayoutReferenceAfterThePriorTransferWasReversed() {
         FinancialLedgerService service = new FinancialLedgerService(
-                accountRepository, journalRepository, commissionRuleService);
+                accountRepository, journalRepository, entryRepository, commissionRuleService);
         SupplierSettlement settlement = settlement("transfer-2");
         LedgerJournal payout = payoutJournal("PAYOUT_SETTLED_1", "transfer-1", "Confirmed supplier payout transfer-1");
         LedgerJournal reversal = payoutJournal("PAYOUT_REVERSED_1", "transfer-1",
@@ -132,7 +134,7 @@ class FinancialLedgerServiceTest {
     @Test
     void replayingTheSamePayoutReversalDoesNotCreateAnotherJournal() {
         FinancialLedgerService service = new FinancialLedgerService(
-                accountRepository, journalRepository, commissionRuleService);
+                accountRepository, journalRepository, entryRepository, commissionRuleService);
         SupplierSettlement settlement = settlement("transfer-1");
         LedgerJournal payout = payoutJournal("PAYOUT_SETTLED_1", "transfer-1", "Confirmed supplier payout transfer-1");
         LedgerJournal reversal = payoutJournal("PAYOUT_REVERSED_1", "transfer-1",
@@ -141,6 +143,65 @@ class FinancialLedgerServiceTest {
                 "SUPPLIER_SETTLEMENT", settlement.getId())).thenReturn(java.util.List.of(payout, reversal));
 
         service.recordSupplierPayoutReversal(settlement);
+
+        verify(journalRepository, never()).save(any(LedgerJournal.class));
+    }
+
+    @Test
+    void customerCaptureCreditsTheDistributorTheFullAmount() {
+        FinancialLedgerService service = new FinancialLedgerService(
+                accountRepository, journalRepository, entryRepository, commissionRuleService);
+        Organization distributor = new Organization();
+        distributor.setId(UUID.randomUUID());
+        distributor.setName("Builder Depot");
+        UUID paymentId = UUID.randomUUID();
+        when(journalRepository.findBySourceTypeAndSourceIdAndEventType(
+                "CUSTOMER_ORDER_PAYMENT", paymentId, "PAYMENT_CAPTURED")).thenReturn(Optional.empty());
+        when(accountRepository.findPlatformAccount(LedgerAccountType.PROVIDER_CLEARING, "KES"))
+                .thenReturn(Optional.of(account(LedgerAccountType.PROVIDER_CLEARING)));
+        when(accountRepository.findOrganizationAccount(
+                LedgerAccountType.ORGANIZATION_PAYABLE, "KES", distributor.getId()))
+                .thenReturn(Optional.of(account(LedgerAccountType.ORGANIZATION_PAYABLE)));
+        when(journalRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.recordCustomerOrderCapture(paymentId, distributor, new BigDecimal("1250.00"), "KES");
+
+        ArgumentCaptor<LedgerJournal> saved = ArgumentCaptor.forClass(LedgerJournal.class);
+        verify(journalRepository).save(saved.capture());
+        assertThat(saved.getValue().getEntries()).hasSize(2);
+        verifyNoInteractions(commissionRuleService);
+    }
+
+    @Test
+    void reverseWithoutACaptureJournalIsANoOpForLegacyPayments() {
+        FinancialLedgerService service = new FinancialLedgerService(
+                accountRepository, journalRepository, entryRepository, commissionRuleService);
+        UUID paymentId = UUID.randomUUID();
+        when(journalRepository.findBySourceTypeAndSourceIdAndEventType(
+                "CUSTOMER_ORDER_PAYMENT", paymentId, "PAYMENT_REVERSED")).thenReturn(Optional.empty());
+        when(journalRepository.findBySourceTypeAndSourceIdAndEventType(
+                "CUSTOMER_ORDER_PAYMENT", paymentId, "PAYMENT_REFUNDED")).thenReturn(Optional.empty());
+        when(journalRepository.findBySourceTypeAndSourceIdAndEventType(
+                "CUSTOMER_ORDER_PAYMENT", paymentId, "PAYMENT_CAPTURED")).thenReturn(Optional.empty());
+
+        service.reverseCapturedPayment("CUSTOMER_ORDER_PAYMENT", paymentId);
+
+        verify(journalRepository, never()).save(any(LedgerJournal.class));
+    }
+
+    @Test
+    void refundWithoutACaptureJournalIsANoOpForLegacyPayments() {
+        FinancialLedgerService service = new FinancialLedgerService(
+                accountRepository, journalRepository, entryRepository, commissionRuleService);
+        UUID paymentId = UUID.randomUUID();
+        when(journalRepository.findBySourceTypeAndSourceIdAndEventType(
+                "CUSTOMER_ORDER_PAYMENT", paymentId, "PAYMENT_REFUNDED")).thenReturn(Optional.empty());
+        when(journalRepository.findBySourceTypeAndSourceIdAndEventType(
+                "CUSTOMER_ORDER_PAYMENT", paymentId, "PAYMENT_REVERSED")).thenReturn(Optional.empty());
+        when(journalRepository.findBySourceTypeAndSourceIdAndEventType(
+                "CUSTOMER_ORDER_PAYMENT", paymentId, "PAYMENT_CAPTURED")).thenReturn(Optional.empty());
+
+        service.recordRefund("CUSTOMER_ORDER_PAYMENT", paymentId);
 
         verify(journalRepository, never()).save(any(LedgerJournal.class));
     }

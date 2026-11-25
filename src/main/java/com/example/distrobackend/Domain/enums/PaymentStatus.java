@@ -6,5 +6,11 @@ public enum PaymentStatus {
     CONFIRMED,
     FAILED,
     REVERSED,
+    /**
+     * Paid, and confirmed a second way through Daraja's STK query: either the
+     * callback never arrived and the query reported success, or the nightly
+     * payment-ledger consistency check found the query success and a captured
+     * journal equal to the amount. Not matched against an M-Pesa statement.
+     */
     RECONCILED
 }

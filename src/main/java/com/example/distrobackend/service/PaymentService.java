@@ -65,6 +65,8 @@ public class PaymentService {
     private final FinancialLedgerService financialLedgerService;
     private final PurchaseOrderShipmentService purchaseOrderShipmentService;
     private final ApplicationEventPublisher eventPublisher;
+    private final CustomerCollectionProvider collectionProvider;
+    private final MpesaCallbackGuard callbackGuard;
 
     @Autowired
     public PaymentService(PaymentRepository paymentRepository,
@@ -75,7 +77,9 @@ public class PaymentService {
                           RestTemplate darajaRestTemplate,
                           FinancialLedgerService financialLedgerService,
                           PurchaseOrderShipmentService purchaseOrderShipmentService,
-                          ApplicationEventPublisher eventPublisher) {
+                          ApplicationEventPublisher eventPublisher,
+                          CustomerCollectionProvider collectionProvider,
+                          MpesaCallbackGuard callbackGuard) {
         this.paymentRepository = paymentRepository;
         this.purchaseOrderRepository = purchaseOrderRepository;
         this.settlementRepository = settlementRepository;
@@ -85,6 +89,8 @@ public class PaymentService {
         this.financialLedgerService = financialLedgerService;
         this.purchaseOrderShipmentService = purchaseOrderShipmentService;
         this.eventPublisher = eventPublisher;
+        this.collectionProvider = collectionProvider;
+        this.callbackGuard = callbackGuard;
     }
 
     /** Compatibility constructor for existing customer-order unit fixtures. */
@@ -93,7 +99,7 @@ public class PaymentService {
                           OrderService orderService,
                           RestTemplate darajaRestTemplate) {
         this(paymentRepository, null, null, orderRepository, orderService, darajaRestTemplate,
-                null, null, null);
+                null, null, null, null, null);
     }
 
     @Value("${mpesa.base-url}")
@@ -235,7 +241,17 @@ public class PaymentService {
 
     @Transactional
     public void processMpesaCallback(String suppliedCallbackSecret, MpesaCallbackRequest callbackRequest) {
-        verifyCallbackSecret(suppliedCallbackSecret);
+        processMpesaCallback(suppliedCallbackSecret, null, null, callbackRequest);
+    }
+
+    @Transactional
+    public void processMpesaCallback(String suppliedCallbackSecret, String callbackToken, String remoteAddress,
+                                     MpesaCallbackRequest callbackRequest) {
+        if (callbackGuard != null) {
+            callbackGuard.verifyCustomerCallback(suppliedCallbackSecret, callbackToken, remoteAddress);
+        } else {
+            verifyCallbackSecret(suppliedCallbackSecret);
+        }
         if (callbackRequest == null || callbackRequest.getBody() == null
                 || callbackRequest.getBody().getStkCallback() == null) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Invalid M-Pesa callback payload");
@@ -310,9 +326,9 @@ public class PaymentService {
             paymentRepository.save(payment);
             orderService.confirmPaidOrder(payment.getOrder().getId());
             if (financialLedgerService != null) {
-                financialLedgerService.recordCapturedPayment(
-                        "CUSTOMER_ORDER_PAYMENT", payment.getId(), payment.getOrder().getOrganization(),
-                        payment.getAmount(), BigDecimal.ZERO, payment.getCurrency(), false);
+                financialLedgerService.recordCustomerOrderCapture(
+                        payment.getId(), payment.getOrder().getOrganization(),
+                        payment.getAmount(), payment.getCurrency());
             }
         } else {
             payment.setStatus(PaymentStatus.FAILED);
@@ -363,9 +379,9 @@ public class PaymentService {
             paymentRepository.save(payment);
             orderService.confirmPaidOrder(orderId);
             if (financialLedgerService != null) {
-                financialLedgerService.recordCapturedPayment(
-                        "CUSTOMER_ORDER_PAYMENT", payment.getId(), order.getOrganization(),
-                        payment.getAmount(), BigDecimal.ZERO, payment.getCurrency(), false);
+                financialLedgerService.recordCustomerOrderCapture(
+                        payment.getId(), order.getOrganization(),
+                        payment.getAmount(), payment.getCurrency());
             }
         } else if (isConfiguredFinalFailureCode(result.resultCode())) {
             String reason = isBlank(result.resultDescription())
@@ -386,6 +402,35 @@ public class PaymentService {
         return true;
     }
 
+    /**
+     * Payment-ledger consistency check: a confirmed payment becomes RECONCILED
+     * when Daraja's STK query still reports success and the captured journal
+     * equals the payment amount. No M-Pesa statement is read.
+     */
+    @Transactional
+    public boolean checkLedgerConsistency(UUID paymentId) {
+        Payment payment = paymentRepository.findByIdForUpdate(paymentId).orElse(null);
+        if (payment == null || payment.getStatus() != PaymentStatus.CONFIRMED
+                || financialLedgerService == null || isBlank(payment.getMpesaCheckoutRequestId())) {
+            return false;
+        }
+        java.util.Optional<BigDecimal> captured = financialLedgerService.capturedGross(
+                "CUSTOMER_ORDER_PAYMENT", payment.getId());
+        if (captured.isEmpty() || captured.get() == null
+                || captured.get().compareTo(payment.getAmount()) != 0) {
+            return false;
+        }
+        MpesaQueryResult result = queryMpesaPayment(payment.getMpesaCheckoutRequestId());
+        if (result.resultCode() != 0) {
+            return false;
+        }
+        payment.setStatus(PaymentStatus.RECONCILED);
+        payment.setReconciledAt(OffsetDateTime.now());
+        payment.setReconciledNote("Payment-ledger consistency check: STK query success and captured journal match");
+        paymentRepository.save(payment);
+        return true;
+    }
+
     @Transactional(readOnly = true)
     public PaymentStatusResponse getPaymentStatus(AuthenticatedUser actor, UUID orderId) {
         Payment payment = paymentRepository.findByOrderId(orderId)
@@ -400,31 +445,11 @@ public class PaymentService {
     }
 
     private MpesaStkPushResponse sendStkPush(String accountReference, String description, String phone, int amount) {
-        String timestamp = DARAJA_TIMESTAMP.format(java.time.Instant.now());
-        String passwordText = shortcode + passkey + timestamp;
-        String password = Base64.getEncoder().encodeToString(passwordText.getBytes(StandardCharsets.UTF_8));
-        MpesaStkPushRequest request = MpesaStkPushRequest.builder()
-                .businessShortCode(shortcode)
-                .password(password)
-                .timestamp(timestamp)
-                .transactionType("CustomerPayBillOnline")
-                .amount(String.valueOf(amount))
-                .partyA(phone.replace("+", ""))
-                .partyB(shortcode)
-                .phoneNumber(phone.replace("+", ""))
-                .callBackURL(callbackUrl)
-                .accountReference(accountReference)
-                .transactionDesc(description)
-                .build();
-
-        String accessToken = getDarajaAccessToken();
-        HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(accessToken);
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        ResponseEntity<MpesaStkPushResponse> response = darajaRestTemplate.postForEntity(
-                baseUrl + "/mpesa/stkpush/v1/processrequest",
-                new HttpEntity<>(request, headers), MpesaStkPushResponse.class);
-        return response.getBody();
+        if (collectionProvider == null) {
+            throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED);
+        }
+        String registeredCallback = callbackGuard == null ? callbackUrl : callbackGuard.callbackUrlWithToken(callbackUrl);
+        return collectionProvider.push(accountReference, description, phone, amount, registeredCallback);
     }
 
     private PaymentInitiateResponse initiatePurchaseOrderPayment(AuthenticatedUser actor,

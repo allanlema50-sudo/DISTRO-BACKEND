@@ -61,7 +61,9 @@ public class StockLocationService {
                 return stockLocationRepository.findByStockItem_IdAndStockItem_Organization_IdOrderByLocationCodeAsc(
                                 stockItemId, organizationId).stream()
                         .filter(location -> locationCode.equals(location.getLocationCode()))
-                        .findFirst().map(this::map)
+                        .findFirst()
+                        .map(location -> map(location, movement.getId(),
+                                Math.abs(movement.getLocationQuantityDelta())))
                         .orElseThrow(() -> new ApiException(ErrorCode.CONFLICT,
                                 "The prior put-away record has no matching storage location"));
             }
@@ -95,10 +97,11 @@ public class StockLocationService {
         movement.setExternalReference(locationCode);
         movement.setIdempotencyKey(idempotencyKey);
         movement.setReferenceType("WAREHOUSE_PUT_AWAY");
+        movement.setReferenceId(saved.getId());
         movement.setPerformedBy(userRepository.getReferenceById(actor.userId()));
         movement.setNote("Put away into " + locationCode);
-        stockMovementRepository.save(movement);
-        return map(saved);
+        StockMovement savedMovement = stockMovementRepository.saveAndFlush(movement);
+        return map(saved, savedMovement.getId(), request.quantity());
     }
 
     @Transactional(readOnly = true)
@@ -176,6 +179,10 @@ public class StockLocationService {
     }
 
     private StockLocationResponse map(StockLocation location) {
+        return map(location, null, null);
+    }
+
+    private StockLocationResponse map(StockLocation location, UUID movementId, Integer movedQuantity) {
         StockItem item = location.getStockItem();
         long assigned = stockLocationRepository.sumQuantityByStockItemIdAndOrganizationId(
                 item.getId(), item.getOrganization().getId());
@@ -185,6 +192,6 @@ public class StockLocationService {
                 location.getLocationCode(), location.getQuantity(),
                 item.getWarehouse() == null ? null : item.getWarehouse().getId(),
                 item.getQuantityOnHand(), item.getReservedQuantity(), item.getAvailableQuantity(),
-                unlocated, item.getPickedQuantity());
+                unlocated, item.getPickedQuantity(), movementId, movedQuantity);
     }
 }

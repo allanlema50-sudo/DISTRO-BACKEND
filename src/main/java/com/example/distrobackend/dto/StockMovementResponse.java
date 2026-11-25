@@ -11,6 +11,7 @@ public record StockMovementResponse(
         UUID stockItemId,
         StockMovementType movementType,
         int quantityDelta,
+        int movedQuantity,
         String referenceType,
         UUID referenceId,
         UUID performedBy,
@@ -18,11 +19,15 @@ public record StockMovementResponse(
         OffsetDateTime createdAt
 ) {
     public static StockMovementResponse from(StockMovement movement) {
+        int moved = movement.getLocationQuantityDelta() == null
+                ? 0
+                : Math.abs(movement.getLocationQuantityDelta());
         return new StockMovementResponse(
                 movement.getId(),
                 movement.getStockItem().getId(),
                 movement.getMovementType(),
                 movement.getQuantityDelta(),
+                moved,
                 movement.getReferenceType(),
                 movement.getReferenceId(),
                 movement.getPerformedBy() == null ? null : movement.getPerformedBy().getId(),

@@ -1015,6 +1015,7 @@ Settlement and payout APIs are intentionally Super Admin controlled:
 | `POST` | `/api/v1/admin/financial/settlement-batches/{batchId}/execute` | `SUPER_ADMIN` | Initiate Paystack transfers for the approved batch |
 | `POST` | `/api/v1/admin/financial/settlements/{settlementId}/retry` | `SUPER_ADMIN` | Retry only a confirmed failed or reversed transfer, using a fresh provider reference; unknown attempts remain under reconciliation |
 | `PATCH` | `/api/v1/admin/financial/settlements/{settlementId}/beneficiary` | `SUPER_ADMIN` | Replace an inactive beneficiary on a failed or reversed settlement before retrying it |
+| `GET` | `/api/v1/admin/financial/settlements/{settlementId}/attempts` | `SUPER_ADMIN` | Inspect payout attempts, provider references, outcomes, and failure details |
 | `GET` | `/api/v1/admin/financial/webhook-events?status=DEAD_LETTER` | `SUPER_ADMIN` | Inspect provider webhook processing state and failure reason |
 | `POST` | `/api/v1/admin/financial/webhook-events/{eventId}/retry` | `SUPER_ADMIN` | Requeue a dead-lettered event for processing |
 | `POST` | `/api/v1/admin/financial/payments/{paymentId}/refund` | `SUPER_ADMIN` | Request a full Paystack refund before picking, packing, dispatch, or supplier payout starts; JSON body: `{"reason":"Order could not be fulfilled"}` |

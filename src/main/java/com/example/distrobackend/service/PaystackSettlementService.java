@@ -28,7 +28,7 @@ public class PaystackSettlementService {
     private final UserRepository userRepository;
     private final PaymentDisputeRepository disputeRepository;
     private final CheckoutPaymentRepository checkoutPaymentRepository;
-    private final FinancialLedgerService financialLedgerService;
+    private final SupplierPayoutAttemptRepository payoutAttemptRepository;
     private final PaymentRefundRepository paymentRefundRepository;
     private final PaystackSettlementDispatchStore dispatchStore;
 
@@ -126,6 +126,21 @@ public class PaystackSettlementService {
         SupplierSettlementStatus requested = status == null ? SupplierSettlementStatus.PENDING : status;
         return settlementRepository.findByStatusOrderByCreatedAtAsc(requested, pageable)
                 .map(SupplierSettlementAdminResponse::from);
+    }
+
+    @Transactional(readOnly = true)
+    public Page<SupplierPayoutAttemptResponse> listPayoutAttempts(AuthenticatedUser actor,
+                                                                  UUID settlementId,
+                                                                  Pageable pageable) {
+        requirePlatformAdmin(actor);
+        if (!settlementRepository.existsById(settlementId)) {
+            throw new ApiException(ErrorCode.NOT_FOUND, "Supplier settlement not found");
+        }
+        int page = Math.max(0, pageable.getPageNumber());
+        int size = Math.max(1, Math.min(pageable.getPageSize(), 100));
+        return payoutAttemptRepository.findBySettlement_IdOrderByAttemptNumberDesc(
+                        settlementId, org.springframework.data.domain.PageRequest.of(page, size))
+                .map(SupplierPayoutAttemptResponse::from);
     }
 
     @Transactional
@@ -265,84 +280,13 @@ public class PaystackSettlementService {
         }
     }
 
-    @Transactional
     public void processPaystackWebhook(PaystackPaymentService.Webhook webhook) {
-        if (!Set.of("transfer.success", "transfer.failed", "transfer.reversed").contains(webhook.event())) return;
-        SupplierSettlement observed = settlementRepository.findByPayoutReference(webhook.reference()).orElse(null);
-        if (observed == null || observed.getSettlementBatch() == null) return;
-        SettlementBatch batch = lockBatch(observed.getSettlementBatch().getId());
-        SupplierSettlement settlement = settlementRepository.findByPayoutReferenceForUpdate(webhook.reference())
-                .orElse(null);
-        if (settlement == null || settlement.getProvider() != PaymentProvider.PAYSTACK) return;
-        boolean reversalOfSettled = "transfer.reversed".equals(webhook.event())
-                && settlement.getStatus() == SupplierSettlementStatus.SETTLED;
-        if (settlement.getStatus() != SupplierSettlementStatus.PROCESSING && !reversalOfSettled) return;
-        if (webhook.transferCode() != null) settlement.setProviderTransferCode(webhook.transferCode());
-        long expected = webhookAmount(settlement.getAmount(), settlement.getCurrency());
-        if (webhook.amountMinor() == null || webhook.currency() == null
-                || webhook.amountMinor() != expected
-                || !settlement.getCurrency().equalsIgnoreCase(webhook.currency())) {
-            settlement.setStatus(SupplierSettlementStatus.PROCESSING);
-            settlement.setFailureReason("Paystack transfer amount or currency was missing or mismatched");
-            // Evidence does not prove the transfer failed. Keep the settlement in
-            // PROCESSING so provider reconciliation or an operator can resolve it.
-            settlementRepository.save(settlement);
-            refreshBatchStatus(batch);
-            return;
-        }
-        switch (webhook.event()) {
-            case "transfer.success" -> {
-                financialLedgerService.recordSupplierPayout(settlement);
-                settlement.setStatus(SupplierSettlementStatus.SETTLED);
-                settlement.setSettledAt(OffsetDateTime.now());
-                settlement.setFailureReason(null);
-            }
-            case "transfer.failed" -> {
-                settlement.setStatus(SupplierSettlementStatus.FAILED);
-                settlement.setFailureReason(webhook.gatewayResponse() == null
-                        ? "Paystack reported a failed transfer" : webhook.gatewayResponse());
-            }
-            case "transfer.reversed" -> {
-                financialLedgerService.recordSupplierPayout(settlement);
-                financialLedgerService.recordSupplierPayoutReversal(settlement);
-                settlement.setStatus(SupplierSettlementStatus.REVERSED);
-                settlement.setFailureReason("Paystack reversed the transfer");
-            }
-            default -> { return; }
-        }
-        settlementRepository.save(settlement);
-        refreshBatchStatus(batch);
-    }
-
-    @Transactional
-    public Optional<String> claimTransferVerification(UUID settlementId, OffsetDateTime attemptCutoff,
-                                                       OffsetDateTime checkedBefore, OffsetDateTime checkedAt) {
-        SupplierSettlement settlement = settlementRepository.findByIdForUpdate(settlementId).orElse(null);
-        if (settlement == null || settlement.getProvider() != PaymentProvider.PAYSTACK
-                || settlement.getStatus() != SupplierSettlementStatus.PROCESSING
-                || settlement.getPayoutReference() == null || settlement.getLastAttemptAt() == null
-                || settlement.getLastAttemptAt().isAfter(attemptCutoff)
-                || settlement.getLastStatusCheckAt() != null
-                && settlement.getLastStatusCheckAt().isAfter(checkedBefore)) {
-            return Optional.empty();
-        }
-        settlement.setLastStatusCheckAt(checkedAt);
-        settlementRepository.saveAndFlush(settlement);
-        return Optional.of(settlement.getPayoutReference());
+        dispatchStore.processPaystackWebhook(webhook);
     }
 
     @Transactional
     public void markPaystackTransferNotFound(String reference) {
-        SupplierSettlement observed = settlementRepository.findByPayoutReference(reference).orElse(null);
-        if (observed == null || observed.getSettlementBatch() == null) return;
-        SettlementBatch batch = lockBatch(observed.getSettlementBatch().getId());
-        SupplierSettlement settlement = settlementRepository.findByPayoutReferenceForUpdate(reference).orElse(null);
-        if (settlement == null || settlement.getProvider() != PaymentProvider.PAYSTACK
-                || settlement.getStatus() != SupplierSettlementStatus.PROCESSING) return;
-        settlement.setStatus(SupplierSettlementStatus.FAILED);
-        settlement.setFailureReason("Paystack has no transfer for the stored payout reference");
-        settlementRepository.save(settlement);
-        refreshBatchStatus(batch);
+        dispatchStore.markPaystackTransferNotFound(reference);
     }
 
     private void validateBatchCandidate(SupplierSettlement settlement) {
@@ -373,32 +317,6 @@ public class PaystackSettlementService {
     private void requireTransfersEnabled() {
         if (!paystackPaymentService.transfersEnabled()) {
             throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "Paystack transfers are disabled");
-        }
-    }
-
-    private void refreshBatchStatus(SettlementBatch batch) {
-        if (batch == null) return;
-        batch = lockBatch(batch.getId());
-        List<SupplierSettlement> settlements = settlementRepository
-                .findBySettlementBatch_IdOrderByCreatedAtAsc(batch.getId());
-        if (settlements.isEmpty()) return;
-        boolean allSettled = settlements.stream().allMatch(s -> s.getStatus() == SupplierSettlementStatus.SETTLED);
-        boolean anyActive = settlements.stream().anyMatch(s -> s.getStatus() == SupplierSettlementStatus.PENDING
-                || s.getStatus() == SupplierSettlementStatus.PROCESSING);
-        boolean anyFailed = settlements.stream().anyMatch(s -> s.getStatus() == SupplierSettlementStatus.FAILED
-                || s.getStatus() == SupplierSettlementStatus.REVERSED);
-        batch.setStatus(allSettled ? SettlementBatchStatus.COMPLETED
-                : anyActive ? SettlementBatchStatus.PROCESSING
-                : anyFailed ? SettlementBatchStatus.PARTIALLY_FAILED : SettlementBatchStatus.FAILED);
-        batchRepository.save(batch);
-    }
-
-    private static long webhookAmount(BigDecimal amount, String currency) {
-        if (!"KES".equalsIgnoreCase(currency)) throw new ApiException(ErrorCode.BAD_REQUEST, "Settlement currency must be KES");
-        try {
-            return amount.movePointRight(2).longValueExact();
-        } catch (ArithmeticException ex) {
-            throw new ApiException(ErrorCode.BAD_REQUEST, "Settlement amount must have at most two decimals");
         }
     }
 

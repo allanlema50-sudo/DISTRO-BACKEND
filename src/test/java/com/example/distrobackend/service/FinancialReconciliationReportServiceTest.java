@@ -114,6 +114,8 @@ class FinancialReconciliationReportServiceTest {
 
         LedgerJournal payout = journal("PAYOUT_SETTLED_1", "100.00");
         LedgerJournal reversal = journal("PAYOUT_REVERSED_1", "50.00");
+        payout.setSourceId(settlementId);
+        reversal.setSourceId(settlementId);
         when(paymentRepository.findByProviderAndDemoFalseAndStatusInAndInitiatedAtGreaterThanEqualAndInitiatedAtLessThan(
                 eq(PaymentProvider.PAYSTACK), any(), eq(from), eq(from.plusDays(1)), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(payment), PageRequest.of(0, 100), 1));

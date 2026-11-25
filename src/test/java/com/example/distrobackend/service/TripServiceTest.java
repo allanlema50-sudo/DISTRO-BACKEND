@@ -20,6 +20,7 @@ import com.example.distrobackend.repository.StockItemRepository;
 import com.example.distrobackend.repository.TripLocationPingRepository;
 import com.example.distrobackend.repository.TripRepository;
 import com.example.distrobackend.repository.TripStatusHistoryRepository;
+import com.example.distrobackend.repository.PurchaseOrderShipmentGroupRepository;
 import com.example.distrobackend.repository.UserRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.security.TripAccessService;
@@ -51,6 +52,7 @@ class TripServiceTest {
     @Mock private OrganizationRepository organizationRepository;
     @Mock private TripLocationPingRepository locationPingRepository;
     @Mock private TripStatusHistoryRepository tripStatusHistoryRepository;
+    @Mock private PurchaseOrderShipmentGroupRepository purchaseOrderShipmentGroupRepository;
     @Mock private TripAccessService tripAccessService;
     @Mock private OtpService otpService;
     @Mock private OrderService orderService;

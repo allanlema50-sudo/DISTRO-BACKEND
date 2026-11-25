@@ -1,0 +1,10 @@
+---
+description: Behavior-changing commits need a PR; no-op pushes to main are OK if disclosed
+alwaysApply: true
+---
+
+# When to create a PR
+
+- For any commit that changes app behavior, schema, APIs, config that affects runtime, or deployables: create a branch and open a pull request. Do not push those commits straight to `main`.
+- For no-op / non-affecting work only (Cursor rules, docs with no runtime impact, chore metadata): pushing to `main` is allowed. Always tell the user when you pushed directly to `main`.
+- Prefer a PR whenever unsure whether the change affects anything.

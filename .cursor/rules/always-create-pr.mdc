@@ -1,0 +1,11 @@
+---
+description: Never push fixes straight to main; always open a pull request
+alwaysApply: true
+---
+
+# Always create a PR
+
+- Do **not** commit or push directly to `main` (or `master`).
+- Put work on a feature/fix branch, push that branch, and open a pull request with `gh pr create`.
+- Even for production hotfixes (Flyway, deploy breaks, etc.): branch → PR → merge. Do not `git push origin main`.
+- After merging via PR, do not push follow-up commits to `main`; open another PR if needed.

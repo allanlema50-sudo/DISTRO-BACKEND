@@ -119,12 +119,38 @@ public class MpesaCallbackGuard {
         if (isBlank(callbackUrl) || isBlank(callbackSecret)) {
             return callbackUrl;
         }
-        if (callbackUrl.contains("token=")) {
+        // Only an exact query parameter named "token" counts. Substrings such as
+        // access_token= must not suppress appending the callback secret.
+        if (hasExactQueryParameter(callbackUrl, "token")) {
             return callbackUrl;
         }
         String separator = callbackUrl.contains("?") ? "&" : "?";
         return callbackUrl + separator + "token="
                 + URLEncoder.encode(callbackSecret, StandardCharsets.UTF_8);
+    }
+
+    /** True when {@code name} appears as its own query parameter key. */
+    static boolean hasExactQueryParameter(String url, String name) {
+        int queryAt = url.indexOf('?');
+        if (queryAt < 0 || queryAt == url.length() - 1) {
+            return false;
+        }
+        String query = url.substring(queryAt + 1);
+        int hash = query.indexOf('#');
+        if (hash >= 0) {
+            query = query.substring(0, hash);
+        }
+        for (String pair : query.split("&")) {
+            if (pair.isEmpty()) {
+                continue;
+            }
+            int eq = pair.indexOf('=');
+            String key = eq >= 0 ? pair.substring(0, eq) : pair;
+            if (name.equals(key)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Hashing first keeps the comparison time independent of the supplied length. */

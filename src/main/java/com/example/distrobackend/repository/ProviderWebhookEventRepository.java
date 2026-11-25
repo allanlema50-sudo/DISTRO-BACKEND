@@ -37,17 +37,23 @@ public interface ProviderWebhookEventRepository extends JpaRepository<ProviderWe
     @Modifying
     @Query(value = "INSERT INTO provider_webhook_events "
             + "(id, provider, event_key, event_name, provider_reference, provider_status, amount_minor, "
-            + "currency, gateway_response, transfer_code, status, attempt_count, next_attempt_at, "
+            + "provider_transaction_reference, currency, gateway_response, transfer_code, provider_dispute_id, "
+            + "dispute_status, dispute_resolution, dispute_due_at, status, attempt_count, next_attempt_at, "
             + "received_at, updated_at, version) "
             + "VALUES (:id, :provider, :eventKey, :eventName, :providerReference, :providerStatus, "
-            + ":amountMinor, :currency, :gatewayResponse, :transferCode, 'RECEIVED', 0, CURRENT_TIMESTAMP, "
+            + ":amountMinor, :transactionReference, :currency, :gatewayResponse, :transferCode, :disputeId, "
+            + ":disputeStatus, :disputeResolution, :disputeDueAt, 'RECEIVED', 0, CURRENT_TIMESTAMP, "
             + "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0) ON CONFLICT (event_key) DO NOTHING", nativeQuery = true)
     int insertIfAbsent(@Param("id") UUID id, @Param("provider") String provider,
                        @Param("eventKey") String eventKey, @Param("eventName") String eventName,
                        @Param("providerReference") String providerReference,
                        @Param("providerStatus") String providerStatus, @Param("amountMinor") Long amountMinor,
+                       @Param("transactionReference") String transactionReference,
                        @Param("currency") String currency, @Param("gatewayResponse") String gatewayResponse,
-                       @Param("transferCode") String transferCode);
+                       @Param("transferCode") String transferCode, @Param("disputeId") String disputeId,
+                       @Param("disputeStatus") String disputeStatus,
+                       @Param("disputeResolution") String disputeResolution,
+                       @Param("disputeDueAt") OffsetDateTime disputeDueAt);
 
     Page<ProviderWebhookEvent> findAllByOrderByReceivedAtDesc(Pageable pageable);
 

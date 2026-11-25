@@ -113,6 +113,14 @@ enable payouts. After Paystack approves transfers, set
    retains that reference and verifies it; a recovery worker resumes batch
    members that were not yet dispatched. A new reference is created only after
    Paystack confirms a prior attempt failed or was reversed.
+
+An open or uncleared Paystack dispute, or a refund that is still being processed,
+blocks batch creation and transfer dispatch. After a beneficiary becomes inactive,
+a Super Admin can assign a matching active beneficiary to a failed or reversed
+settlement with `PATCH /api/v1/admin/financial/settlements/{settlementId}/beneficiary`
+before retrying it. A Paystack `needs-attention` refund remains on hold and is
+reconciled using its existing reference; an operator must complete any required
+bank-detail action in Paystack rather than starting a second refund.
 5. Signed `transfer.success`, `transfer.failed`, and `transfer.reversed`
    webhooks also update the settlement and batch status. Webhooks are stored
    before acknowledgement and processed asynchronously with bounded retries.
@@ -167,6 +175,66 @@ for a new Super Admin refund request; each attempt remains in the audit history.
 Partial refunds and refunds after supplier payout are not supported by this
 workflow.
 
+## Disputes
+
+Paystack `charge.dispute.create`, `charge.dispute.remind`, and
+`charge.dispute.resolve` webhooks are stored in the durable inbox and update a
+local dispute record. Super Admins can list disputes at
+`GET /api/v1/admin/financial/disputes`, filter by `PaymentDisputeStatus`, and
+record a review with `PATCH /api/v1/admin/financial/disputes/{providerDisputeId}/review`:
+
+```json
+{
+  "reviewNote": "Paystack shows the dispute resolved; evidence and delivery record reviewed.",
+  "clearForSettlement": true
+}
+```
+
+`clearForSettlement` is accepted only after Paystack reports `RESOLVED`; this
+also requires a nonblank internal review note. Until then, settlement creation,
+batch execution, and retries for the payment are blocked. The API does not
+submit evidence or resolve cases with Paystack, so time-critical evidence and
+provider decisions must still be handled through Paystack's dashboard or a
+separately approved dispute-evidence integration. A transfer already initiated
+before a dispute was received cannot be cancelled here.
+
+## Internal finance reconciliation report
+
+`GET /api/v1/admin/financial/reconciliation-report?from=<ISO-8601>&to=<ISO-8601>`
+returns paginated Paystack checkout records for a required window of at most 31
+days (maximum page size 100). Each record checks that allocations sum to the
+payment amount, capture journals exist and balance, supplier settlement rows
+exist, processed refunds agree with the payment status, and disputes have been
+reviewed before payout. A non-empty `issues` array identifies records needing
+attention.
+
+This report reconciles LogiFlow's own stored data, including whether confirmed
+supplier settlements have balanced payout journals and whether provider-
+reversed transfers have corresponding reversal journals. It does not import a
+bank settlement statement.
+
+`GET /api/v1/admin/financial/provider-transaction-matches?from=<ISO-8601>&to=<ISO-8601>&page=1&perPage=50`
+reads one page from Paystack's transaction-list API and compares each provider
+reference with the matching LogiFlow payment. It flags provider-only
+transactions, amount/currency mismatches, and status mismatches. The date window
+is capped at 31 days and `perPage` at 100. This is a live provider comparison,
+not a stored statement import; page through the full range to review all
+provider transactions. The Paystack secret key must remain configured only on
+the backend.
+
 Transfers use the Paystack balance. The business must complete Paystack's
 transfer/KYC setup and ensure its balance and transfer approval settings are
 ready before enabling this capability.
+
+Each settlement retry receives a new provider reference and a durable attempt
+record committed before the Paystack transfer request is sent. Unknown or
+unresolved attempts are verified by their own reference, even when another
+attempt has already changed the settlement's overall status.
+`GET /api/v1/admin/financial/settlements/{settlementId}/attempts`
+shows the attempt number, Paystack reference and transfer code, outcome,
+timestamps, and failure reason to Super Admins. Late callbacks update their
+matching attempt; a failure callback for an older attempt cannot overwrite the
+state of a newer retry. Ledger payout and reversal journals are keyed to the
+matched attempt and provider reference. Existing payout history is linked to
+its original journal event during migration, so a reversal of a pre-migration
+transfer does not create a second payout journal.

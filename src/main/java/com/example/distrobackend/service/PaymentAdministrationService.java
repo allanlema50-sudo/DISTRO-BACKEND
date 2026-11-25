@@ -123,6 +123,7 @@ public class PaymentAdministrationService {
         payment.setReconciledAt(java.time.OffsetDateTime.now());
         payment.setReconciledBy(null);
         paymentRepository.save(payment);
+        orderService.markUnfulfillableAfterPaymentReversal(orderId, reason);
         return PaymentResponse.from(payment);
     }
 

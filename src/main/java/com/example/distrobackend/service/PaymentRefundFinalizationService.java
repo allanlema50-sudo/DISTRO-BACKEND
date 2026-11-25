@@ -13,13 +13,10 @@ import com.example.distrobackend.repository.CheckoutPaymentRepository;
 import com.example.distrobackend.repository.PaymentAllocationRepository;
 import com.example.distrobackend.repository.PaymentRefundRepository;
 import com.example.distrobackend.repository.SupplierSettlementRepository;
-import com.example.distrobackend.Exception.ApiException;
-import com.example.distrobackend.Exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Locale;
@@ -80,16 +77,24 @@ public class PaymentRefundFinalizationService {
         RefundStatus status = switch (webhook.event()) {
             case "refund.pending" -> RefundStatus.PENDING;
             case "refund.processing" -> RefundStatus.PROCESSING;
+            case "refund.needs-attention" -> RefundStatus.PROCESSING;
             case "refund.processed" -> RefundStatus.PROCESSED;
             case "refund.failed" -> RefundStatus.FAILED;
             default -> null;
         };
         if (status == null) return;
         PaymentRefund refund = refundRepository.findByProviderReferenceForUpdate(webhook.reference()).orElse(null);
+        if (refund == null && webhook.transactionReference() != null) {
+            refund = refundRepository.findFirstByPayment_ProviderReferenceAndStatusInOrderByCreatedAtDescIdDesc(
+                    webhook.transactionReference(), List.of(RefundStatus.REQUESTED, RefundStatus.PENDING,
+                            RefundStatus.PROCESSING)).orElse(null);
+        }
         if (refund == null) return;
         CheckoutPayment payment = paymentRepository.findByIdForUpdate(refund.getPayment().getId()).orElse(null);
         if (payment == null) return;
-        applyProviderStatus(refund, status.name().toLowerCase(Locale.ROOT), null,
+        String providerStatus = "refund.needs-attention".equals(webhook.event())
+                ? "needs-attention" : status.name().toLowerCase(Locale.ROOT);
+        applyProviderStatus(refund, providerStatus, null,
                 webhook.amountMinor(), webhook.currency(), payment);
         refundRepository.saveAndFlush(refund);
     }

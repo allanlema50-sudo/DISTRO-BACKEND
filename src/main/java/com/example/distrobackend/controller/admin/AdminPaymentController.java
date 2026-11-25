@@ -44,7 +44,7 @@ public class AdminPaymentController {
     @PostMapping("/{paymentId}/reverse")
     public PaymentResponse reverse(@AuthenticationPrincipal AuthenticatedUser actor,
                                    @PathVariable UUID paymentId,
-                                   @RequestBody(required = false) ReversePaymentRequest request) {
+                                   @Valid @RequestBody(required = false) ReversePaymentRequest request) {
         String note = request == null ? null : request.note();
         return paymentAdministrationService.reverse(actor, paymentId, note);
     }

@@ -38,19 +38,21 @@ public class OrganizationPayoutService {
         if (key == null) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "An idempotency key is required");
         }
+        String normalizedCurrency = currency(request);
+        // Lock the organization before the idempotency lookup so concurrent
+        // first-time inserts for the same org serialize on the same row.
+        Organization organization = organizationRepository.findByIdForUpdate(request.organizationId())
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Organization not found"));
         OrganizationPayout existing = payoutRepository.findByIdempotencyKey(key).orElse(null);
         if (existing != null) {
             if (!existing.getOrganization().getId().equals(request.organizationId())
                     || existing.getAmount().compareTo(request.amount()) != 0
-                    || !existing.getCurrency().equalsIgnoreCase(currency(request))
+                    || !existing.getCurrency().equalsIgnoreCase(normalizedCurrency)
                     || !existing.getBankReference().equals(request.bankReference().trim())) {
                 throw new ApiException(ErrorCode.CONFLICT, "Idempotency key has already been used");
             }
             return OrganizationPayoutResponse.from(existing);
         }
-        String normalizedCurrency = currency(request);
-        Organization organization = organizationRepository.findByIdForUpdate(request.organizationId())
-                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Organization not found"));
         BigDecimal balance = financialLedgerService.payableBalance(organization.getId(), normalizedCurrency);
         if (balance.signum() <= 0) {
             throw new ApiException(ErrorCode.CONFLICT, balance.signum() < 0

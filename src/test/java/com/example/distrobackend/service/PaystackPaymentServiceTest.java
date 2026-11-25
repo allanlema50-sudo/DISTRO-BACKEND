@@ -75,6 +75,37 @@ class PaystackPaymentServiceTest {
     }
 
     @Test
+    void parsesFlatRefundTransactionReferenceAndStringMinorAmount() throws Exception {
+        RestTemplate restTemplate = new RestTemplate();
+        PaystackPaymentService service = service(restTemplate);
+        byte[] body = "{\"event\":\"refund.processed\",\"data\":{\"transaction_reference\":\"TX-123\",\"amount\":\"12550\",\"currency\":\"KES\"}}"
+                .getBytes(StandardCharsets.UTF_8);
+        String timestamp = Long.toString(Instant.now().getEpochSecond());
+        String signature = new Hmac(WEBHOOK_SECRET).hex((timestamp + ".").getBytes(StandardCharsets.UTF_8), body);
+
+        PaystackPaymentService.Webhook webhook = service.parseAndVerifyWebhook(
+                body, "t=" + timestamp + ",v1=whk_test:" + signature.substring(signature.indexOf('.') + 1), null);
+
+        assertThat(webhook.reference()).isEqualTo("TX-123");
+        assertThat(webhook.transactionReference()).isEqualTo("TX-123");
+        assertThat(webhook.amountMinor()).isEqualTo(12550L);
+    }
+
+    @Test
+    void rejectsFractionalOrOverflowingWebhookMinorAmounts() throws Exception {
+        RestTemplate restTemplate = new RestTemplate();
+        PaystackPaymentService service = service(restTemplate);
+        byte[] body = "{\"event\":\"refund.processed\",\"data\":{\"transaction_reference\":\"TX-123\",\"refund_amount\":\"1.5\"}}"
+                .getBytes(StandardCharsets.UTF_8);
+        String timestamp = Long.toString(Instant.now().getEpochSecond());
+        String signature = new Hmac(WEBHOOK_SECRET).hex((timestamp + ".").getBytes(StandardCharsets.UTF_8), body);
+
+        assertThatThrownBy(() -> service.parseAndVerifyWebhook(body,
+                "t=" + timestamp + ",v1=whk_test:" + signature.substring(signature.indexOf('.') + 1), null))
+                .hasMessageContaining("integer minor-unit");
+    }
+
+    @Test
     void treatsIncompleteSuccessfulHttpInitializationAsUnknown() {
         RestTemplate restTemplate = new RestTemplate();
         MockRestServiceServer server = MockRestServiceServer.bindTo(restTemplate).build();

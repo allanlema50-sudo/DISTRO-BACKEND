@@ -16,6 +16,11 @@ public interface StockLocationRepository extends JpaRepository<StockLocation, UU
             + "where location.stockItem.id = :stockItemId")
     long sumQuantityByStockItemId(@Param("stockItemId") UUID stockItemId);
 
+    @Query("select coalesce(sum(location.quantity), 0) from StockLocation location "
+            + "where location.stockItem.id = :stockItemId and location.stockItem.organization.id = :organizationId")
+    long sumQuantityByStockItemIdAndOrganizationId(@Param("stockItemId") UUID stockItemId,
+                                                   @Param("organizationId") UUID organizationId);
+
     List<StockLocation> findByStockItem_IdAndStockItem_Organization_IdOrderByLocationCodeAsc(
             UUID stockItemId, UUID organizationId);
 

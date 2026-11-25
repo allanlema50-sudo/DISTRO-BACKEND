@@ -8,13 +8,23 @@ import com.example.distrobackend.dto.PayoutBeneficiaryResponse;
 import com.example.distrobackend.dto.ReviewPayoutBeneficiaryRequest;
 import com.example.distrobackend.dto.SettlementBatchResponse;
 import com.example.distrobackend.dto.SupplierSettlementAdminResponse;
+import com.example.distrobackend.dto.SupplierPayoutAttemptResponse;
 import com.example.distrobackend.dto.ProviderWebhookEventResponse;
 import com.example.distrobackend.dto.CreatePaymentRefundRequest;
 import com.example.distrobackend.dto.PaymentRefundResponse;
+import com.example.distrobackend.dto.PaymentDisputeResponse;
+import com.example.distrobackend.dto.UpdatePaymentDisputeReviewRequest;
+import com.example.distrobackend.dto.FinancialReconciliationItem;
+import com.example.distrobackend.dto.ProviderTransactionMatchPage;
+import com.example.distrobackend.dto.ReassignSettlementBeneficiaryRequest;
+import com.example.distrobackend.Domain.enums.PaymentDisputeStatus;
 import com.example.distrobackend.Domain.enums.SupplierSettlementStatus;
 import com.example.distrobackend.Domain.enums.ProviderWebhookStatus;
 import com.example.distrobackend.service.ProviderWebhookInboxService;
 import com.example.distrobackend.service.PaymentRefundService;
+import com.example.distrobackend.service.PaymentDisputeService;
+import com.example.distrobackend.service.FinancialReconciliationReportService;
+import com.example.distrobackend.service.PaystackTransactionMatchingService;
 import com.example.distrobackend.service.PaystackSettlementService;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.service.CommissionRuleService;
@@ -30,6 +40,8 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.UUID;
+import java.time.OffsetDateTime;
+import org.springframework.format.annotation.DateTimeFormat;
 
 @RestController
 @RequestMapping("/api/v1/admin/financial")
@@ -41,6 +53,9 @@ public class AdminFinancialController {
     private final PaystackSettlementService paystackSettlementService;
     private final ProviderWebhookInboxService webhookInboxService;
     private final PaymentRefundService paymentRefundService;
+    private final PaymentDisputeService paymentDisputeService;
+    private final FinancialReconciliationReportService reconciliationReportService;
+    private final PaystackTransactionMatchingService paystackTransactionMatchingService;
 
     @GetMapping("/commission-rules")
     public List<CommissionRuleResponse> commissionRules(@AuthenticationPrincipal AuthenticatedUser actor) {
@@ -96,6 +111,14 @@ public class AdminFinancialController {
         return paystackSettlementService.listSettlements(actor, status, pageable);
     }
 
+    @GetMapping("/settlements/{settlementId}/attempts")
+    public Page<SupplierPayoutAttemptResponse> payoutAttempts(
+            @AuthenticationPrincipal AuthenticatedUser actor,
+            @PathVariable UUID settlementId,
+            Pageable pageable) {
+        return paystackSettlementService.listPayoutAttempts(actor, settlementId, pageable);
+    }
+
     @GetMapping("/settlement-batches")
     public Page<SettlementBatchResponse> settlementBatches(
             @AuthenticationPrincipal AuthenticatedUser actor, Pageable pageable) {
@@ -128,6 +151,14 @@ public class AdminFinancialController {
         return paystackSettlementService.retrySettlement(actor, settlementId);
     }
 
+    @PatchMapping("/settlements/{settlementId}/beneficiary")
+    public SupplierSettlementAdminResponse reassignSettlementBeneficiary(
+            @AuthenticationPrincipal AuthenticatedUser actor,
+            @PathVariable UUID settlementId,
+            @Valid @RequestBody ReassignSettlementBeneficiaryRequest request) {
+        return paystackSettlementService.reassignBeneficiary(actor, settlementId, request);
+    }
+
     @GetMapping("/webhook-events")
     public Page<ProviderWebhookEventResponse> webhookEvents(
             @RequestParam(required = false) ProviderWebhookStatus status, Pageable pageable) {
@@ -151,5 +182,40 @@ public class AdminFinancialController {
             @PathVariable UUID paymentId,
             @Valid @RequestBody CreatePaymentRefundRequest request) {
         return paymentRefundService.requestFullRefund(actor, paymentId, request);
+    }
+
+    @GetMapping("/disputes")
+    public Page<PaymentDisputeResponse> disputes(
+            @AuthenticationPrincipal AuthenticatedUser actor,
+            @RequestParam(required = false) PaymentDisputeStatus status,
+            Pageable pageable) {
+        return paymentDisputeService.list(actor, status, pageable);
+    }
+
+    @PatchMapping("/disputes/{providerDisputeId}/review")
+    public PaymentDisputeResponse reviewDispute(
+            @AuthenticationPrincipal AuthenticatedUser actor,
+            @PathVariable String providerDisputeId,
+            @Valid @RequestBody UpdatePaymentDisputeReviewRequest request) {
+        return paymentDisputeService.review(actor, providerDisputeId, request);
+    }
+
+    @GetMapping("/reconciliation-report")
+    public Page<FinancialReconciliationItem> reconciliationReport(
+            @AuthenticationPrincipal AuthenticatedUser actor,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime to,
+            Pageable pageable) {
+        return reconciliationReportService.report(actor, from, to, pageable);
+    }
+
+    @GetMapping("/provider-transaction-matches")
+    public ProviderTransactionMatchPage providerTransactionMatches(
+            @AuthenticationPrincipal AuthenticatedUser actor,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime to,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "50") int perPage) {
+        return paystackTransactionMatchingService.compare(actor, from, to, page, perPage);
     }
 }

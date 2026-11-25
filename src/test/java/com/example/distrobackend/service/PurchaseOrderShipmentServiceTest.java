@@ -302,6 +302,7 @@ class PurchaseOrderShipmentServiceTest {
         source.setName("Rice");
         source.setQuantityOnHand(20);
         source.setReservedQuantity(5);
+        source.setPickedQuantity(5);
 
         PurchaseOrder purchaseOrder = new PurchaseOrder();
         purchaseOrder.setId(purchaseOrderId);

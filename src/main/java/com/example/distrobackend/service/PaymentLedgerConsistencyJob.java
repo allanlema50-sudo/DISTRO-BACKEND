@@ -9,7 +9,9 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -29,14 +31,43 @@ public class PaymentLedgerConsistencyJob {
 
     @Scheduled(cron = "${payments.ledger-consistency-cron:0 0 3 * * *}", zone = "Africa/Nairobi")
     public void checkConfirmedPayments() {
-        List<UUID> paymentIds = paymentRepository.findIdsByStatus(
-                PaymentStatus.CONFIRMED, PageRequest.of(0, Math.max(1, batchSize)));
-        for (UUID paymentId : paymentIds) {
-            try {
-                paymentService.checkLedgerConsistency(paymentId);
-            } catch (RuntimeException ex) {
-                log.warn("Payment-ledger consistency check skipped payment {}: {}", paymentId, ex.getMessage());
+        int pageSize = Math.max(1, batchSize);
+        Set<UUID> failedThisRun = new HashSet<>();
+        int page = 0;
+        while (true) {
+            List<UUID> paymentIds = paymentRepository.findIdsByStatus(
+                    PaymentStatus.CONFIRMED, PageRequest.of(page, pageSize));
+            if (paymentIds.isEmpty()) {
+                break;
             }
+            List<UUID> candidates = paymentIds.stream()
+                    .filter(id -> !failedThisRun.contains(id))
+                    .toList();
+            if (candidates.isEmpty()) {
+                // Page is only payments that already failed this run; advance past them.
+                if (paymentIds.size() < pageSize) {
+                    break;
+                }
+                page++;
+                continue;
+            }
+            boolean anySuccess = false;
+            for (UUID paymentId : candidates) {
+                try {
+                    paymentService.checkLedgerConsistency(paymentId);
+                    anySuccess = true;
+                } catch (RuntimeException ex) {
+                    failedThisRun.add(paymentId);
+                    log.warn("Payment-ledger consistency check skipped payment {}: {}",
+                            paymentId, ex.getMessage());
+                }
+            }
+            if (paymentIds.size() < pageSize) {
+                break;
+            }
+            // Successes leave CONFIRMED, so re-read from the front. A page of only
+            // failures advances so later eligible payments are not starved.
+            page = anySuccess ? 0 : page + 1;
         }
     }
 }

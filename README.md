@@ -975,7 +975,8 @@ with increasing delays. The scan interval is configurable with
 The financial foundation and commission-rule handoff is documented in
 [`docs/financial-ledger-commission.md`](docs/financial-ledger-commission.md).
 It records confirmed non-demo allocations and customer payments in a balanced,
-idempotent ledger, but it does not yet execute supplier payouts.
+idempotent ledger. Confirmed Paystack supplier transfers also post a balanced
+payout journal; provider-reversed transfers post a matching reversal journal.
 
 | Method | Endpoint | Access | Purpose / integration note |
 |---|---|---|---|
@@ -1013,10 +1014,16 @@ Settlement and payout APIs are intentionally Super Admin controlled:
 | `POST` | `/api/v1/admin/financial/settlement-batches/{batchId}/approve` | `SUPER_ADMIN` | Approve the batch before any payout is attempted |
 | `POST` | `/api/v1/admin/financial/settlement-batches/{batchId}/execute` | `SUPER_ADMIN` | Initiate Paystack transfers for the approved batch |
 | `POST` | `/api/v1/admin/financial/settlements/{settlementId}/retry` | `SUPER_ADMIN` | Retry only a confirmed failed or reversed transfer, using a fresh provider reference; unknown attempts remain under reconciliation |
+| `PATCH` | `/api/v1/admin/financial/settlements/{settlementId}/beneficiary` | `SUPER_ADMIN` | Replace an inactive beneficiary on a failed or reversed settlement before retrying it |
+| `GET` | `/api/v1/admin/financial/settlements/{settlementId}/attempts` | `SUPER_ADMIN` | Inspect payout attempts, provider references, outcomes, and failure details |
 | `GET` | `/api/v1/admin/financial/webhook-events?status=DEAD_LETTER` | `SUPER_ADMIN` | Inspect provider webhook processing state and failure reason |
 | `POST` | `/api/v1/admin/financial/webhook-events/{eventId}/retry` | `SUPER_ADMIN` | Requeue a dead-lettered event for processing |
 | `POST` | `/api/v1/admin/financial/payments/{paymentId}/refund` | `SUPER_ADMIN` | Request a full Paystack refund before picking, packing, dispatch, or supplier payout starts; JSON body: `{"reason":"Order could not be fulfilled"}` |
 | `GET` | `/api/v1/admin/financial/refunds` | `SUPER_ADMIN` | Review refund status and provider reference |
+| `GET` | `/api/v1/admin/financial/disputes?status=AWAITING_MERCHANT_FEEDBACK` | `SUPER_ADMIN` | Review Paystack disputes; supports pagination and optional status filter |
+| `PATCH` | `/api/v1/admin/financial/disputes/{providerDisputeId}/review` | `SUPER_ADMIN` | Add an internal review note; set `clearForSettlement: true` only after Paystack marks the dispute resolved |
+| `GET` | `/api/v1/admin/financial/reconciliation-report?from=2026-11-01T00:00:00Z&to=2026-11-08T00:00:00Z` | `SUPER_ADMIN` | Paginated internal consistency report for Paystack checkouts; date range is required and capped at 31 days |
+| `GET` | `/api/v1/admin/financial/provider-transaction-matches?from=2026-11-01T00:00:00Z&to=2026-11-08T00:00:00Z&page=1&perPage=50` | `SUPER_ADMIN` | Compare a live Paystack transaction-feed page to local payments; flags missing local references or amount/currency/status mismatches |
 
 Paystack callbacks are signature-verified, stored in a durable inbox, and
 acknowledged before background processing. Raw callback bodies are not retained.
@@ -1038,6 +1045,26 @@ Paystack refund events and periodic provider verification finalize refund state;
 successful refunds reverse the original allocation ledger journals exactly
 once. Partial refunds and refunds after supplier payout require a later finance
 workflow.
+
+Paystack dispute-created, reminder and resolved events are stored as dispute
+records and surfaced to Super Admins through notifications and the disputes
+queue. Supplier settlements cannot be batched, executed or retried while a
+dispute remains uncleared. A Super Admin may clear a resolved case for
+settlement only after documenting a review note. This records internal review;
+Paystack remains responsible for provider-side dispute resolution. Transfers
+already initiated before a dispute arrives cannot be recalled by this API.
+
+The reconciliation report checks LogiFlow's own stored data. The separate
+provider transaction match endpoint reads the Paystack transaction feed on
+demand, compares the returned page with local payment references, and limits the
+range to 31 days and page size to 100. It does not persist provider statements
+or discover local payments missing from unrequested provider pages.
+
+The reconciliation report checks persisted payment allocations, balanced
+capture and payout journals, supplier settlement rows, refund state, and
+dispute review state. It reports LogiFlow database consistency; it is not a
+Paystack statement or bank-settlement reconciliation. The API caps reports to
+31 days and 100 rows per page.
 
 Typical payment status values are `INITIATING`, `PENDING`, `CONFIRMED`,
 `RECONCILED`, `FAILED`, and `REVERSED`. A successful STK response means the
@@ -1150,10 +1177,10 @@ audit fails if the stock changed since the count or if the result would fall
 below quantities reserved for customer orders.
 
 Legacy purchase-order settlement records remain a read-only `PENDING` ledger.
-Provider-backed supplier settlement batches are available to `SUPER_ADMIN`.
-Full-checkout Paystack refunds are supported before supplier settlement is
-batched or paid; partial and post-payout refunds, disputes, and platform-level
-reconciliation reporting remain follow-up work.
+Provider-backed supplier settlement batches, full Paystack refunds, dispute
+review, and internal payment-consistency reports are available to
+`SUPER_ADMIN`; partial refunds, post-payout reversals, provider-statement
+matching, and bank reconciliation remain follow-up work.
 
 ### Trips, delivery, and live tracking
 
@@ -1431,8 +1458,8 @@ Known limitations to account for during integration:
 - platform settings, report, analytics, and audit-log endpoints are contract
   surfaces; settlement automation is available only through the reviewed
   Paystack workflow and remains disabled until its transfer capability is enabled;
-- partial or post-payout refunds, disputes, reconciliation reports, and provider
-  payout reversal recovery are not exposed as APIs;
+- Paystack statement matching, partial payment refunds, post-payout reversals,
+  and provider payout reversal recovery are not exposed as APIs;
 - procurement shipment and stock-audit APIs are available, but procurement payment initiation and settlement automation remain a follow-up;
 - an M-Pesa callback requires a reachable callback URL, a configured shared secret, and provider verification;
 - the catalog/order model currently represents distributor offers as stock items, so customers order distributor offer IDs.

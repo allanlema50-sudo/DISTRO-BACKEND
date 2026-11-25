@@ -47,13 +47,17 @@ public class ProviderWebhookInboxService {
                 || webhook.status() != null && webhook.status().length() > 40
                 || webhook.currency() != null && webhook.currency().length() > 3
                 || webhook.gatewayResponse() != null && webhook.gatewayResponse().length() > 10_000
-                || webhook.transferCode() != null && webhook.transferCode().length() > 120) {
+                || webhook.transferCode() != null && webhook.transferCode().length() > 120
+                || webhook.disputeId() != null && webhook.disputeId().length() > 80
+                || webhook.disputeResolution() != null && webhook.disputeResolution().length() > 80
+                || webhook.transactionReference() != null && webhook.transactionReference().length() > 120) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Webhook fields are invalid");
         }
         String key = sha256(rawBody);
         repository.insertIfAbsent(UUID.randomUUID(), provider, key, webhook.event(), webhook.reference(),
-                webhook.status(), webhook.amountMinor(), webhook.currency(), webhook.gatewayResponse(),
-                webhook.transferCode());
+                webhook.status(), webhook.amountMinor(), webhook.transactionReference(), webhook.currency(),
+                webhook.gatewayResponse(), webhook.transferCode(), webhook.disputeId(), webhook.status(),
+                webhook.disputeResolution(), webhook.disputeDueAt());
     }
 
     @Transactional

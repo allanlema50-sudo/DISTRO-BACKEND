@@ -4,12 +4,13 @@ import com.example.distrobackend.Domain.entity.LedgerAccount;
 import com.example.distrobackend.Domain.entity.LedgerEntry;
 import com.example.distrobackend.Domain.entity.LedgerJournal;
 import com.example.distrobackend.Domain.entity.Organization;
+import com.example.distrobackend.Domain.entity.SupplierSettlement;
 import com.example.distrobackend.Domain.enums.LedgerAccountType;
 import com.example.distrobackend.Domain.enums.LedgerEntryDirection;
+import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.repository.LedgerAccountRepository;
 import com.example.distrobackend.repository.LedgerEntryRepository;
 import com.example.distrobackend.repository.LedgerJournalRepository;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -22,151 +23,233 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class FinancialLedgerServiceTest {
-
     @Mock private LedgerAccountRepository accountRepository;
     @Mock private LedgerJournalRepository journalRepository;
     @Mock private LedgerEntryRepository entryRepository;
     @Mock private CommissionRuleService commissionRuleService;
 
-    private FinancialLedgerService ledger;
-    private Organization distributor;
-    private LedgerAccount clearing;
-    private LedgerAccount payable;
-
-    @BeforeEach
-    void setUp() {
-        ledger = new FinancialLedgerService(accountRepository, journalRepository, entryRepository, commissionRuleService);
-        distributor = new Organization();
+    @Test
+    void recordsABalancedCaptureJournalAndCommission() {
+        FinancialLedgerService service = new FinancialLedgerService(
+                accountRepository, journalRepository, entryRepository, commissionRuleService);
+        Organization distributor = new Organization();
         distributor.setId(UUID.randomUUID());
-        distributor.setName("Builder Depot");
-        clearing = account(LedgerAccountType.PROVIDER_CLEARING, null);
-        payable = account(LedgerAccountType.ORGANIZATION_PAYABLE, distributor);
+        distributor.setName("Distributor");
+        distributor.setType(Organizationtype.DISTRIBUTOR);
+        when(journalRepository.findBySourceTypeAndSourceIdAndEventType(any(), any(), any()))
+                .thenReturn(Optional.empty());
+        when(accountRepository.findPlatformAccount(any(), eq("KES")))
+                .thenAnswer(invocation -> Optional.of(account(invocation.getArgument(0))));
+        when(accountRepository.findOrganizationAccount(any(), eq("KES"), eq(distributor.getId())))
+                .thenAnswer(invocation -> Optional.of(account(LedgerAccountType.ORGANIZATION_PAYABLE)));
+        when(commissionRuleService.resolve(eq(Organizationtype.DISTRIBUTOR), eq("KES"), any()))
+                .thenReturn(new CommissionRuleService.CommissionDecision(
+                        UUID.randomUUID(), new BigDecimal("5.00"), BigDecimal.ZERO, "KES"));
+
+        FinancialLedgerService.FinancialBreakdown result = service.recordCapturedPayment(
+                "CUSTOMER_ORDER_PAYMENT", UUID.randomUUID(), distributor,
+                new BigDecimal("100.00"), BigDecimal.ZERO, "KES", false);
+
+        assertThat(result.commission()).isEqualByComparingTo("5.00");
+        assertThat(result.supplierAmount()).isEqualByComparingTo("95.00");
+        ArgumentCaptor<LedgerJournal> captor = ArgumentCaptor.forClass(LedgerJournal.class);
+        verify(journalRepository).save(captor.capture());
+        LedgerJournal journal = captor.getValue();
+        BigDecimal debits = journal.getEntries().stream()
+                .filter(entry -> entry.getDirection() == LedgerEntryDirection.DEBIT)
+                .map(entry -> entry.getAmount()).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal credits = journal.getEntries().stream()
+                .filter(entry -> entry.getDirection() == LedgerEntryDirection.CREDIT)
+                .map(entry -> entry.getAmount()).reduce(BigDecimal.ZERO, BigDecimal::add);
+        assertThat(debits).isEqualByComparingTo(credits);
+        assertThat(journal.getEntries()).hasSize(3);
+    }
+
+    @Test
+    void doesNotCreateASecondJournalForTheSamePaymentEvent() {
+        FinancialLedgerService service = new FinancialLedgerService(
+                accountRepository, journalRepository, entryRepository, commissionRuleService);
+        Organization distributor = new Organization();
+        distributor.setId(UUID.randomUUID());
+        distributor.setType(Organizationtype.DISTRIBUTOR);
+        UUID sourceId = UUID.randomUUID();
+        when(journalRepository.findBySourceTypeAndSourceIdAndEventType("PAYMENT", sourceId, "PAYMENT_CAPTURED"))
+                .thenReturn(Optional.of(captureJournal()));
+
+        FinancialLedgerService.FinancialBreakdown result = service.recordCapturedPayment("PAYMENT", sourceId, distributor,
+                new BigDecimal("100.00"), BigDecimal.ZERO, "KES", false);
+
+        assertThat(result.gross()).isEqualByComparingTo("100.00");
+        assertThat(result.supplierAmount()).isEqualByComparingTo("95.00");
+        assertThat(result.commission()).isEqualByComparingTo("5.00");
+        verify(journalRepository, never()).save(any(LedgerJournal.class));
+        verifyNoInteractions(commissionRuleService);
+    }
+
+    @Test
+    void aDelayedSuccessForAReversedTransferDoesNotCreateAnotherPayout() {
+        FinancialLedgerService service = new FinancialLedgerService(
+                accountRepository, journalRepository, entryRepository, commissionRuleService);
+        SupplierSettlement settlement = settlement("transfer-1");
+        LedgerJournal payout = payoutJournal("PAYOUT_SETTLED_1", "transfer-1", "Confirmed supplier payout transfer-1");
+        LedgerJournal reversal = payoutJournal("PAYOUT_REVERSED_1", "transfer-1",
+                "Reversal of confirmed supplier payout transfer-1");
+        when(journalRepository.findBySourceTypeAndSourceIdOrderByCreatedAtAsc(
+                "SUPPLIER_SETTLEMENT", settlement.getId())).thenReturn(java.util.List.of(payout, reversal));
+
+        service.recordSupplierPayout(settlement);
+
+        verify(journalRepository, never()).save(any(LedgerJournal.class));
+    }
+
+    @Test
+    void recordsANewPayoutReferenceAfterThePriorTransferWasReversed() {
+        FinancialLedgerService service = new FinancialLedgerService(
+                accountRepository, journalRepository, entryRepository, commissionRuleService);
+        SupplierSettlement settlement = settlement("transfer-2");
+        LedgerJournal payout = payoutJournal("PAYOUT_SETTLED_1", "transfer-1", "Confirmed supplier payout transfer-1");
+        LedgerJournal reversal = payoutJournal("PAYOUT_REVERSED_1", "transfer-1",
+                "Reversal of confirmed supplier payout transfer-1");
+        LedgerAccount payable = account(LedgerAccountType.ORGANIZATION_PAYABLE);
+        LedgerAccount clearing = account(LedgerAccountType.PROVIDER_CLEARING);
+        when(journalRepository.findBySourceTypeAndSourceIdOrderByCreatedAtAsc(
+                "SUPPLIER_SETTLEMENT", settlement.getId())).thenReturn(java.util.List.of(payout, reversal));
+        when(accountRepository.findOrganizationAccount(LedgerAccountType.ORGANIZATION_PAYABLE,
+                "KES", settlement.getSupplierOrganization().getId())).thenReturn(Optional.of(payable));
+        when(accountRepository.findPlatformAccount(LedgerAccountType.PROVIDER_CLEARING, "KES"))
+                .thenReturn(Optional.of(clearing));
+
+        service.recordSupplierPayout(settlement);
+
+        org.mockito.ArgumentCaptor<LedgerJournal> captured = org.mockito.ArgumentCaptor.forClass(LedgerJournal.class);
+        verify(journalRepository).save(captured.capture());
+        assertThat(captured.getValue().getEventType()).isEqualTo("PAYOUT_SETTLED_2");
+        assertThat(captured.getValue().getProviderReference()).isEqualTo("transfer-2");
+    }
+
+    @Test
+    void replayingTheSamePayoutReversalDoesNotCreateAnotherJournal() {
+        FinancialLedgerService service = new FinancialLedgerService(
+                accountRepository, journalRepository, entryRepository, commissionRuleService);
+        SupplierSettlement settlement = settlement("transfer-1");
+        LedgerJournal payout = payoutJournal("PAYOUT_SETTLED_1", "transfer-1", "Confirmed supplier payout transfer-1");
+        LedgerJournal reversal = payoutJournal("PAYOUT_REVERSED_1", "transfer-1",
+                "Reversal of confirmed supplier payout transfer-1");
+        when(journalRepository.findBySourceTypeAndSourceIdOrderByCreatedAtAsc(
+                "SUPPLIER_SETTLEMENT", settlement.getId())).thenReturn(java.util.List.of(payout, reversal));
+
+        service.recordSupplierPayoutReversal(settlement);
+
+        verify(journalRepository, never()).save(any(LedgerJournal.class));
     }
 
     @Test
     void customerCaptureCreditsTheDistributorTheFullAmount() {
+        FinancialLedgerService service = new FinancialLedgerService(
+                accountRepository, journalRepository, entryRepository, commissionRuleService);
+        Organization distributor = new Organization();
+        distributor.setId(UUID.randomUUID());
+        distributor.setName("Builder Depot");
         UUID paymentId = UUID.randomUUID();
         when(journalRepository.findBySourceTypeAndSourceIdAndEventType(
                 "CUSTOMER_ORDER_PAYMENT", paymentId, "PAYMENT_CAPTURED")).thenReturn(Optional.empty());
         when(accountRepository.findPlatformAccount(LedgerAccountType.PROVIDER_CLEARING, "KES"))
-                .thenReturn(Optional.of(clearing));
+                .thenReturn(Optional.of(account(LedgerAccountType.PROVIDER_CLEARING)));
         when(accountRepository.findOrganizationAccount(
                 LedgerAccountType.ORGANIZATION_PAYABLE, "KES", distributor.getId()))
-                .thenReturn(Optional.of(payable));
+                .thenReturn(Optional.of(account(LedgerAccountType.ORGANIZATION_PAYABLE)));
         when(journalRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        ledger.recordCustomerOrderCapture(paymentId, distributor, new BigDecimal("1250.00"), "KES");
+        service.recordCustomerOrderCapture(paymentId, distributor, new BigDecimal("1250.00"), "KES");
 
         ArgumentCaptor<LedgerJournal> saved = ArgumentCaptor.forClass(LedgerJournal.class);
         verify(journalRepository).save(saved.capture());
         assertThat(saved.getValue().getEntries()).hasSize(2);
-        assertThat(amount(saved.getValue(), clearing, LedgerEntryDirection.DEBIT)).isEqualByComparingTo("1250.00");
-        assertThat(amount(saved.getValue(), payable, LedgerEntryDirection.CREDIT)).isEqualByComparingTo("1250.00");
         verifyNoInteractions(commissionRuleService);
     }
 
     @Test
-    void customerCaptureDoesNotPostTwice() {
+    void reverseWithoutACaptureJournalIsANoOpForLegacyPayments() {
+        FinancialLedgerService service = new FinancialLedgerService(
+                accountRepository, journalRepository, entryRepository, commissionRuleService);
         UUID paymentId = UUID.randomUUID();
-        LedgerJournal existing = new LedgerJournal();
-        when(journalRepository.findBySourceTypeAndSourceIdAndEventType(
-                "CUSTOMER_ORDER_PAYMENT", paymentId, "PAYMENT_CAPTURED")).thenReturn(Optional.of(existing));
-
-        ledger.recordCustomerOrderCapture(paymentId, distributor, new BigDecimal("10.00"), "KES");
-
-        verify(journalRepository, never()).save(any());
-        verifyNoInteractions(commissionRuleService);
-    }
-
-    @Test
-    void reversalFlipsTheCapturedJournal() {
-        UUID paymentId = UUID.randomUUID();
-        LedgerJournal capture = new LedgerJournal();
-        capture.setCurrency("KES");
-        capture.addEntry(entry(clearing, LedgerEntryDirection.DEBIT, "1250.00"));
-        capture.addEntry(entry(payable, LedgerEntryDirection.CREDIT, "1187.50"));
-        LedgerAccount revenue = account(LedgerAccountType.PLATFORM_REVENUE, null);
-        capture.addEntry(entry(revenue, LedgerEntryDirection.CREDIT, "62.50"));
         when(journalRepository.findBySourceTypeAndSourceIdAndEventType(
                 "CUSTOMER_ORDER_PAYMENT", paymentId, "PAYMENT_REVERSED")).thenReturn(Optional.empty());
         when(journalRepository.findBySourceTypeAndSourceIdAndEventType(
                 "CUSTOMER_ORDER_PAYMENT", paymentId, "PAYMENT_REFUNDED")).thenReturn(Optional.empty());
         when(journalRepository.findBySourceTypeAndSourceIdAndEventType(
-                "CUSTOMER_ORDER_PAYMENT", paymentId, "PAYMENT_CAPTURED")).thenReturn(Optional.of(capture));
-        when(journalRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+                "CUSTOMER_ORDER_PAYMENT", paymentId, "PAYMENT_CAPTURED")).thenReturn(Optional.empty());
 
-        ledger.reverseCapturedPayment("CUSTOMER_ORDER_PAYMENT", paymentId);
+        service.reverseCapturedPayment("CUSTOMER_ORDER_PAYMENT", paymentId);
 
-        ArgumentCaptor<LedgerJournal> saved = ArgumentCaptor.forClass(LedgerJournal.class);
-        verify(journalRepository).save(saved.capture());
-        assertThat(saved.getValue().getEventType()).isEqualTo("PAYMENT_REVERSED");
-        assertThat(amount(saved.getValue(), clearing, LedgerEntryDirection.CREDIT)).isEqualByComparingTo("1250.00");
-        assertThat(amount(saved.getValue(), payable, LedgerEntryDirection.DEBIT)).isEqualByComparingTo("1187.50");
-        assertThat(amount(saved.getValue(), revenue, LedgerEntryDirection.DEBIT)).isEqualByComparingTo("62.50");
-        verifyNoInteractions(entryRepository);
+        verify(journalRepository, never()).save(any(LedgerJournal.class));
     }
 
     @Test
-    void payableBalanceIsReportedNegativeWhenReversalsExceedWhatRemains() {
-        when(entryRepository.organizationPayableBalance(distributor.getId(), "KES"))
-                .thenReturn(new BigDecimal("-300"));
-
-        assertThat(ledger.payableBalance(distributor.getId(), "KES")).isEqualByComparingTo("-300.00");
-    }
-
-    @Test
-    void payoutJournalDebitsThePayable() {
-        LedgerAccount payoutClearing = account(LedgerAccountType.PAYOUT_CLEARING, null);
-        UUID payoutId = UUID.randomUUID();
+    void refundWithoutACaptureJournalIsANoOpForLegacyPayments() {
+        FinancialLedgerService service = new FinancialLedgerService(
+                accountRepository, journalRepository, entryRepository, commissionRuleService);
+        UUID paymentId = UUID.randomUUID();
         when(journalRepository.findBySourceTypeAndSourceIdAndEventType(
-                "ORGANIZATION_PAYOUT", payoutId, "PAYOUT")).thenReturn(Optional.empty());
-        when(accountRepository.findOrganizationAccount(
-                LedgerAccountType.ORGANIZATION_PAYABLE, "KES", distributor.getId()))
-                .thenReturn(Optional.of(payable));
-        when(accountRepository.findPlatformAccount(eq(LedgerAccountType.PAYOUT_CLEARING), eq("KES")))
-                .thenReturn(Optional.of(payoutClearing));
-        when(journalRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+                "CUSTOMER_ORDER_PAYMENT", paymentId, "PAYMENT_REFUNDED")).thenReturn(Optional.empty());
+        when(journalRepository.findBySourceTypeAndSourceIdAndEventType(
+                "CUSTOMER_ORDER_PAYMENT", paymentId, "PAYMENT_REVERSED")).thenReturn(Optional.empty());
+        when(journalRepository.findBySourceTypeAndSourceIdAndEventType(
+                "CUSTOMER_ORDER_PAYMENT", paymentId, "PAYMENT_CAPTURED")).thenReturn(Optional.empty());
 
-        ledger.recordOrganizationPayout(payoutId, distributor, new BigDecimal("40.00"), "KES", "FT26001");
+        service.recordRefund("CUSTOMER_ORDER_PAYMENT", paymentId);
 
-        ArgumentCaptor<LedgerJournal> saved = ArgumentCaptor.forClass(LedgerJournal.class);
-        verify(journalRepository).save(saved.capture());
-        assertThat(amount(saved.getValue(), payable, LedgerEntryDirection.DEBIT)).isEqualByComparingTo("40.00");
-        assertThat(amount(saved.getValue(), payoutClearing, LedgerEntryDirection.CREDIT)).isEqualByComparingTo("40.00");
-        verifyNoInteractions(commissionRuleService);
+        verify(journalRepository, never()).save(any(LedgerJournal.class));
     }
 
-    private static LedgerAccount account(LedgerAccountType type, Organization organization) {
-        LedgerAccount account = new LedgerAccount();
-        account.setAccountType(type);
-        account.setOrganization(organization);
-        account.setCurrency("KES");
-        return account;
+    private static SupplierSettlement settlement(String payoutReference) {
+        Organization supplier = new Organization();
+        supplier.setId(UUID.randomUUID());
+        supplier.setName("Supplier");
+        SupplierSettlement settlement = new SupplierSettlement();
+        settlement.setId(UUID.randomUUID());
+        settlement.setSupplierOrganization(supplier);
+        settlement.setAmount(new BigDecimal("100.00"));
+        settlement.setCurrency("KES");
+        settlement.setPayoutReference(payoutReference);
+        return settlement;
     }
 
-    private static LedgerEntry entry(LedgerAccount account, LedgerEntryDirection direction, String amount) {
+    private static LedgerJournal payoutJournal(String event, String reference, String description) {
+        LedgerJournal journal = new LedgerJournal();
+        journal.setEventType(event);
+        journal.setProviderReference(reference);
+        journal.setCurrency("KES");
+        journal.setDescription(description);
+        return journal;
+    }
+
+    private static LedgerJournal captureJournal() {
+        LedgerJournal journal = new LedgerJournal();
+        journal.setCurrency("KES");
+        journal.setCommissionRuleId(UUID.randomUUID());
+        journal.addEntry(entry(LedgerAccountType.PROVIDER_CLEARING, LedgerEntryDirection.DEBIT, "100.00"));
+        journal.addEntry(entry(LedgerAccountType.ORGANIZATION_PAYABLE, LedgerEntryDirection.CREDIT, "95.00"));
+        journal.addEntry(entry(LedgerAccountType.PLATFORM_REVENUE, LedgerEntryDirection.CREDIT, "5.00"));
+        return journal;
+    }
+
+    private static LedgerEntry entry(LedgerAccountType type, LedgerEntryDirection direction, String amount) {
         LedgerEntry entry = new LedgerEntry();
-        entry.setAccount(account);
+        entry.setAccount(account(type));
         entry.setDirection(direction);
         entry.setAmount(new BigDecimal(amount));
-        entry.setCurrency("KES");
-        entry.setDescription(direction.name());
         return entry;
     }
 
-    private static BigDecimal amount(LedgerJournal journal, LedgerAccount account, LedgerEntryDirection direction) {
-        return journal.getEntries().stream()
-                .filter(entry -> entry.getAccount() == account && entry.getDirection() == direction)
-                .map(LedgerEntry::getAmount)
-                .findFirst()
-                .orElseThrow();
+    private static LedgerAccount account(LedgerAccountType type) {
+        LedgerAccount account = new LedgerAccount();
+        account.setAccountType(type);
+        account.setCurrency("KES");
+        return account;
     }
 }

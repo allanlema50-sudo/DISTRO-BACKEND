@@ -40,8 +40,9 @@ class ProviderWebhookInboxServiceTest {
         service.accept("PAYSTACK", webhook, payload);
 
         verify(repository).insertIfAbsent(any(UUID.class), eq("PAYSTACK"), anyString(),
-                eq("charge.success"), eq("reference-1"), eq("success"), eq(100L), eq("KES"),
-                eq("Approved"), isNull());
+                eq("charge.success"), eq("reference-1"), eq("success"), eq(100L),
+                eq("reference-1"), eq("KES"), eq("Approved"), isNull(), isNull(), eq("success"),
+                isNull(), isNull());
     }
 
     @Test

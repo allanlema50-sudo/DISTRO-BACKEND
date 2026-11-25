@@ -33,6 +33,7 @@ public class PaystackSettlementDispatchStore {
     private final CheckoutPaymentRepository paymentRepository;
     private final PaymentDisputeRepository disputeRepository;
     private final PaymentRefundRepository refundRepository;
+    private final FinancialLedgerService financialLedgerService;
 
     @Transactional
     public List<UUID> beginBatch(UUID batchId) {
@@ -143,6 +144,7 @@ public class PaystackSettlementDispatchStore {
                         || !settlement.getCurrency().equalsIgnoreCase(transfer.currency())) {
                     settlement.setFailureReason("Paystack transfer response amount or currency requires verification");
                 } else {
+                    financialLedgerService.recordSupplierPayout(settlement);
                     settlement.setStatus(SupplierSettlementStatus.SETTLED);
                     settlement.setSettledAt(OffsetDateTime.now());
                     settlement.setFailureReason(null);

@@ -34,6 +34,7 @@ class PaystackSettlementServiceTest {
     @Mock CheckoutPaymentRepository checkoutPaymentRepository;
     @Mock PaymentRefundRepository paymentRefundRepository;
     @Mock PaystackSettlementDispatchStore dispatchStore;
+    @Mock FinancialLedgerService financialLedgerService;
     @InjectMocks PaystackSettlementService service;
 
     @Test

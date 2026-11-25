@@ -28,6 +28,7 @@ public class PaystackSettlementService {
     private final UserRepository userRepository;
     private final PaymentDisputeRepository disputeRepository;
     private final CheckoutPaymentRepository checkoutPaymentRepository;
+    private final FinancialLedgerService financialLedgerService;
     private final PaymentRefundRepository paymentRefundRepository;
     private final PaystackSettlementDispatchStore dispatchStore;
 
@@ -291,6 +292,7 @@ public class PaystackSettlementService {
         }
         switch (webhook.event()) {
             case "transfer.success" -> {
+                financialLedgerService.recordSupplierPayout(settlement);
                 settlement.setStatus(SupplierSettlementStatus.SETTLED);
                 settlement.setSettledAt(OffsetDateTime.now());
                 settlement.setFailureReason(null);
@@ -301,6 +303,8 @@ public class PaystackSettlementService {
                         ? "Paystack reported a failed transfer" : webhook.gatewayResponse());
             }
             case "transfer.reversed" -> {
+                financialLedgerService.recordSupplierPayout(settlement);
+                financialLedgerService.recordSupplierPayoutReversal(settlement);
                 settlement.setStatus(SupplierSettlementStatus.REVERSED);
                 settlement.setFailureReason("Paystack reversed the transfer");
             }

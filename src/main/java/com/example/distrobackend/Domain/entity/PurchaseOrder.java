@@ -1,5 +1,6 @@
 package com.example.distrobackend.Domain.entity;
 
+import com.example.distrobackend.Domain.enums.PaymentTerms;
 import com.example.distrobackend.Domain.enums.PurchaseOrderStatus;
 import jakarta.persistence.*;
 import lombok.Getter;
@@ -80,6 +81,22 @@ public class PurchaseOrder {
 
     @Column(name = "rejection_reason", columnDefinition = "TEXT")
     private String rejectionReason;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "payment_terms", nullable = false, length = 20)
+    private PaymentTerms paymentTerms = PaymentTerms.PAY_NOW;
+
+    /** Credit purchase orders only: approval time plus the agreed term days. */
+    @Column(name = "due_at")
+    private OffsetDateTime dueAt;
+
+    /** First time the nightly job saw this credit order unpaid past due_at. */
+    @Column(name = "overdue_at")
+    private OffsetDateTime overdueAt;
+
+    /** Version of the relationship terms applied; null when a platform default applied. */
+    @Column(name = "credit_terms_version")
+    private Long creditTermsVersion;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "created_by", nullable = false)

@@ -650,6 +650,11 @@ public class PurchaseOrderShipmentService {
                         "Insufficient reserved manufacturer stock to dispatch the purchase order");
             }
             stock.setQuantityOnHand(stock.getQuantityOnHand() - item.getQuantity());
+            if (stock.getPickedQuantity() < item.getQuantity()) {
+                throw new ApiException(ErrorCode.CONFLICT,
+                        "Insufficient staged manufacturer stock to dispatch the purchase order");
+            }
+            stock.setPickedQuantity(stock.getPickedQuantity() - item.getQuantity());
             if (purchaseOrder.isStockReserved()) {
                 stock.setReservedQuantity(stock.getReservedQuantity() - item.getQuantity());
             }

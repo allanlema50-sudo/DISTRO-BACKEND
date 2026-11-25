@@ -38,7 +38,9 @@ public class StockLocationService {
         StockItem item = stockItemRepository.findByIdAndOrganizationIdForUpdateWithWarehouse(
                         stockItemId, organizationId)
                 .orElseThrow(() -> new ApiException(ErrorCode.STOCK_ITEM_NOT_FOUND));
-        if (item.getWarehouse() == null || !item.getWarehouse().isActive()) {
+        if (item.getWarehouse() == null || !item.getWarehouse().isActive()
+                || item.getWarehouse().getOrganization() == null
+                || !organizationId.equals(item.getWarehouse().getOrganization().getId())) {
             throw new ApiException(ErrorCode.BAD_REQUEST,
                     "Put-away is available only for stock assigned to an active organization warehouse");
         }
@@ -59,15 +61,17 @@ public class StockLocationService {
                 return stockLocationRepository.findByStockItem_IdAndStockItem_Organization_IdOrderByLocationCodeAsc(
                                 stockItemId, organizationId).stream()
                         .filter(location -> locationCode.equals(location.getLocationCode()))
-                        .findFirst().map(StockLocationResponseMapper::map)
+                        .findFirst().map(this::map)
                         .orElseThrow(() -> new ApiException(ErrorCode.CONFLICT,
                                 "The prior put-away record has no matching storage location"));
             }
         }
-        long assigned = stockLocationRepository.sumQuantityByStockItemId(stockItemId);
-        if ((long) item.getQuantityOnHand() - assigned < request.quantity()) {
-            throw new ApiException(ErrorCode.INVALID_STOCK_ADJUSTMENT,
-                    "Put-away quantity exceeds unassigned on-hand stock");
+        long assigned = stockLocationRepository.sumQuantityByStockItemIdAndOrganizationId(stockItemId, organizationId);
+        int assignable = Math.max(0, item.getQuantityOnHand() - item.getPickedQuantity() - (int) Math.min(Integer.MAX_VALUE, assigned));
+        if (assignable < request.quantity()) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "Insufficient unlocated stock: requested " + request.quantity()
+                            + ", available assignable quantity is " + assignable);
         }
         StockLocation location = stockLocationRepository.findForUpdate(stockItemId, locationCode)
                 .orElseGet(() -> {
@@ -94,7 +98,7 @@ public class StockLocationService {
         movement.setPerformedBy(userRepository.getReferenceById(actor.userId()));
         movement.setNote("Put away into " + locationCode);
         stockMovementRepository.save(movement);
-        return StockLocationResponseMapper.map(saved);
+        return map(saved);
     }
 
     @Transactional(readOnly = true)
@@ -106,7 +110,7 @@ public class StockLocationService {
         return stockLocationRepository
                 .findByStockItem_IdAndStockItem_Organization_IdOrderByLocationCodeAsc(
                         stockItemId, organizationId).stream()
-                .map(StockLocationResponseMapper::map).toList();
+                .map(this::map).toList();
     }
 
     @Transactional
@@ -119,7 +123,9 @@ public class StockLocationService {
                 .orElseThrow(() -> new ApiException(ErrorCode.STOCK_ITEM_NOT_FOUND));
         if (item.getOrganization().getType() != Organizationtype.MANUFACTURER
                 || item.getSourceStockItem() != null || item.getWarehouse() == null
-                || !item.getWarehouse().isActive()) {
+                || !item.getWarehouse().isActive()
+                || item.getWarehouse().getOrganization() == null
+                || !organizationId.equals(item.getWarehouse().getOrganization().getId())) {
             throw new ApiException(ErrorCode.CONFLICT,
                     "Picking requires manufacturer stock assigned to an active warehouse");
         }
@@ -128,7 +134,8 @@ public class StockLocationService {
                     "Picked quantity exceeds stock reserved for this purchase order");
         }
         List<StockLocation> locations = stockLocationRepository.findAllForUpdate(stockItemId);
-        int availableInLocations = locations.stream().mapToInt(StockLocation::getQuantity).sum();
+        long eligible = locations.stream().mapToLong(StockLocation::getQuantity).sum();
+        int availableInLocations = eligible > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) eligible;
         if (availableInLocations < quantity) {
             throw new ApiException(ErrorCode.CONFLICT,
                     "Warehouse locations do not contain enough assigned stock to pick this quantity");
@@ -153,6 +160,7 @@ public class StockLocationService {
             movement.setNote("Picked " + moved + " unit(s) from " + location.getLocationCode());
             stockMovementRepository.save(movement);
         }
+        item.setPickedQuantity(Math.addExact(item.getPickedQuantity(), quantity));
     }
 
     private static UUID requireOrganization(AuthenticatedUser actor) {
@@ -167,10 +175,16 @@ public class StockLocationService {
         return actor.organizationId();
     }
 
-    private static final class StockLocationResponseMapper {
-        private static StockLocationResponse map(StockLocation location) {
-            return new StockLocationResponse(location.getId(), location.getStockItem().getId(),
-                    location.getStockItem().getSku(), location.getLocationCode(), location.getQuantity());
-        }
+    private StockLocationResponse map(StockLocation location) {
+        StockItem item = location.getStockItem();
+        long assigned = stockLocationRepository.sumQuantityByStockItemIdAndOrganizationId(
+                item.getId(), item.getOrganization().getId());
+        int unlocated = Math.max(0, item.getQuantityOnHand() - item.getPickedQuantity()
+                - (int) Math.min(Integer.MAX_VALUE, assigned));
+        return new StockLocationResponse(location.getId(), item.getId(), item.getSku(),
+                location.getLocationCode(), location.getQuantity(),
+                item.getWarehouse() == null ? null : item.getWarehouse().getId(),
+                item.getQuantityOnHand(), item.getReservedQuantity(), item.getAvailableQuantity(),
+                unlocated, item.getPickedQuantity());
     }
 }

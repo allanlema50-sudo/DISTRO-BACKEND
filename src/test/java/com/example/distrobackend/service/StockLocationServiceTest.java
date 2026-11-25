@@ -47,6 +47,7 @@ class StockLocationServiceTest {
         source.setId(UUID.randomUUID());
         Warehouse warehouse = new Warehouse();
         warehouse.setActive(true);
+        warehouse.setOrganization(distributor);
         StockItem item = new StockItem();
         item.setId(stockItemId);
         item.setOrganization(distributor);
@@ -58,7 +59,7 @@ class StockLocationServiceTest {
                 organizationId, Organizationtype.DISTRIBUTOR, Instant.now().plusSeconds(300));
         when(stockItemRepository.findByIdAndOrganizationIdForUpdateWithWarehouse(stockItemId, organizationId))
                 .thenReturn(Optional.of(item));
-        when(stockLocationRepository.sumQuantityByStockItemId(stockItemId)).thenReturn(6L);
+        when(stockLocationRepository.sumQuantityByStockItemIdAndOrganizationId(stockItemId, organizationId)).thenReturn(6L);
         when(stockLocationRepository.findForUpdate(stockItemId, "A-01")).thenReturn(Optional.empty());
         when(stockLocationRepository.save(any(StockLocation.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
@@ -80,6 +81,7 @@ class StockLocationServiceTest {
         source.setId(UUID.randomUUID());
         Warehouse warehouse = new Warehouse();
         warehouse.setActive(true);
+        warehouse.setOrganization(distributor);
         StockItem item = new StockItem();
         item.setId(stockItemId);
         item.setOrganization(distributor);
@@ -90,11 +92,11 @@ class StockLocationServiceTest {
                 organizationId, Organizationtype.DISTRIBUTOR, Instant.now().plusSeconds(300));
         when(stockItemRepository.findByIdAndOrganizationIdForUpdateWithWarehouse(stockItemId, organizationId))
                 .thenReturn(Optional.of(item));
-        when(stockLocationRepository.sumQuantityByStockItemId(stockItemId)).thenReturn(8L);
+        when(stockLocationRepository.sumQuantityByStockItemIdAndOrganizationId(stockItemId, organizationId)).thenReturn(8L);
 
         assertThatThrownBy(() -> service.putAway(actor, stockItemId,
                 new PutAwayStockRequest("A-02", 3)))
                 .isInstanceOf(ApiException.class)
-                .hasMessageContaining("unassigned on-hand stock");
+                .hasMessageContaining("available assignable quantity is 2");
     }
 }

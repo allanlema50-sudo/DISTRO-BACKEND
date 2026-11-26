@@ -4,6 +4,7 @@ import com.example.distrobackend.Domain.entity.RiderProfile;
 import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.UserStatus;
 import com.example.distrobackend.Domain.enums.DriverApprovalStatus;
+import com.example.distrobackend.Domain.enums.Organizationtype;
 
 import java.time.OffsetDateTime;
 import java.time.LocalDate;
@@ -28,7 +29,11 @@ public record DriverResponse(
         OffsetDateTime lastLocationAt,
         String pendingFullName,
         String pendingPhoneNumber,
-        String pendingLicenseNumber
+        String pendingLicenseNumber,
+        OffsetDateTime createdAt,
+        UUID organizationId,
+        String organizationName,
+        Organizationtype organizationType
 ) {
     public static DriverResponse from(User user, RiderProfile profile) {
         return from(user, profile, true);
@@ -49,6 +54,10 @@ public record DriverResponse(
                 profile == null ? null : profile.getLastLocationAt(),
                 profile == null ? null : profile.getPendingFullName(),
                 profile == null ? null : profile.getPendingPhoneNumber(),
-                profile == null ? null : profile.getPendingLicenseNumber());
+                profile == null ? null : profile.getPendingLicenseNumber(),
+                user.getCreatedAt(),
+                user.getOrganization() == null ? null : user.getOrganization().getId(),
+                user.getOrganization() == null ? null : user.getOrganization().getName(),
+                user.getOrganization() == null ? null : user.getOrganization().getType());
     }
 }

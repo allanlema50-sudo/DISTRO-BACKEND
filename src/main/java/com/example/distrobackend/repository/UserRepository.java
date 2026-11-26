@@ -50,6 +50,7 @@ public interface UserRepository  extends JpaRepository<User, UUID> {
             UUID organizationId, UserRole role, Pageable pageable);
     @EntityGraph(attributePaths = "organization")
     Page<User> findByOrganization_Id(UUID organizationId, Pageable pageable);
+    @EntityGraph(attributePaths = "organization")
     @Query(value = "select u from User u left join RiderProfile profile on profile.user.id = u.id "
             + "where u.role = :driverRole "
             + "and (:organizationId is null or u.organization.id = :organizationId) "

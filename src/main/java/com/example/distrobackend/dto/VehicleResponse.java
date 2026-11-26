@@ -10,6 +10,7 @@ import java.util.UUID;
 public record VehicleResponse(
         UUID id,
         UUID organizationId,
+        String organizationName,
         String registrationNumber,
         String vehicleType,
         String make,
@@ -17,6 +18,7 @@ public record VehicleResponse(
         Integer capacityKg,
         BigDecimal capacityM3,
         UUID driverId,
+        String assignedDriverName,
         VehicleStatus status,
         long version,
         OffsetDateTime createdAt,
@@ -24,10 +26,20 @@ public record VehicleResponse(
 ) {
     public static VehicleResponse from(Vehicle vehicle) {
         return new VehicleResponse(
-                vehicle.getId(), vehicle.getOrganization().getId(), vehicle.getRegistrationNumber(),
-                vehicle.getVehicleType(), vehicle.getMake(), vehicle.getModel(), vehicle.getCapacityKg(),
+                vehicle.getId(),
+                vehicle.getOrganization() == null ? null : vehicle.getOrganization().getId(),
+                vehicle.getOrganization() == null ? null : vehicle.getOrganization().getName(),
+                vehicle.getRegistrationNumber(),
+                vehicle.getVehicleType(),
+                vehicle.getMake(),
+                vehicle.getModel(),
+                vehicle.getCapacityKg(),
                 vehicle.getCapacityM3(),
                 vehicle.getAssignedDriver() == null ? null : vehicle.getAssignedDriver().getId(),
-                vehicle.getStatus(), vehicle.getVersion(), vehicle.getCreatedAt(), vehicle.getUpdatedAt());
+                vehicle.getAssignedDriver() == null ? null : vehicle.getAssignedDriver().getFullName(),
+                vehicle.getStatus(),
+                vehicle.getVersion(),
+                vehicle.getCreatedAt(),
+                vehicle.getUpdatedAt());
     }
 }

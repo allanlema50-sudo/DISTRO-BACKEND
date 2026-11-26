@@ -1,8 +1,8 @@
 # Paystack checkout integration
 
-This branch adds Paystack as a provider for the existing distributor
-marketplace checkout and the reviewed supplier payout workflow. It does not
-replace the internal ledger. A successful Paystack payment creates the same
+Paystack supports both distributor marketplace checkout and customer-to-
+distributor card checkout, plus the reviewed supplier payout workflow. It does
+not replace the internal ledger. A successful Paystack payment creates the same
 allocations and pending supplier settlement records as a verified M-Pesa
 checkout; a separate Super Admin workflow can later execute eligible supplier
 settlements through Paystack Transfers.
@@ -36,6 +36,40 @@ the backend still records a successful test webhook as paid and starts normal
 fulfilment.
 
 ## Checkout flow
+
+### Customer order card checkout
+
+Customers can pay a distributor order by card using the existing payment
+initiation route. Send `provider: "PAYSTACK"` (the legacy alias
+`"PAYSTACK_CARD"` is also accepted), the customer order UUID as `orderId`, and
+an idempotency key. `phoneNumber` is not required for card checkout:
+
+```json
+{
+  "orderId": "<customer-order-id>",
+  "provider": "PAYSTACK",
+  "idempotencyKey": "order-card-<unique-client-key>"
+}
+```
+
+The response contains `provider`, `providerMode` (`TEST` or `LIVE`),
+`paymentReference`, and `authorizationUrl`. The client should show the mode
+clearly and open the hosted authorization URL. A browser redirect is not
+payment confirmation; only a signature-verified webhook or server-side
+transaction verification updates the payment and confirms the order. Poll
+`GET /api/v1/payments/{orderId}/status` for the persisted state. Attempts with
+an uncertain provider outcome remain blocked from creating a second charge
+until server-side verification resolves them.
+
+The current Paystack refund API is for marketplace checkout payments, not
+these customer-order `Payment` records. Do not enable live customer-order card
+payments until customer-order refund handling and support procedures are added.
+
+This is distinct from purchase-order payment and marketplace checkout. Direct
+purchase-order settlement remains on its existing M-Pesa flow; marketplace
+checkout has its own `POST /api/v1/checkouts/{checkoutId}/payment` contract.
+
+### Distributor marketplace checkout
 
 1. The distributor creates a checkout with `POST /api/v1/checkouts`.
 2. The distributor starts payment with `POST /api/v1/checkouts/{checkoutId}/payment`.

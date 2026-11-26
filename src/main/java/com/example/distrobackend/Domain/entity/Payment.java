@@ -2,6 +2,7 @@ package com.example.distrobackend.Domain.entity;
 
 import com.example.distrobackend.Domain.enums.PaymentMethod;
 import com.example.distrobackend.Domain.enums.PaymentStatus;
+import com.example.distrobackend.Domain.enums.PaymentProvider;
 
 import jakarta.persistence.*;
 
@@ -42,6 +43,19 @@ public class Payment {
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false)
     private PaymentStatus status = PaymentStatus.PENDING;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "provider", nullable = false, length = 20)
+    private PaymentProvider provider = PaymentProvider.DARAJA;
+
+    @Column(name = "provider_reference", unique = true, length = 120)
+    private String providerReference;
+
+    @Column(name = "provider_authorization_url", columnDefinition = "TEXT")
+    private String providerAuthorizationUrl;
+
+    @Column(name = "provider_mode", length = 8)
+    private String providerMode;
 
     @Column(name = "amount", nullable = false, precision = 12, scale = 2)
     private BigDecimal amount;

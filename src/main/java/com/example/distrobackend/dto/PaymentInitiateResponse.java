@@ -9,10 +9,25 @@ public record PaymentInitiateResponse(
         PaymentStatus status,
         String customerMessage,
         String paymentReference,
-        String provider
+        String provider,
+        String authorizationUrl,
+        String providerMode
 ) {
     public PaymentInitiateResponse(UUID paymentId, String mpesaCheckoutRequestId,
                                    PaymentStatus status, String customerMessage) {
-        this(paymentId, mpesaCheckoutRequestId, status, customerMessage, mpesaCheckoutRequestId, "MPESA");
+        this(paymentId, mpesaCheckoutRequestId, status, customerMessage, mpesaCheckoutRequestId, "MPESA", null, null);
+    }
+
+    public PaymentInitiateResponse(UUID paymentId, String mpesaCheckoutRequestId,
+                                   PaymentStatus status, String customerMessage,
+                                   String paymentReference, String provider) {
+        this(paymentId, mpesaCheckoutRequestId, status, customerMessage, paymentReference, provider, null, null);
+    }
+
+    public PaymentInitiateResponse(UUID paymentId, String mpesaCheckoutRequestId,
+                                   PaymentStatus status, String customerMessage,
+                                   String paymentReference, String provider, String authorizationUrl) {
+        this(paymentId, mpesaCheckoutRequestId, status, customerMessage, paymentReference,
+                provider, authorizationUrl, null);
     }
 }

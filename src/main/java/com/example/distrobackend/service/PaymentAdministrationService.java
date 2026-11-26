@@ -3,6 +3,7 @@ package com.example.distrobackend.service;
 import com.example.distrobackend.Domain.entity.Order;
 import com.example.distrobackend.Domain.entity.Payment;
 import com.example.distrobackend.Domain.enums.PaymentStatus;
+import com.example.distrobackend.Domain.enums.PaymentProvider;
 import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
@@ -87,6 +88,12 @@ public class PaymentAdministrationService {
                 && !payment.getMpesaCheckoutRequestId().isBlank()) {
             throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
                     "An accepted M-Pesa payment must be reconciled before it can be failed manually");
+        }
+        if (payment.getStatus() == PaymentStatus.PENDING
+                && payment.getProvider() == PaymentProvider.PAYSTACK
+                && payment.getProviderReference() != null) {
+            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                    "A Paystack payment must be verified before it can be failed manually");
         }
         String note = request.note() == null || request.note().isBlank()
                 ? "Payment status updated by platform administrator" : request.note().trim();

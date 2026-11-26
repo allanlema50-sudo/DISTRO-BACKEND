@@ -48,6 +48,10 @@ public class SupplierPayoutAttempt {
     @Column(name = "provider_reference", nullable = false, unique = true, length = 120)
     private String providerReference;
 
+    /** Environment snapshot for this exact transfer attempt. */
+    @Column(name = "provider_mode", length = 8)
+    private String providerMode;
+
     @Column(name = "provider_transfer_code", length = 120)
     private String providerTransferCode;
 

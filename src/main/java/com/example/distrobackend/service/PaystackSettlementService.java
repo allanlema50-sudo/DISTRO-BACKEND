@@ -38,11 +38,20 @@ public class PaystackSettlementService {
     @Value("${logiflow.settlements.delivery-hold-days:7}")
     private int deliveryHoldDays = 7;
 
+    @Value("${paystack.test-auto-settlement-enabled:false}")
+    private boolean testAutoSettlementEnabled;
+
     @PostConstruct
     void validateDeliveryHoldConfiguration() {
         if (deliveryHoldDays < 0 || deliveryHoldDays > 365) {
             throw new IllegalStateException(
                     "logiflow.settlements.delivery-hold-days must be between 0 and 365");
+        }
+        if (testAutoSettlementEnabled && (!paystackPaymentService.enabled()
+                || !paystackPaymentService.transfersEnabled()
+                || !"TEST".equals(paystackPaymentService.mode()))) {
+            throw new IllegalStateException("PAYSTACK_TEST_AUTO_SETTLEMENT_ENABLED=true requires "
+                    + "PAYSTACK_ENABLED=true, PAYSTACK_TRANSFERS_ENABLED=true and PAYSTACK_MODE=test");
         }
     }
 
@@ -81,6 +90,7 @@ public class PaystackSettlementService {
         beneficiary.setOrganization(organization);
         beneficiary.setMethod(method);
         beneficiary.setProvider(PaymentProvider.PAYSTACK);
+        beneficiary.setProviderMode(paystackPaymentService.mode());
         beneficiary.setCurrency(currency);
         beneficiary.setAccountName(accountName);
         beneficiary.setAccountMask(mask(accountNumber));
@@ -188,6 +198,7 @@ public class PaystackSettlementService {
                             PayoutBeneficiaryStatus.ACTIVE, currency)
                     .orElseThrow(() -> new ApiException(ErrorCode.CONFLICT,
                             "Supplier organization has no active payout beneficiary"));
+            requireBeneficiaryMode(beneficiary, paystackPaymentService.mode());
             settlement.setBeneficiary(beneficiary);
             settlement.setProvider(PaymentProvider.PAYSTACK);
             settlement.setPayoutReference("lf_settlement_" + UUID.randomUUID().toString().replace("-", ""));
@@ -195,6 +206,8 @@ public class PaystackSettlementService {
         }
         SettlementBatch batch = new SettlementBatch();
         batch.setProvider(PaymentProvider.PAYSTACK);
+        batch.setProviderMode(paystackPaymentService.mode());
+        batch.setExecutionMode("MANUAL");
         batch.setStatus(SettlementBatchStatus.PENDING_APPROVAL);
         batch.setCurrency(currency);
         batch.setTotalAmount(total);
@@ -231,7 +244,55 @@ public class PaystackSettlementService {
     public SettlementBatchResponse executeBatch(AuthenticatedUser actor, UUID batchId) {
         requirePlatformAdmin(actor);
         requireTransfersEnabled();
-        List<UUID> settlementIds = dispatchStore.beginBatch(batchId);
+        List<UUID> settlementIds = dispatchStore.beginBatch(batchId, paystackPaymentService.mode());
+        settlementIds.forEach(id -> dispatchAttempt(id, false));
+        return dispatchStore.finishBatch(batchId);
+    }
+
+    /** Creates an auditable, one-settlement batch for the guarded TEST-only automation. */
+    @Transactional
+    public UUID createAutomaticTestBatchIfEligible(UUID settlementId) {
+        requireTestAutomation();
+        SupplierSettlement observed = settlementRepository.findById(settlementId).orElse(null);
+        if (observed == null || observed.getSettlementBatch() != null) return null;
+        UUID paymentId = observed.getAllocation().getPayment().getId();
+        checkoutPaymentRepository.findByIdForUpdate(paymentId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Checkout payment not found"));
+        SupplierSettlement settlement = settlementRepository.findByIdForUpdate(settlementId).orElse(null);
+        if (settlement == null || settlement.getSettlementBatch() != null) return null;
+        validateBatchCandidate(settlement);
+        PayoutBeneficiary beneficiary = beneficiaryRepository
+                .findByOrganization_IdAndStatusAndCurrency(settlement.getSupplierOrganization().getId(),
+                        PayoutBeneficiaryStatus.ACTIVE, normalizeCurrency(settlement.getCurrency()))
+                .orElse(null);
+        if (beneficiary == null) return null;
+        requireBeneficiaryMode(beneficiary, "TEST");
+
+        SettlementBatch batch = new SettlementBatch();
+        batch.setProvider(PaymentProvider.PAYSTACK);
+        batch.setProviderMode("TEST");
+        batch.setExecutionMode("TEST_AUTOMATIC");
+        // The automated approval is explicit in executionMode; it is not attributed to a human.
+        batch.setStatus(SettlementBatchStatus.APPROVED);
+        batch.setApprovedAt(OffsetDateTime.now());
+        batch.setCurrency(normalizeCurrency(settlement.getCurrency()));
+        batch.setTotalAmount(settlement.getAmount());
+        batch.setSettlementCount(1);
+        batch.setNote("Automatically dispatched after delivery eligibility in Paystack TEST mode");
+        batch = batchRepository.saveAndFlush(batch);
+
+        settlement.setBeneficiary(beneficiary);
+        settlement.setProvider(PaymentProvider.PAYSTACK);
+        settlement.setSettlementBatch(batch);
+        settlementRepository.saveAndFlush(settlement);
+        return batch.getId();
+    }
+
+    /** Resumes a committed automatic batch after a restart, but never under LIVE credentials. */
+    public SettlementBatchResponse executeAutomaticTestBatch(UUID batchId) {
+        requireTestAutomation();
+        requireTransfersEnabled();
+        List<UUID> settlementIds = dispatchStore.beginBatch(batchId, "TEST");
         settlementIds.forEach(id -> dispatchAttempt(id, false));
         return dispatchStore.finishBatch(batchId);
     }
@@ -280,7 +341,8 @@ public class PaystackSettlementService {
     }
 
     private void dispatchAttempt(UUID settlementId, boolean retry) {
-        PaystackSettlementDispatchStore.Attempt attempt = dispatchStore.prepareAttempt(settlementId, retry);
+        PaystackSettlementDispatchStore.Attempt attempt = dispatchStore.prepareAttempt(
+                settlementId, retry, paystackPaymentService.mode());
         if (attempt == null) return;
         try {
             PaystackPaymentService.Transfer transfer = paystackPaymentService.initiateTransfer(
@@ -327,6 +389,23 @@ public class PaystackSettlementService {
         if (hasUnclearedDispute || hasOpenRefund) {
             throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
                     "This settlement is blocked by an open refund or unresolved/unreviewed payment dispute");
+        }
+    }
+
+    private static void requireBeneficiaryMode(PayoutBeneficiary beneficiary, String expectedMode) {
+        if (expectedMode == null || !expectedMode.equals(beneficiary.getProviderMode())) {
+            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                    "The active payout beneficiary was not created in the current Paystack mode; "
+                            + "register and approve a beneficiary for this environment before payout");
+        }
+    }
+
+    private void requireTestAutomation() {
+        if (!testAutoSettlementEnabled || !paystackPaymentService.enabled()
+                || !paystackPaymentService.transfersEnabled()
+                || !"TEST".equals(paystackPaymentService.mode())) {
+            throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED,
+                    "Automatic settlement requires its explicit flag, enabled Paystack transfers, and TEST mode");
         }
     }
 

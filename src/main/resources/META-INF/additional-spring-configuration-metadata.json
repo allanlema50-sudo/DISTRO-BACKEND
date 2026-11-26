@@ -65,5 +65,8 @@
     ,{ "name": "paystack.settlement.reconciliation.initial-delay-ms", "type": "java.lang.Long", "description": "Wait before first verification of an ambiguous supplier transfer." }
     ,{ "name": "paystack.settlement.reconciliation.repeat-delay-ms", "type": "java.lang.Long", "description": "Wait between repeated verifications of unresolved supplier transfers." }
     ,{ "name": "logiflow.settlements.delivery-hold-days", "type": "java.lang.Integer", "description": "Calendar days after distributor receipt before a Paystack supplier settlement can be batched (0 to 365)." }
+    ,{ "name": "paystack.test-auto-settlement-enabled", "type": "java.lang.Boolean", "description": "Enable automatic supplier payout batches only with Paystack TEST credentials and transfers enabled." }
+    ,{ "name": "paystack.test-auto-settlement.scan-ms", "type": "java.lang.Long", "description": "Delay between scans for eligible Paystack TEST automatic settlements." }
+    ,{ "name": "paystack.test-auto-settlement.batch-size", "type": "java.lang.Integer", "description": "Maximum automatic settlement candidates scanned per worker run." }
   ]
 }

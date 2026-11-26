@@ -40,6 +40,18 @@ public interface SupplierSettlementRepository extends JpaRepository<SupplierSett
             + "where s.provider = 'PAYSTACK' and s.status = 'PENDING' and b.status = 'PROCESSING' "
             + "order by s.created_at asc limit :batchSize", nativeQuery = true)
     List<UUID> findPendingPaystackSettlementsInProcessingBatches(@Param("batchSize") int batchSize);
+    @Query(value = "select s.id from supplier_settlements s "
+            + "join payment_allocations a on a.id = s.payment_allocation_id "
+            + "join checkout_payments cp on cp.id = a.payment_id "
+            + "join purchase_order_shipments sh on sh.purchase_order_id = a.purchase_order_id "
+            + "where cp.provider = 'PAYSTACK' and s.status = 'PENDING' "
+            + "and s.settlement_batch_id is null and s.demo = false "
+            + "and sh.status = 'RECEIVED' and sh.received_at <= :eligibleBefore "
+            + "order by sh.received_at asc, s.created_at asc limit :batchSize",
+            nativeQuery = true)
+    List<UUID> findEligibleUnbatchedPaystackSettlementIds(
+            @Param("eligibleBefore") OffsetDateTime eligibleBefore,
+            @Param("batchSize") int batchSize);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from SupplierSettlement s where s.settlementBatch.id = :batchId order by s.createdAt asc")
     List<SupplierSettlement> findBySettlementBatchIdForUpdate(@Param("batchId") UUID batchId);

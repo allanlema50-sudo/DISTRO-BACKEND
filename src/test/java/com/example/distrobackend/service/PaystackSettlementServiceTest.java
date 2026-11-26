@@ -71,6 +71,8 @@ class PaystackSettlementServiceTest {
         beneficiary.setId(UUID.randomUUID());
         beneficiary.setOrganization(supplier);
         beneficiary.setStatus(PayoutBeneficiaryStatus.ACTIVE);
+        beneficiary.setProviderMode("TEST");
+        when(paystackPaymentService.mode()).thenReturn("TEST");
         when(settlementRepository.findAllById(java.util.List.of(settlementId))).thenReturn(java.util.List.of(settlement));
         when(settlementRepository.findByIdForUpdate(settlementId)).thenReturn(Optional.of(settlement));
         when(checkoutPaymentRepository.findByIdForUpdate(payment.getId())).thenReturn(Optional.of(payment));
@@ -93,10 +95,74 @@ class PaystackSettlementServiceTest {
                 new CreateSettlementBatchRequest(java.util.List.of(settlementId), "weekly settlement"));
 
         assertThat(result.status()).isEqualTo("PENDING_APPROVAL");
+        assertThat(result.providerMode()).isEqualTo("TEST");
+        assertThat(result.executionMode()).isEqualTo("MANUAL");
         assertThat(result.totalAmount()).isEqualByComparingTo("100.00");
         assertThat(settlement.getBeneficiary()).isSameAs(beneficiary);
         assertThat(settlement.getPayoutReference()).startsWith("lf_settlement_");
         verify(batchRepository).saveAndFlush(any(SettlementBatch.class));
+    }
+
+    @Test
+    void automaticTestBatchHasExplicitModeAndNoImpersonatedHumanApprover() {
+        UUID settlementId = UUID.randomUUID();
+        UUID purchaseOrderId = UUID.randomUUID();
+        SupplierSettlement settlement = settlement(settlementId, purchaseOrderId);
+        CheckoutPayment payment = settlement.getAllocation().getPayment();
+        PurchaseOrderShipment shipment = new PurchaseOrderShipment();
+        shipment.setStatus(PurchaseOrderShipmentStatus.RECEIVED);
+        shipment.setReceivedAt(OffsetDateTime.now().minusDays(1));
+        PayoutBeneficiary beneficiary = new PayoutBeneficiary();
+        beneficiary.setOrganization(settlement.getSupplierOrganization());
+        beneficiary.setStatus(PayoutBeneficiaryStatus.ACTIVE);
+        beneficiary.setCurrency("KES");
+        beneficiary.setProviderMode("TEST");
+
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "testAutoSettlementEnabled", true);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "deliveryHoldDays", 0);
+        when(paystackPaymentService.enabled()).thenReturn(true);
+        when(paystackPaymentService.transfersEnabled()).thenReturn(true);
+        when(paystackPaymentService.mode()).thenReturn("TEST");
+        when(settlementRepository.findById(settlementId)).thenReturn(Optional.of(settlement));
+        when(checkoutPaymentRepository.findByIdForUpdate(payment.getId())).thenReturn(Optional.of(payment));
+        when(settlementRepository.findByIdForUpdate(settlementId)).thenReturn(Optional.of(settlement));
+        when(purchaseOrderShipmentRepository.findByPurchaseOrderIdForUpdate(purchaseOrderId))
+                .thenReturn(Optional.of(shipment));
+        when(disputeRepository.existsUnclearedForPaymentOrReference(payment.getId(), "TX-123"))
+                .thenReturn(false);
+        when(paymentRefundRepository.existsByPayment_IdAndStatusIn(eq(payment.getId()), anyCollection()))
+                .thenReturn(false);
+        when(beneficiaryRepository.findByOrganization_IdAndStatusAndCurrency(
+                settlement.getSupplierOrganization().getId(), PayoutBeneficiaryStatus.ACTIVE, "KES"))
+                .thenReturn(Optional.of(beneficiary));
+        when(batchRepository.saveAndFlush(any(SettlementBatch.class))).thenAnswer(invocation -> {
+            SettlementBatch batch = invocation.getArgument(0);
+            batch.setId(UUID.randomUUID());
+            return batch;
+        });
+        when(settlementRepository.saveAndFlush(settlement)).thenReturn(settlement);
+
+        UUID batchId = service.createAutomaticTestBatchIfEligible(settlementId);
+
+        assertThat(batchId).isNotNull();
+        assertThat(settlement.getSettlementBatch().getExecutionMode()).isEqualTo("TEST_AUTOMATIC");
+        assertThat(settlement.getSettlementBatch().getProviderMode()).isEqualTo("TEST");
+        assertThat(settlement.getSettlementBatch().getCreatedBy()).isNull();
+        assertThat(settlement.getSettlementBatch().getApprovedBy()).isNull();
+    }
+
+    @Test
+    void automaticSettlementRejectsLiveModeBeforeReadingOrChangingSettlements() {
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "testAutoSettlementEnabled", true);
+        when(paystackPaymentService.enabled()).thenReturn(true);
+        when(paystackPaymentService.transfersEnabled()).thenReturn(true);
+        when(paystackPaymentService.mode()).thenReturn("LIVE");
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> service.createAutomaticTestBatchIfEligible(UUID.randomUUID()))
+                .isInstanceOf(com.example.distrobackend.Exception.ApiException.class)
+                .hasMessageContaining("TEST mode");
+        verifyNoInteractions(settlementRepository, batchRepository, checkoutPaymentRepository);
     }
 
     @Test

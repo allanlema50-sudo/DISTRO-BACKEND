@@ -17,7 +17,6 @@ import com.example.distrobackend.dto.PaymentInitiateRequest;
 import com.example.distrobackend.dto.PaymentInitiateResponse;
 import com.example.distrobackend.dto.PaymentStatusResponse;
 import com.example.distrobackend.dto.mpesa.MpesaCallbackRequest;
-import com.example.distrobackend.dto.mpesa.MpesaStkPushRequest;
 import com.example.distrobackend.dto.mpesa.MpesaStkPushResponse;
 import com.example.distrobackend.repository.OrderRepository;
 import com.example.distrobackend.repository.PaymentRepository;

@@ -38,6 +38,9 @@ public class PaystackSettlementService {
     @Value("${logiflow.settlements.delivery-hold-days:7}")
     private int deliveryHoldDays = 7;
 
+    @Value("${paystack.beneficiary-review-required:false}")
+    private boolean beneficiaryReviewRequired;
+
     @Value("${paystack.test-auto-settlement-enabled:false}")
     private boolean testAutoSettlementEnabled;
 
@@ -59,24 +62,41 @@ public class PaystackSettlementService {
     public PayoutBeneficiaryResponse createBeneficiary(AuthenticatedUser actor,
                                                        CreatePayoutBeneficiaryRequest request) {
         requireOrganizationAdmin(actor);
+        if (request == null || !request.detailsConfirmed()) {
+            throw new ApiException(ErrorCode.BAD_REQUEST,
+                    "Confirm the payout destination details before submitting");
+        }
         PayoutMethod method = parseMethod(request.method());
         String currency = normalizeCurrency(request.currency());
         String accountName = requireText(request.accountName(), "accountName");
-        String accountNumber = method == PayoutMethod.MOBILE_MONEY
-                ? normalizeMobile(request.mobileNumber()) : requireDigits(request.accountNumber(), "accountNumber");
+        String accountNumber;
         String bankCode = clean(request.bankCode());
-        if (method == PayoutMethod.BANK_ACCOUNT && bankCode == null) {
-            throw new ApiException(ErrorCode.BAD_REQUEST, "bankCode is required for a bank beneficiary");
-        }
-        if (method == PayoutMethod.MOBILE_MONEY && bankCode == null) {
-            if (!"KES".equals(currency)) {
-                throw new ApiException(ErrorCode.BAD_REQUEST,
-                        "bankCode is required for mobile-money beneficiaries outside KES");
+        if (method == PayoutMethod.BANK_ACCOUNT) {
+            accountNumber = requireDigits(request.accountNumber(), "accountNumber");
+            PaystackPaymentService.DestinationOption bank = findDestinationOption(
+                    paystackPaymentService.listBankDestinations(currency), bankCode);
+            PaystackPaymentService.ResolvedBankAccount resolved = paystackPaymentService.resolveBankAccount(
+                    accountNumber, bank.code(), currency);
+            if (!sameAccountName(accountName, resolved.accountName())) {
+                throw new ApiException(ErrorCode.CONFLICT,
+                        "Confirmed account name does not match the name returned by Paystack; resolve the account again");
             }
-            bankCode = "MPESA";
+            accountName = resolved.accountName();
+            bankCode = bank.code();
+        } else {
+            accountNumber = normalizeMobile(request.mobileNumber());
+            PaystackPaymentService.DestinationOption provider = findDestinationOption(
+                    paystackPaymentService.listMobileMoneyDestinations(currency), bankCode);
+            bankCode = provider.code();
         }
-        Organization organization = organizationRepository.findById(actor.organizationId())
+        Organization organization = organizationRepository.findByIdForUpdate(actor.organizationId())
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Organization not found"));
+        if (!beneficiaryReviewRequired && beneficiaryRepository
+                .findByOrganization_IdAndStatusAndCurrency(organization.getId(),
+                        PayoutBeneficiaryStatus.ACTIVE, currency).isPresent()) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "The organization already has an active payout beneficiary for this currency");
+        }
         PaystackPaymentService.Recipient recipient;
         try {
             recipient = paystackPaymentService.createRecipient(
@@ -96,10 +116,48 @@ public class PaystackSettlementService {
         beneficiary.setAccountMask(mask(accountNumber));
         beneficiary.setBankCode(bankCode);
         beneficiary.setProviderRecipientCode(recipient.recipientCode());
-        beneficiary.setStatus(PayoutBeneficiaryStatus.PENDING_REVIEW);
+        beneficiary.setStatus(beneficiaryReviewRequired
+                ? PayoutBeneficiaryStatus.PENDING_REVIEW : PayoutBeneficiaryStatus.ACTIVE);
         beneficiary.setCreatedBy(userRepository.getReferenceById(actor.userId()));
-        beneficiary.setReviewNote("Submitted for platform review");
+        beneficiary.setReviewNote(beneficiaryReviewRequired
+                ? "Submitted for platform review"
+                : "Provider destination created; organization administrator confirmed the details");
         return PayoutBeneficiaryResponse.from(beneficiaryRepository.save(beneficiary));
+    }
+
+    @Transactional(readOnly = true)
+    public List<PayoutDestinationOptionResponse> listBankDestinations(AuthenticatedUser actor, String currency) {
+        requireOrganizationAdmin(actor);
+        String normalizedCurrency = normalizeCurrency(currency);
+        return paystackPaymentService.listBankDestinations(normalizedCurrency).stream()
+                .map(option -> new PayoutDestinationOptionResponse(option.name(), option.code(),
+                        option.currency(), option.type(), option.active()))
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<PayoutDestinationOptionResponse> listMobileMoneyDestinations(
+            AuthenticatedUser actor, String currency) {
+        requireOrganizationAdmin(actor);
+        String normalizedCurrency = normalizeCurrency(currency);
+        return paystackPaymentService.listMobileMoneyDestinations(normalizedCurrency).stream()
+                .map(option -> new PayoutDestinationOptionResponse(option.name(), option.code(),
+                        option.currency(), option.type(), option.active()))
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public ResolvedPayoutBankAccountResponse resolveBankAccount(
+            AuthenticatedUser actor, ResolvePayoutBankAccountRequest request) {
+        requireOrganizationAdmin(actor);
+        String currency = normalizeCurrency(request.currency());
+        String accountNumber = requireDigits(request.accountNumber(), "accountNumber");
+        PaystackPaymentService.DestinationOption bank = findDestinationOption(
+                paystackPaymentService.listBankDestinations(currency), request.bankCode());
+        PaystackPaymentService.ResolvedBankAccount resolved = paystackPaymentService.resolveBankAccount(
+                accountNumber, bank.code(), currency);
+        return new ResolvedPayoutBankAccountResponse(resolved.accountName(), bank.code(), bank.name(),
+                currency, mask(accountNumber));
     }
 
     @Transactional(readOnly = true)
@@ -123,6 +181,8 @@ public class PaystackSettlementService {
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Payout beneficiary not found"));
         String note = clean(request.note());
         if (Boolean.TRUE.equals(request.approve())) {
+            organizationRepository.findByIdForUpdate(beneficiary.getOrganization().getId())
+                    .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Organization not found"));
             beneficiaryRepository.findByOrganization_IdAndStatusAndCurrency(
                             beneficiary.getOrganization().getId(), PayoutBeneficiaryStatus.ACTIVE,
                             beneficiary.getCurrency())
@@ -443,6 +503,24 @@ public class PaystackSettlementService {
         } catch (RuntimeException ex) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "method must be MOBILE_MONEY or BANK_ACCOUNT");
         }
+    }
+
+    private static PaystackPaymentService.DestinationOption findDestinationOption(
+            List<PaystackPaymentService.DestinationOption> options, String code) {
+        String requestedCode = clean(code);
+        return options.stream()
+                .filter(option -> option.code().equalsIgnoreCase(requestedCode == null ? "" : requestedCode))
+                .findFirst()
+                .orElseThrow(() -> new ApiException(ErrorCode.BAD_REQUEST,
+                        "Select an active payout destination returned by Paystack"));
+    }
+
+    private static boolean sameAccountName(String submitted, String resolved) {
+        return normalizeAccountName(submitted).equals(normalizeAccountName(resolved));
+    }
+
+    private static String normalizeAccountName(String value) {
+        return value == null ? "" : value.trim().replaceAll("\\s+", " ").toUpperCase(Locale.ROOT);
     }
 
     private static String normalizeMobile(String value) {

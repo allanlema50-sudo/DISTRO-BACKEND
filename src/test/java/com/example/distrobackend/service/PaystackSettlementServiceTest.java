@@ -3,6 +3,7 @@ package com.example.distrobackend.service;
 import com.example.distrobackend.Domain.entity.*;
 import com.example.distrobackend.Domain.enums.*;
 import com.example.distrobackend.dto.CreateSettlementBatchRequest;
+import com.example.distrobackend.dto.CreatePayoutBeneficiaryRequest;
 import com.example.distrobackend.dto.SettlementBatchResponse;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.repository.*;
@@ -163,6 +164,122 @@ class PaystackSettlementServiceTest {
                 .isInstanceOf(com.example.distrobackend.Exception.ApiException.class)
                 .hasMessageContaining("TEST mode");
         verifyNoInteractions(settlementRepository, batchRepository, checkoutPaymentRepository);
+    }
+
+    @Test
+    void createsBankBeneficiaryUsingFreshlyResolvedNameWithoutReviewByDefault() {
+        UUID organizationId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        Organization organization = new Organization();
+        organization.setId(organizationId);
+        User user = new User();
+        user.setId(userId);
+        AuthenticatedUser actor = new AuthenticatedUser(
+                userId, UserRole.DISTRIBUTOR_ADMIN, organizationId, null, null);
+        when(paystackPaymentService.listBankDestinations("KES")).thenReturn(java.util.List.of(
+                new PaystackPaymentService.DestinationOption("Equity Bank", "68", "KES", "bank", true)));
+        when(paystackPaymentService.resolveBankAccount("0123456789", "68", "KES"))
+                .thenReturn(new PaystackPaymentService.ResolvedBankAccount("Jane Doe", "68", "KES"));
+        when(organizationRepository.findByIdForUpdate(organizationId)).thenReturn(Optional.of(organization));
+        when(beneficiaryRepository.findByOrganization_IdAndStatusAndCurrency(
+                organizationId, PayoutBeneficiaryStatus.ACTIVE, "KES")).thenReturn(Optional.empty());
+        when(paystackPaymentService.createRecipient(PayoutMethod.BANK_ACCOUNT, "Jane Doe", "0123456789",
+                "68", "KES", null)).thenReturn(new PaystackPaymentService.Recipient("RCP_TEST"));
+        when(paystackPaymentService.mode()).thenReturn("TEST");
+        when(userRepository.getReferenceById(userId)).thenReturn(user);
+        when(beneficiaryRepository.save(any(PayoutBeneficiary.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        var response = service.createBeneficiary(actor, new CreatePayoutBeneficiaryRequest(
+                "BANK_ACCOUNT", "Jane Doe", "KES", null, "0123456789", "68", null, true));
+
+        assertThat(response.accountName()).isEqualTo("Jane Doe");
+        assertThat(response.accountMask()).isEqualTo("****6789");
+        assertThat(response.status()).isEqualTo("ACTIVE");
+        assertThat(response.providerMode()).isEqualTo("TEST");
+        verify(paystackPaymentService).resolveBankAccount("0123456789", "68", "KES");
+    }
+
+    @Test
+    void doesNotCreateBankRecipientWhenConfirmedNameDiffersFromResolvedName() {
+        UUID organizationId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        AuthenticatedUser actor = new AuthenticatedUser(
+                userId, UserRole.DISTRIBUTOR_ADMIN, organizationId, null, null);
+        when(paystackPaymentService.listBankDestinations("KES")).thenReturn(java.util.List.of(
+                new PaystackPaymentService.DestinationOption("Equity Bank", "68", "KES", "bank", true)));
+        when(paystackPaymentService.resolveBankAccount("0123456789", "68", "KES"))
+                .thenReturn(new PaystackPaymentService.ResolvedBankAccount("Jane Doe", "68", "KES"));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.createBeneficiary(actor,
+                        new CreatePayoutBeneficiaryRequest("BANK_ACCOUNT", "Different Name", "KES",
+                                null, "0123456789", "68", null, true)))
+                .isInstanceOf(com.example.distrobackend.Exception.ApiException.class)
+                .hasMessageContaining("does not match");
+        verify(paystackPaymentService, never()).createRecipient(any(), any(), any(), any(), any(), any());
+        verifyNoInteractions(organizationRepository);
+    }
+
+    @Test
+    void createsMpesaBeneficiaryFromPaystackMobileMoneyOptions() {
+        UUID organizationId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        Organization organization = new Organization();
+        organization.setId(organizationId);
+        User user = new User();
+        user.setId(userId);
+        AuthenticatedUser actor = new AuthenticatedUser(
+                userId, UserRole.MANUFACTURER_ADMIN, organizationId, null, null);
+        when(paystackPaymentService.listMobileMoneyDestinations("KES")).thenReturn(java.util.List.of(
+                new PaystackPaymentService.DestinationOption("M-PESA", "MPESA", "KES", "mobile_money", true)));
+        when(organizationRepository.findByIdForUpdate(organizationId)).thenReturn(Optional.of(organization));
+        when(beneficiaryRepository.findByOrganization_IdAndStatusAndCurrency(
+                organizationId, PayoutBeneficiaryStatus.ACTIVE, "KES")).thenReturn(Optional.empty());
+        when(paystackPaymentService.createRecipient(PayoutMethod.MOBILE_MONEY, "Supplier Name", "254700000001",
+                "MPESA", "KES", null)).thenReturn(new PaystackPaymentService.Recipient("RCP_MPESA"));
+        when(paystackPaymentService.mode()).thenReturn("TEST");
+        when(userRepository.getReferenceById(userId)).thenReturn(user);
+        when(beneficiaryRepository.save(any(PayoutBeneficiary.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        var response = service.createBeneficiary(actor, new CreatePayoutBeneficiaryRequest(
+                "MOBILE_MONEY", "Supplier Name", "KES", "+254700000001", null, "MPESA", null, true));
+
+        assertThat(response.status()).isEqualTo("ACTIVE");
+        assertThat(response.bankCode()).isEqualTo("MPESA");
+        verify(paystackPaymentService, never()).resolveBankAccount(any(), any(), any());
+    }
+
+    @Test
+    void reviewFlagKeepsVerifiedBeneficiaryPendingForSuperAdmin() {
+        UUID organizationId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        Organization organization = new Organization();
+        organization.setId(organizationId);
+        User user = new User();
+        user.setId(userId);
+        AuthenticatedUser actor = new AuthenticatedUser(
+                userId, UserRole.DISTRIBUTOR_ADMIN, organizationId, null, null);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "beneficiaryReviewRequired", true);
+        when(paystackPaymentService.listBankDestinations("KES")).thenReturn(java.util.List.of(
+                new PaystackPaymentService.DestinationOption("Equity Bank", "68", "KES", "bank", true)));
+        when(paystackPaymentService.resolveBankAccount("0123456789", "68", "KES"))
+                .thenReturn(new PaystackPaymentService.ResolvedBankAccount("Jane Doe", "68", "KES"));
+        when(organizationRepository.findByIdForUpdate(organizationId)).thenReturn(Optional.of(organization));
+        when(paystackPaymentService.createRecipient(PayoutMethod.BANK_ACCOUNT, "Jane Doe", "0123456789",
+                "68", "KES", null)).thenReturn(new PaystackPaymentService.Recipient("RCP_PENDING"));
+        when(paystackPaymentService.mode()).thenReturn("TEST");
+        when(userRepository.getReferenceById(userId)).thenReturn(user);
+        when(beneficiaryRepository.save(any(PayoutBeneficiary.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        var response = service.createBeneficiary(actor, new CreatePayoutBeneficiaryRequest(
+                "BANK_ACCOUNT", "Jane Doe", "KES", null, "0123456789", "68", null, true));
+
+        assertThat(response.status()).isEqualTo("PENDING_REVIEW");
+        assertThat(response.reviewNote()).isEqualTo("Submitted for platform review");
+        verify(beneficiaryRepository, never()).findByOrganization_IdAndStatusAndCurrency(
+                organizationId, PayoutBeneficiaryStatus.ACTIVE, "KES");
     }
 
     @Test

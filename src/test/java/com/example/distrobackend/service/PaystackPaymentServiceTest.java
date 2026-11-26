@@ -139,6 +139,61 @@ class PaystackPaymentServiceTest {
         server.verify();
     }
 
+    @Test
+    void listsOnlyActiveKesBankDestinations() {
+        RestTemplate restTemplate = new RestTemplate();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(restTemplate).build();
+        PaystackPaymentService service = service(restTemplate);
+        server.expect(requestTo("https://api.paystack.co/bank?currency=KES"))
+                .andExpect(method(HttpMethod.GET))
+                .andExpect(header("Authorization", "Bearer sk_test_secret"))
+                .andRespond(withSuccess("""
+                        {"status":true,"data":[
+                          {"name":"Equity Bank","code":"68","active":true},
+                          {"name":"Closed Bank","code":"99","active":false}]}
+                        """, MediaType.APPLICATION_JSON));
+
+        assertThat(service.listBankDestinations("kes"))
+                .containsExactly(new PaystackPaymentService.DestinationOption(
+                        "Equity Bank", "68", "KES", "bank", true));
+        server.verify();
+    }
+
+    @Test
+    void listsKenyanMobileMoneyProvidersIncludingMpesa() {
+        RestTemplate restTemplate = new RestTemplate();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(restTemplate).build();
+        PaystackPaymentService service = service(restTemplate);
+        server.expect(requestTo("https://api.paystack.co/bank?currency=KES&type=mobile_money"))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess("""
+                        {"status":true,"data":[
+                          {"name":"Airtel Kenya","code":"ATL_KE","active":true},
+                          {"name":"M-PESA","code":"MPESA","active":true}]}
+                        """, MediaType.APPLICATION_JSON));
+
+        assertThat(service.listMobileMoneyDestinations("KES"))
+                .extracting(PaystackPaymentService.DestinationOption::code)
+                .containsExactly("ATL_KE", "MPESA");
+        server.verify();
+    }
+
+    @Test
+    void resolvesKesBankAccountNameUsingSelectedBankCode() {
+        RestTemplate restTemplate = new RestTemplate();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(restTemplate).build();
+        PaystackPaymentService service = service(restTemplate);
+        server.expect(requestTo("https://api.paystack.co/bank/resolve?account_number=0123456789&bank_code=68"))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess("""
+                        {"status":true,"data":{"account_number":"0123456789","account_name":"Jane Doe"}}
+                        """, MediaType.APPLICATION_JSON));
+
+        assertThat(service.resolveBankAccount("0123456789", "68", "KES"))
+                .isEqualTo(new PaystackPaymentService.ResolvedBankAccount("Jane Doe", "68", "KES"));
+        server.verify();
+    }
+
     private static PaystackPaymentService service(RestTemplate restTemplate) {
         return new PaystackPaymentService(restTemplate, new JsonMapper(), true, true, "TEST",
                 "https://api.paystack.co", "sk_test_secret", WEBHOOK_SECRET, "");

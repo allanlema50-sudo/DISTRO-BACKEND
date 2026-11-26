@@ -1000,11 +1000,17 @@ variables are documented in [`docs/paystack-checkout.md`](docs/paystack-checkout
 Paystack initialization, signed webhooks, and Super Admin-controlled supplier
 payout execution are provider-backed. Transfers remain disabled until the
 Paystack account has been approved for payouts and the deployment enables them.
+Organization beneficiary setup and Paystack bank-account verification are
+documented in [`docs/payout-beneficiary-onboarding.md`](docs/payout-beneficiary-onboarding.md).
 
-Settlement and payout APIs are intentionally Super Admin controlled:
+Settlement approval and payout execution are Super Admin controlled. Organization
+administrators manage their own payout destinations:
 
 | Method | Endpoint | Access | Purpose / integration note |
 |---|---|---|---|
+| `GET` | `/api/v1/finance/beneficiaries/banks?currency=KES` | Manufacturer/distributor admin | Load active KES bank destinations from Paystack |
+| `GET` | `/api/v1/finance/beneficiaries/mobile-money-providers?currency=KES` | Manufacturer/distributor admin | Load active Paystack mobile-money destinations, including M-Pesa when available |
+| `POST` | `/api/v1/finance/beneficiaries/resolve-bank-account` | Manufacturer/distributor admin | Resolve a selected bank and account number before creating a beneficiary |
 | `POST` | `/api/v1/finance/beneficiaries` | Manufacturer/distributor admin | Submit a Paystack mobile-money or bank beneficiary; raw account details are not returned or retained by LogiFlow |
 | `GET` | `/api/v1/finance/beneficiaries` | Organization admin | List the organization’s payout beneficiaries and review status |
 | `GET` | `/api/v1/admin/financial/beneficiaries` | `SUPER_ADMIN` | Review all beneficiaries |
@@ -1024,6 +1030,12 @@ Settlement and payout APIs are intentionally Super Admin controlled:
 | `PATCH` | `/api/v1/admin/financial/disputes/{providerDisputeId}/review` | `SUPER_ADMIN` | Add an internal review note; set `clearForSettlement: true` only after Paystack marks the dispute resolved |
 | `GET` | `/api/v1/admin/financial/reconciliation-report?from=2026-11-01T00:00:00Z&to=2026-11-08T00:00:00Z` | `SUPER_ADMIN` | Paginated internal consistency report for Paystack checkouts; date range is required and capped at 31 days |
 | `GET` | `/api/v1/admin/financial/provider-transaction-matches?from=2026-11-01T00:00:00Z&to=2026-11-08T00:00:00Z&page=1&perPage=50` | `SUPER_ADMIN` | Compare a live Paystack transaction-feed page to local payments; flags missing local references or amount/currency/status mismatches |
+
+`PAYSTACK_BENEFICIARY_REVIEW_REQUIRED` defaults to `false`. Set it to `true`
+to keep newly created organization beneficiaries in `PENDING_REVIEW` until a
+Super Admin approves them. Bank names must be resolved and confirmed either way;
+Paystack does not return a verified account-holder name for its Kenyan mobile-
+money recipient flow.
 
 Paystack callbacks are signature-verified, stored in a durable inbox, and
 acknowledged before background processing. Raw callback bodies are not retained.

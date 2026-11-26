@@ -421,6 +421,70 @@ public class PaystackPaymentService {
         return new Recipient(recipientCode);
     }
 
+    public List<DestinationOption> listBankDestinations(String currency) {
+        requireTransfersEnabled();
+        String normalizedCurrency = normalizeDestinationCurrency(currency);
+        JsonNode root = getJson("/bank?currency=" + normalizedCurrency,
+                "Paystack bank list request failed");
+        return parseDestinationOptions(root.path("data"), normalizedCurrency, "bank");
+    }
+
+    public List<DestinationOption> listMobileMoneyDestinations(String currency) {
+        requireTransfersEnabled();
+        String normalizedCurrency = normalizeDestinationCurrency(currency);
+        JsonNode root = getJson("/bank?currency=" + normalizedCurrency + "&type=mobile_money",
+                "Paystack mobile-money list request failed");
+        return parseDestinationOptions(root.path("data"), normalizedCurrency, "mobile_money");
+    }
+
+    public ResolvedBankAccount resolveBankAccount(String accountNumber, String bankCode, String currency) {
+        requireTransfersEnabled();
+        String normalizedCurrency = normalizeDestinationCurrency(currency);
+        if (accountNumber == null || !accountNumber.matches("[0-9]{1,40}")) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "accountNumber must contain digits only");
+        }
+        if (bankCode == null || !bankCode.matches("[A-Za-z0-9_-]{1,30}")) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "bankCode is invalid");
+        }
+        JsonNode data = getJson("/bank/resolve?account_number=" + encodePath(accountNumber)
+                        + "&bank_code=" + encodePath(bankCode.trim()),
+                "Paystack could not verify this bank account; check the selected bank and account number",
+                ErrorCode.BAD_REQUEST).path("data");
+        String resolvedName = data.path("account_name").asString("").trim();
+        if (resolvedName.isBlank()) {
+            throw new ProviderOutcomeUnknownException("Paystack returned no resolved account name", null);
+        }
+        String resolvedNumber = data.path("account_number").asString(accountNumber).replaceAll("\\s", "");
+        if (!accountNumber.equals(resolvedNumber)) {
+            throw new ProviderOutcomeUnknownException("Paystack resolved a different account number", null);
+        }
+        return new ResolvedBankAccount(resolvedName, bankCode.trim(), normalizedCurrency);
+    }
+
+    private static List<DestinationOption> parseDestinationOptions(JsonNode data, String currency, String type) {
+        if (!data.isArray()) {
+            throw new ProviderOutcomeUnknownException("Paystack destination list response was incomplete", null);
+        }
+        List<DestinationOption> options = new ArrayList<>();
+        for (JsonNode item : data) {
+            String name = item.path("name").asString("").trim();
+            String code = item.path("code").asString("").trim();
+            if (name.isBlank() || code.isBlank()) {
+                throw new ProviderOutcomeUnknownException("Paystack destination list contained an incomplete option", null);
+            }
+            boolean active = item.path("active").asBoolean(false);
+            if (active) options.add(new DestinationOption(name, code, currency, type, true));
+        }
+        return List.copyOf(options);
+    }
+
+    private static String normalizeDestinationCurrency(String currency) {
+        if (currency == null || !"KES".equalsIgnoreCase(currency.trim())) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Only KES payout destinations are supported");
+        }
+        return "KES";
+    }
+
     public Transfer initiateTransfer(String reference, BigDecimal amount, String currency,
                                      String recipientCode, String reason) {
         requireTransfersEnabled();
@@ -563,6 +627,10 @@ public class PaystackPaymentService {
     }
 
     private JsonNode getJson(String path, String rejectionMessage) {
+        return getJson(path, rejectionMessage, ErrorCode.PAYMENT_NOT_CONFIGURED);
+    }
+
+    private JsonNode getJson(String path, String rejectionMessage, ErrorCode rejectionCode) {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(secretKey);
         ResponseEntity<String> response;
@@ -571,23 +639,27 @@ public class PaystackPaymentService {
                     new HttpEntity<>(headers), String.class);
         } catch (HttpStatusCodeException ex) {
             if (ex.getStatusCode().is5xxServerError() || ex.getStatusCode().value() == 408) {
-                throw new ProviderOutcomeUnknownException("Paystack transaction-list outcome is unknown", ex);
+                throw new ProviderOutcomeUnknownException("Paystack GET request outcome is unknown", ex);
             }
-            throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, rejectionMessage);
+            int status = ex.getStatusCode().value();
+            ErrorCode mappedCode = rejectionCode == ErrorCode.BAD_REQUEST
+                    && status != 400 && status != 404 && status != 422
+                    ? ErrorCode.PAYMENT_NOT_CONFIGURED : rejectionCode;
+            throw new ApiException(mappedCode, rejectionMessage);
         } catch (RestClientException ex) {
-            throw new ProviderOutcomeUnknownException("Paystack transaction-list outcome is unknown", ex);
+            throw new ProviderOutcomeUnknownException("Paystack GET request outcome is unknown", ex);
         }
         try {
             JsonNode root = response.getBody() == null ? null : jsonMapper.readTree(response.getBody());
             if (root == null || !root.path("status").isBoolean()) {
-                throw new ProviderOutcomeUnknownException("Paystack returned an incomplete transaction-list response", null);
+                throw new ProviderOutcomeUnknownException("Paystack returned an incomplete GET response", null);
             }
             if (!root.path("status").asBoolean()) {
-                throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, rejectionMessage);
+                throw new ApiException(rejectionCode, rejectionMessage);
             }
             return root;
         } catch (JacksonException ex) {
-            throw new ProviderOutcomeUnknownException("Paystack returned invalid transaction-list JSON", ex);
+            throw new ProviderOutcomeUnknownException("Paystack returned invalid GET response JSON", ex);
         }
     }
 
@@ -661,6 +733,10 @@ public class PaystackPaymentService {
     public record Initialization(String providerReference, String authorizationUrl, String accessCode, String channel) {}
 
     public record Recipient(String recipientCode) {}
+
+    public record DestinationOption(String name, String code, String currency, String type, boolean active) {}
+
+    public record ResolvedBankAccount(String accountName, String bankCode, String currency) {}
 
     public record Transfer(String reference, String transferCode, String status,
                            Long amountMinor, String currency) {}

@@ -10,6 +10,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.Optional;
+import java.util.List;
 import java.util.UUID;
 
 public interface SettlementBatchRepository extends JpaRepository<SettlementBatch, UUID> {
@@ -17,4 +18,8 @@ public interface SettlementBatchRepository extends JpaRepository<SettlementBatch
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select b from SettlementBatch b where b.id = :id")
     Optional<SettlementBatch> findByIdForUpdate(@Param("id") UUID id);
+    @Query(value = "select id from settlement_batches "
+            + "where execution_mode = 'TEST_AUTOMATIC' and provider_mode = 'TEST' and status = 'APPROVED' "
+            + "order by created_at asc limit :batchSize", nativeQuery = true)
+    List<UUID> findApprovedAutomaticTestBatchIds(@Param("batchSize") int batchSize);
 }

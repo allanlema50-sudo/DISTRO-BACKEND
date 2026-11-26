@@ -27,6 +27,13 @@ public class SettlementBatch {
     @Column(name = "provider", nullable = false, length = 20)
     private PaymentProvider provider = PaymentProvider.PAYSTACK;
 
+    /** Environment snapshot; null is reserved for batches created before mode tracking. */
+    @Column(name = "provider_mode", length = 8)
+    private String providerMode;
+
+    @Column(name = "execution_mode", nullable = false, length = 24)
+    private String executionMode = "MANUAL";
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 24)
     private SettlementBatchStatus status = SettlementBatchStatus.PENDING_APPROVAL;
@@ -40,8 +47,8 @@ public class SettlementBatch {
     @Column(name = "settlement_count", nullable = false)
     private int settlementCount;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "created_by", nullable = false)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "created_by")
     private User createdBy;
 
     @ManyToOne(fetch = FetchType.LAZY)

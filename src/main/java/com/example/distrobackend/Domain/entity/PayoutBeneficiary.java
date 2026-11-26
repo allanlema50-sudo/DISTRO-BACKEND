@@ -51,6 +51,10 @@ public class PayoutBeneficiary {
     @Column(name = "provider_recipient_code", nullable = false, unique = true, length = 100)
     private String providerRecipientCode;
 
+    /** Paystack environment in which the recipient code was created. */
+    @Column(name = "provider_mode", length = 8)
+    private String providerMode;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)
     private PayoutBeneficiaryStatus status = PayoutBeneficiaryStatus.PENDING_REVIEW;

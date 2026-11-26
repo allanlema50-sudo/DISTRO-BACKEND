@@ -7,15 +7,18 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 public record SettlementBatchResponse(
-        UUID id, String provider, String status, String currency, BigDecimal totalAmount,
+        UUID id, String provider, String providerMode, String executionMode, String status,
+        String currency, BigDecimal totalAmount,
         int settlementCount, UUID createdBy, UUID approvedBy, OffsetDateTime approvedAt,
         OffsetDateTime executedAt, String note, OffsetDateTime createdAt
 ) {
     public static SettlementBatchResponse from(SettlementBatch batch) {
         return new SettlementBatchResponse(
-                batch.getId(), batch.getProvider().name(), batch.getStatus().name(), batch.getCurrency(),
+                batch.getId(), batch.getProvider().name(), batch.getProviderMode(), batch.getExecutionMode(),
+                batch.getStatus().name(), batch.getCurrency(),
                 batch.getTotalAmount(), batch.getSettlementCount(),
-                batch.getCreatedBy().getId(), batch.getApprovedBy() == null ? null : batch.getApprovedBy().getId(),
+                batch.getCreatedBy() == null ? null : batch.getCreatedBy().getId(),
+                batch.getApprovedBy() == null ? null : batch.getApprovedBy().getId(),
                 batch.getApprovedAt(), batch.getExecutedAt(), batch.getNote(), batch.getCreatedAt());
     }
 }

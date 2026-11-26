@@ -41,8 +41,12 @@ public class PaystackSettlementDispatchStore {
     private final SupplierPayoutAttemptRepository attemptRepository;
 
     @Transactional
-    public List<UUID> beginBatch(UUID batchId) {
+    public List<UUID> beginBatch(UUID batchId, String providerMode) {
         SettlementBatch batch = lockBatch(batchId);
+        if (!java.util.Objects.equals(providerMode, batch.getProviderMode())) {
+            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                    "Settlement batch belongs to a different or unknown Paystack mode");
+        }
         if (batch.getStatus() != SettlementBatchStatus.APPROVED) {
             throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
                     "Only an approved settlement batch can be executed");
@@ -66,7 +70,7 @@ public class PaystackSettlementDispatchStore {
     }
 
     @Transactional
-    public Attempt prepareAttempt(UUID settlementId, boolean retry) {
+    public Attempt prepareAttempt(UUID settlementId, boolean retry, String providerMode) {
         SupplierSettlement observed = settlementRepository.findById(settlementId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Supplier settlement not found"));
         if (observed.getSettlementBatch() == null) {
@@ -80,6 +84,10 @@ public class PaystackSettlementDispatchStore {
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Checkout payment not found"));
         SupplierSettlement settlement = settlementRepository.findByIdForUpdate(settlementId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Supplier settlement not found"));
+        if (!java.util.Objects.equals(providerMode, batch.getProviderMode())) {
+            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                    "Settlement batch belongs to a different or unknown Paystack mode");
+        }
 
         if (hasOpenRefundOrDispute(settlement, payment)) {
             if (!retry && batch.getStatus() == SettlementBatchStatus.PROCESSING
@@ -120,6 +128,10 @@ public class PaystackSettlementDispatchStore {
             refreshBatch(batch);
             return null;
         }
+        if (!java.util.Objects.equals(providerMode, settlement.getBeneficiary().getProviderMode())) {
+            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                    "The payout beneficiary belongs to a different or unknown Paystack mode");
+        }
 
         int attemptNumber = Math.max(settlement.getPayoutAttempts(), attemptRepository
                 .findTopBySettlement_IdOrderByAttemptNumberDesc(settlementId)
@@ -130,6 +142,7 @@ public class PaystackSettlementDispatchStore {
         payoutAttempt.setSettlement(settlement);
         payoutAttempt.setAttemptNumber(attemptNumber);
         payoutAttempt.setProviderReference(reference);
+        payoutAttempt.setProviderMode(providerMode);
         payoutAttempt.setStatus(SupplierPayoutAttemptStatus.PROCESSING);
         payoutAttempt.setAmount(settlement.getAmount());
         payoutAttempt.setCurrency(settlement.getCurrency());
@@ -147,7 +160,7 @@ public class PaystackSettlementDispatchStore {
         settlementRepository.saveAndFlush(settlement);
         batch.setStatus(SettlementBatchStatus.PROCESSING);
         batchRepository.save(batch);
-        return new Attempt(settlement.getId(), batchId, attemptNumber, reference,
+        return new Attempt(settlement.getId(), batchId, attemptNumber, reference, providerMode,
                 settlement.getAmount(), settlement.getCurrency(),
                 settlement.getBeneficiary().getProviderRecipientCode());
     }
@@ -442,7 +455,8 @@ public class PaystackSettlementDispatchStore {
         }
     }
 
-    public record Attempt(UUID settlementId, UUID batchId, int attemptNumber, String reference, BigDecimal amount,
+    public record Attempt(UUID settlementId, UUID batchId, int attemptNumber, String reference, String providerMode,
+                          BigDecimal amount,
                           String currency, String recipientCode) {}
 
     public record AttemptVerification(String reference, UUID settlementId, UUID batchId) {}

@@ -187,10 +187,12 @@ public class CentralizedCheckoutService {
         PaymentMethod paymentMethod = switch (method) {
             case "DEMO", "DEMO_MPESA", "DEMO_CARD" -> PaymentMethod.OTHER;
             case "MPESA_SANDBOX", "MPESA" -> PaymentMethod.MPESA;
-            case "PAYSTACK", "PAYSTACK_CARD", "PAYSTACK_MPESA" -> paystackMethod(paystackChannel);
+            case "PAYSTACK", "PAYSTACK_CARD", "PAYSTACK_MOBILE_MONEY", "PAYSTACK_MPESA" ->
+                    paystackMethod(paystackChannel);
             case "PAYSTACK_PESALINK", "PAYSTACK_BANK_TRANSFER" -> PaymentMethod.OTHER;
             default -> throw new ApiException(ErrorCode.BAD_REQUEST,
-                    "method must be MPESA_SANDBOX, MPESA, PAYSTACK, PAYSTACK_CARD, PAYSTACK_MPESA, PAYSTACK_PESALINK, PAYSTACK_BANK_TRANSFER, DEMO, DEMO_MPESA, or DEMO_CARD");
+                    "method must be MPESA_SANDBOX, MPESA, PAYSTACK, PAYSTACK_CARD, PAYSTACK_MOBILE_MONEY, "
+                            + "PAYSTACK_PESALINK, PAYSTACK_BANK_TRANSFER, DEMO, DEMO_MPESA, or DEMO_CARD");
         };
         int mpesaAmount = (!demo && !paystack) ? requireWholeKes(checkout.getTotalAmount(), checkout.getCurrency()) : 0;
         String idempotencyKey = clean(idempotencyHeader) != null ? clean(idempotencyHeader) : clean(request.idempotencyKey());
@@ -306,7 +308,7 @@ public class CentralizedCheckoutService {
 
     private static PaymentMethod paystackMethod(String channel) {
         return switch (channel) {
-            case "mobile_money" -> PaymentMethod.MPESA;
+            case "mobile_money" -> PaymentMethod.MOBILE_MONEY;
             case "card" -> PaymentMethod.CARD;
             default -> PaymentMethod.OTHER;
         };
@@ -314,7 +316,9 @@ public class CentralizedCheckoutService {
 
     private static String paystackChannel(String method, String requestedChannel) {
         if (method.equals("PAYSTACK_CARD")) return "card";
-        if (method.equals("PAYSTACK_MPESA")) return "mobile_money";
+        // PAYSTACK_MPESA remains a compatibility alias, but the channel is generic
+        // mobile money (for example Airtel Money), not a Safaricom-specific M-Pesa rail.
+        if (method.equals("PAYSTACK_MOBILE_MONEY") || method.equals("PAYSTACK_MPESA")) return "mobile_money";
         if (method.equals("PAYSTACK_PESALINK") || method.equals("PAYSTACK_BANK_TRANSFER")) return "bank_transfer";
         return requestedChannel == null || requestedChannel.isBlank()
                 ? "card" : requestedChannel.trim().toLowerCase(Locale.ROOT);

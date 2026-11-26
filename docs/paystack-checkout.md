@@ -60,8 +60,11 @@ fulfilment.
 `PAYSTACK_CALLBACK_URL` is only a browser redirect for the user experience; a
 user reaching it does not prove payment. The backend changes payment state
 from signed webhooks and server-side verification. Direct `MPESA` checkout
-uses Daraja, while `PAYSTACK_MPESA` uses Paystack's mobile-money channel. Each
-payment attempt selects one provider; do not start both for the same checkout.
+uses Daraja, while `PAYSTACK_MOBILE_MONEY` uses Paystack's generic mobile-money
+channel (including supported wallets such as Airtel Money). The legacy
+`PAYSTACK_MPESA` value remains accepted as an alias, but it does not select a
+Safaricom-specific Paystack M-Pesa charge. Each payment attempt selects one
+provider; do not start both for the same checkout.
 
 Example payment request:
 
@@ -75,9 +78,10 @@ Example payment request:
 
 Supported channel values are `card`, `mobile_money`, `bank_transfer`, `bank`,
 `ussd`, `qr`, and `eft`, subject to the channels enabled for the Paystack
-account. Convenience methods `PAYSTACK_CARD`, `PAYSTACK_MPESA`,
+account. Convenience methods `PAYSTACK_CARD`, `PAYSTACK_MOBILE_MONEY`,
 `PAYSTACK_PESALINK`, and `PAYSTACK_BANK_TRANSFER` map to the corresponding
-channels.
+channels. `PAYSTACK_MPESA` is a backward-compatible alias for
+`PAYSTACK_MOBILE_MONEY` and should not be used for new clients.
 
 ## Webhook setup
 
@@ -119,6 +123,41 @@ enable payouts. After Paystack approves transfers, set
    retains that reference and verifies it; a recovery worker resumes batch
    members that were not yet dispatched. A new reference is created only after
    Paystack confirms a prior attempt failed or was reversed.
+
+### TEST-mode automatic payout for a controlled demo
+
+The optional `PAYSTACK_TEST_AUTO_SETTLEMENT_ENABLED` worker can create a
+one-settlement batch and dispatch it automatically, but only when all of these
+are true: Paystack is enabled, transfers are enabled, and `PAYSTACK_MODE=test`.
+Application startup fails if automatic settlement is enabled with LIVE mode or
+without the other provider flags. It does not bypass receipt confirmation, the
+configured post-receipt hold, beneficiary approval, or refund/dispute checks.
+
+For a quick Render demonstration, use a separate test deployment/database where
+possible, set `SUPPLIER_SETTLEMENT_DELIVERY_HOLD_DAYS=0`, and enable the TEST
+automatic-settlement flag. The worker scans every 30 seconds by default. Each
+automatic batch is stored with `executionMode=TEST_AUTOMATIC`, has no fake human
+creator or approver, and each transfer attempt stores its own `providerMode`.
+The API also returns `providerMode` for beneficiaries and batches. The UI must
+show TEST mode as simulated/no-real-money even when Paystack reports success.
+
+Recipients are environment-specific. A beneficiary created before mode
+tracking has no known provider mode and cannot be paid until it is replaced:
+reject the old beneficiary, register it again under the current Paystack mode,
+and have a Super Admin approve the new record. Do not switch the mode or keys
+while an automatic payout is pending. The ordinary manual batch workflow remains
+available when TEST automation is disabled and is the only batch path in LIVE
+mode.
+
+Configuration:
+
+```dotenv
+PAYSTACK_ENABLED=true
+PAYSTACK_MODE=test
+PAYSTACK_TRANSFERS_ENABLED=true
+PAYSTACK_TEST_AUTO_SETTLEMENT_ENABLED=true
+SUPPLIER_SETTLEMENT_DELIVERY_HOLD_DAYS=0
+```
 
 An open or uncleared Paystack dispute, or a refund that is still being processed,
 blocks batch creation and transfer dispatch. After a beneficiary becomes inactive,

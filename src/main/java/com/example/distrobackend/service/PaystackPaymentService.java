@@ -107,6 +107,11 @@ public class PaystackPaymentService {
         return transfersEnabled;
     }
 
+    /** Returns the normalized environment that owns this provider credential set. */
+    public String mode() {
+        return mode;
+    }
+
     public Initialization initialize(String reference, BigDecimal amount, String currency,
                                     String email, String channel, String paymentId,
                                     String checkoutReference) {

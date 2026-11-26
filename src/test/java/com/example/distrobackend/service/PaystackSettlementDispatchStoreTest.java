@@ -54,7 +54,8 @@ class PaystackSettlementDispatchStoreTest {
         settlement.setCurrency("KES");
         settlement.setPayoutReference("lf_settlement_transfer_1");
         PaystackSettlementDispatchStore.Attempt attempt = new PaystackSettlementDispatchStore.Attempt(
-                settlementId, batchId, 1, settlement.getPayoutReference(), settlement.getAmount(), "KES", "RCP_1");
+                settlementId, batchId, 1, settlement.getPayoutReference(), "TEST",
+                settlement.getAmount(), "KES", "RCP_1");
         SupplierPayoutAttempt payoutAttempt = new SupplierPayoutAttempt();
         payoutAttempt.setSettlement(settlement);
         payoutAttempt.setAttemptNumber(1);
@@ -163,7 +164,7 @@ class PaystackSettlementDispatchStoreTest {
                 .thenReturn(List.of(failedSettlement, pendingSettlement));
 
         dispatchStore.complete(new PaystackSettlementDispatchStore.Attempt(settlementId, batchId, 1,
-                        "lfp_attempt_1", BigDecimal.ONE, "KES", "RCP_1"), null, "rejected", false);
+                        "lfp_attempt_1", "TEST", BigDecimal.ONE, "KES", "RCP_1"), null, "rejected", false);
 
         assertThat(failedSettlement.getStatus()).isEqualTo(SupplierSettlementStatus.FAILED);
         assertThat(batch.getStatus()).isEqualTo(SettlementBatchStatus.PROCESSING);

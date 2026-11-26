@@ -39,6 +39,17 @@ class CentralizedCheckoutServiceTest {
  @Mock PaystackPaymentService paystackPaymentService;
  @InjectMocks CentralizedCheckoutService service;
 
+ @Test void paystackMobileMoneyUsesGenericChannelAndIsNotStoredAsSafaricomMpesa() {
+  String genericChannel = ReflectionTestUtils.invokeMethod(
+    service, "paystackChannel", "PAYSTACK_MOBILE_MONEY", null);
+  String legacyAliasChannel = ReflectionTestUtils.invokeMethod(
+    service, "paystackChannel", "PAYSTACK_MPESA", null);
+  PaymentMethod persistedMethod = ReflectionTestUtils.invokeMethod(service, "paystackMethod", "mobile_money");
+  assertThat(genericChannel).isEqualTo("mobile_money");
+  assertThat(legacyAliasChannel).isEqualTo("mobile_money");
+  assertThat(persistedMethod).isEqualTo(PaymentMethod.MOBILE_MONEY);
+ }
+
  @Test void successfulDemoAllocatesFiveMillionAcrossThreeIndependentOrdersWithoutMarkingPayoutsSettled() {
   ReflectionTestUtils.setField(service,"demoEnabled",true);
   ReflectionTestUtils.setField(service,"demoOutcome","SUCCESS");

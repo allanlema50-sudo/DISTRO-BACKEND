@@ -10,6 +10,7 @@ public record SupplierPayoutAttemptResponse(
         UUID id,
         int attemptNumber,
         String providerReference,
+        String providerMode,
         String providerTransferCode,
         String status,
         BigDecimal amount,
@@ -20,7 +21,8 @@ public record SupplierPayoutAttemptResponse(
 ) {
     public static SupplierPayoutAttemptResponse from(SupplierPayoutAttempt attempt) {
         return new SupplierPayoutAttemptResponse(attempt.getId(), attempt.getAttemptNumber(),
-                attempt.getProviderReference(), attempt.getProviderTransferCode(), attempt.getStatus().name(),
+                attempt.getProviderReference(), attempt.getProviderMode(), attempt.getProviderTransferCode(),
+                attempt.getStatus().name(),
                 attempt.getAmount(), attempt.getCurrency(), attempt.getFailureReason(),
                 attempt.getStartedAt(), attempt.getCompletedAt());
     }

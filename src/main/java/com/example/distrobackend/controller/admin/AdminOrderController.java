@@ -1,8 +1,11 @@
 package com.example.distrobackend.controller.admin;
 
+import com.example.distrobackend.dto.DemoDispatchRequest;
+import com.example.distrobackend.dto.DemoDispatchResponse;
 import com.example.distrobackend.dto.OrderResponse;
 import com.example.distrobackend.dto.OrderStatusUpdate;
 import com.example.distrobackend.security.AuthenticatedUser;
+import com.example.distrobackend.service.CustomerDeliveryDemoService;
 import com.example.distrobackend.service.OrderService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -13,6 +16,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -26,6 +30,7 @@ import java.util.UUID;
 public class AdminOrderController {
 
     private final OrderService orderService;
+    private final CustomerDeliveryDemoService customerDeliveryDemoService;
 
     @GetMapping
     public Page<OrderResponse> list(Pageable pageable) {
@@ -35,6 +40,13 @@ public class AdminOrderController {
     @GetMapping("/{orderId}")
     public OrderResponse get(@PathVariable UUID orderId) {
         return orderService.getOrder(orderId);
+    }
+
+    @PostMapping("/{orderId}/demo-dispatch")
+    public DemoDispatchResponse demoDispatch(@AuthenticationPrincipal AuthenticatedUser actor,
+                                             @PathVariable UUID orderId,
+                                             @Valid @RequestBody DemoDispatchRequest request) {
+        return customerDeliveryDemoService.dispatch(actor, orderId, request);
     }
 
     @PatchMapping("/{orderId}/status")

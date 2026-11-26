@@ -140,14 +140,14 @@ public class TripController {
     }
 
     @PostMapping("/{tripId}/stops/{stopId}/delivery-otp")
-    public void issueDeliveryOtp(
+    public DeliveryOtpResponse issueDeliveryOtp(
             @AuthenticationPrincipal AuthenticatedUser me,
             @PathVariable UUID tripId,
             @PathVariable UUID stopId) {
         if (me.role() != UserRole.CUSTOMER) {
             throw new ApiException(ErrorCode.ACCESS_DENIED, "Only customers may request delivery OTPs");
         }
-        tripService.issueDeliveryOtp(me.userId(), tripId, stopId);
+        return tripService.issueDeliveryOtp(me.userId(), tripId, stopId);
     }
 
     @PostMapping("/{tripId}/location")

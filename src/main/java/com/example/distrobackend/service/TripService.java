@@ -482,7 +482,7 @@ public class TripService {
     }
 
     @Transactional
-    public void issueDeliveryOtp(UUID customerId, UUID tripId, UUID stopId) {
+    public DeliveryOtpResponse issueDeliveryOtp(UUID customerId, UUID tripId, UUID stopId) {
         Trip trip = tripRepository.findById(tripId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Trip not found"));
         TripStop stop = trip.getStops().stream()
@@ -502,7 +502,7 @@ public class TripService {
         if (stop.getOrder().getStatus() != OrderStatus.IN_TRANSIT) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Order is not in transit");
         }
-        otpService.issueDelivery(stop.getOrder().getCustomer(), stop);
+        return otpService.issueDelivery(stop.getOrder().getCustomer(), stop);
     }
 
     @Transactional
@@ -735,6 +735,130 @@ public class TripService {
         Trip saved = tripRepository.save(trip);
         recordStatus(saved, previous, TripStatus.ONGOING, actor, "Trip dispatched");
         return TripResponse.from(saved, aggregateItems(saved));
+    }
+
+    /**
+     * Builds one customer delivery, assigns the crew, and dispatches it.
+     * The order must already be packed and awaiting dispatch.
+     */
+    @Transactional
+    public TripResponse dispatchCustomerDelivery(AuthenticatedUser actor, UUID orderId,
+                                                 UUID driverId, UUID vehicleId) {
+        requireDemoDispatcher(actor);
+        Order order = orderRepository.findByIdWithItemsForUpdate(orderId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
+        if (order.getStatus() != OrderStatus.AWAITING_DISPATCH) {
+            throw new ApiException(ErrorCode.INVALID_STATE_TRANSITION,
+                    "Pick and pack the order before dispatch. Current status: " + order.getStatus());
+        }
+        if (order.getOrganization() == null) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Order has no distributor");
+        }
+        if (order.getOrderItems() == null || order.getOrderItems().isEmpty()) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Order has no items");
+        }
+
+        StockItem stock = order.getOrderItems().get(0).getStockItem();
+        Warehouse warehouse = stock == null ? null : stock.getWarehouse();
+        String originName = warehouse != null && warehouse.getName() != null && !warehouse.getName().isBlank()
+                ? warehouse.getName()
+                : order.getOrganization().getName();
+        String originAddress = warehouse != null && warehouse.getAddress() != null && !warehouse.getAddress().isBlank()
+                ? warehouse.getAddress()
+                : originName;
+        double originLat = coordinate(warehouse == null ? null : warehouse.getLatitude(), -1.2921);
+        double originLng = coordinate(warehouse == null ? null : warehouse.getLongitude(), 36.8219);
+        if (originLat == 0.0 && originLng == 0.0) {
+            originLat = -1.2921;
+            originLng = 36.8219;
+        }
+        double dropLat = coordinate(order.getDeliveryLat(), originLat + 0.02);
+        double dropLng = coordinate(order.getDeliveryLng(), originLng + 0.02);
+        if (dropLat == 0.0 && dropLng == 0.0) {
+            dropLat = -1.2864;
+            dropLng = 36.8172;
+        }
+
+        Trip trip = new Trip();
+        trip.setOrganization(order.getOrganization());
+        trip.setTripType(TripType.DELIVERY);
+        trip.setTripNumber("TRIP-" + UUID.randomUUID().toString().replace("-", "").substring(0, 20));
+        trip.setStatus(TripStatus.SCHEDULED);
+        trip.setOriginName(originName == null || originName.isBlank() ? "Warehouse" : originName);
+        trip.setOriginAddress(originAddress == null || originAddress.isBlank() ? "Warehouse" : originAddress);
+        trip.setOriginLat(originLat);
+        trip.setOriginLng(originLng);
+        trip.setScheduledStartLabel("Now");
+        trip.setTotalDistanceKm(5);
+
+        User customer = order.getCustomer();
+        TripStop stop = new TripStop();
+        stop.setSequence(1);
+        stop.setStatus(StopStatus.IN_PROGRESS);
+        stop.setLocationName("Customer");
+        stop.setLocationAddress(order.getDeliveryAddress() == null || order.getDeliveryAddress().isBlank()
+                ? "Delivery address" : order.getDeliveryAddress());
+        stop.setLocationLat(dropLat);
+        stop.setLocationLng(dropLng);
+        stop.setEtaLabel("Arriving");
+        stop.setDistanceFromPreviousKm(5);
+        stop.setContactName(customer == null || customer.getFullName() == null ? "Customer" : customer.getFullName());
+        stop.setContactPhone(customer == null ? null : customer.getPhoneNumber());
+        stop.setOrder(order);
+        trip.addStop(stop);
+
+        Trip saved = tripRepository.saveAndFlush(trip);
+        recordStatus(saved, null, TripStatus.SCHEDULED, actor, "Customer delivery prepared for dispatch");
+        assignCustomerDeliveryCrew(actor, saved, driverId, vehicleId);
+        tripRepository.saveAndFlush(saved);
+        return dispatch(actor, saved.getId());
+    }
+
+    /** Assigns crew and dispatches a customer delivery that was created but not started. */
+    @Transactional
+    public TripResponse dispatchExistingCustomerDelivery(AuthenticatedUser actor, UUID tripId,
+                                                         UUID driverId, UUID vehicleId) {
+        requireDemoDispatcher(actor);
+        Trip trip = getOrganizationTripForUpdate(actor, tripId);
+        if (trip.getStatus() == TripStatus.ONGOING || trip.getStatus() == TripStatus.DELAYED) {
+            return TripResponse.from(trip, aggregateItems(trip));
+        }
+        if (trip.getStatus() != TripStatus.SCHEDULED) {
+            throw new ApiException(ErrorCode.INVALID_STATE_TRANSITION, "This delivery can no longer be dispatched");
+        }
+        assignCustomerDeliveryCrew(actor, trip, driverId, vehicleId);
+        tripRepository.saveAndFlush(trip);
+        return dispatch(actor, tripId);
+    }
+
+    private void requireDemoDispatcher(AuthenticatedUser actor) {
+        if (actor == null || actor.role() != UserRole.SUPER_ADMIN) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED,
+                    "Only a super admin can dispatch a customer delivery from here");
+        }
+    }
+
+    private void assignCustomerDeliveryCrew(AuthenticatedUser actor, Trip trip, UUID driverId, UUID vehicleId) {
+        User driver = userRepository.findByIdForUpdate(driverId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Driver not found"));
+        if (driver.getRole() != UserRole.DRIVER
+                || driver.getStatus() != UserStatus.ACTIVE
+                || driver.getDriverApprovalStatus() != DriverApprovalStatus.APPROVED) {
+            throw new ApiException(ErrorCode.CONFLICT, "Only an approved active driver can be assigned");
+        }
+        Vehicle vehicle = vehicleRepository.findByIdForUpdate(vehicleId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Vehicle not found"));
+        if (vehicle.getStatus() != VehicleStatus.ACTIVE) {
+            throw new ApiException(ErrorCode.CONFLICT, "Only an active vehicle can be assigned");
+        }
+        takeDriverFromUnstartedTrips(actor, driverId, trip.getId());
+        takeVehicleFromUnstartedTrips(actor, vehicleId, trip.getId());
+        trip.setRider(driver);
+        trip.setVehicle(vehicle);
+    }
+
+    private static double coordinate(Double value, double fallback) {
+        return value == null ? fallback : value;
     }
 
     private void sendDeliveryConfirmation(Order order) {

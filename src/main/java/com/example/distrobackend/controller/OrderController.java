@@ -5,6 +5,7 @@ import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.dto.*;
+import com.example.distrobackend.dto.DeliveryOtpResponse;
 import com.example.distrobackend.security.AuthenticatedUser;
 import com.example.distrobackend.service.OrderService;
 import com.example.distrobackend.service.OtpService;
@@ -217,7 +218,7 @@ public class OrderController {
     }
 
     @PostMapping("/{orderId}/delivery-otp")
-    public void requestDeliveryOtp(@AuthenticationPrincipal AuthenticatedUser me,
+    public DeliveryOtpResponse requestDeliveryOtp(@AuthenticationPrincipal AuthenticatedUser me,
                                    @PathVariable UUID orderId) {
         OrderResponse order = orderService.getOrder(orderId);
         if (!order.customerId().equals(me.userId())) {
@@ -229,7 +230,7 @@ public class OrderController {
         var stop = tripStopRepository.findFirstByOrder_IdAndStatusOrderBySequenceAsc(orderId, StopStatus.IN_PROGRESS)
                 .orElseThrow(() -> new ApiException(ErrorCode.BAD_REQUEST,
                         "Order has no active delivery stop"));
-        otpService.issueDelivery(orderService.getCustomer(orderId), stop);
+        return otpService.issueDelivery(orderService.getCustomer(orderId), stop);
     }
 
     // -----------------------------------------------------------------------

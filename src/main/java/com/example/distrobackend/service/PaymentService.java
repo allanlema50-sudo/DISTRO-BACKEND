@@ -5,6 +5,7 @@ import com.example.distrobackend.Domain.entity.Payment;
 import com.example.distrobackend.Domain.entity.PurchaseOrder;
 import com.example.distrobackend.Domain.entity.PurchaseOrderSettlement;
 import com.example.distrobackend.Domain.enums.OrderStatus;
+import com.example.distrobackend.Domain.enums.PaymentMethod;
 import com.example.distrobackend.Domain.enums.PaymentStatus;
 import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.PurchaseOrderStatus;
@@ -120,6 +121,13 @@ public class PaymentService {
     private boolean verifyCallback;
     @Value("${mpesa.final-failure-result-codes:1032}")
     private String finalFailureResultCodes;
+
+    /**
+     * Presentation switch. Customer checkout is marked paid without Daraja,
+     * and admin can dispatch the delivery. Turn off after the demo.
+     */
+    @Value("${app.demo.customer-fulfillment.enabled:false}")
+    private boolean demoCustomerFulfillment;
     private Set<Integer> terminalFailureResultCodeSet = Set.of();
 
     @PostConstruct
@@ -157,6 +165,9 @@ public class PaymentService {
         requireOrderAccess(actor, order);
         if (order.getStatus() != OrderStatus.PENDING) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Only pending orders can be paid");
+        }
+        if (demoCustomerFulfillment) {
+            return confirmDemoCustomerPayment(order, request.phoneNumber(), request.idempotencyKey(), false);
         }
         ensureConfigured();
 
@@ -698,6 +709,80 @@ public class PaymentService {
         payment.setStatus(PaymentStatus.FAILED);
         payment.setFailureReason(reason);
         paymentRepository.save(payment);
+    }
+
+    /**
+     * Marks a still-pending customer order paid without calling M-Pesa.
+     * No-op when the order is already past payment. Used by demo dispatch.
+     */
+    @Transactional
+    public void confirmPendingDemoPayment(UUID orderId) {
+        if (!demoCustomerFulfillment) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Demo customer fulfillment is turned off");
+        }
+        Order order = orderRepository.findByIdWithOwnershipForUpdate(orderId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
+        if (order.getStatus() != OrderStatus.PENDING) {
+            return;
+        }
+        String phone = order.getCustomer() == null ? null : order.getCustomer().getPhoneNumber();
+        confirmDemoCustomerPayment(order, phone, null, true);
+    }
+
+    private PaymentInitiateResponse confirmDemoCustomerPayment(Order order, String rawPhone,
+                                                               String idempotencyKey, boolean lenientPhone) {
+        if (order.getStatus() != OrderStatus.PENDING) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Only pending orders can be paid");
+        }
+        if (order.getTotalAmount() == null || order.getTotalAmount().compareTo(BigDecimal.ZERO) <= 0) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Invalid order amount");
+        }
+        if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+            Payment keyedPayment = paymentRepository.findByIdempotencyKey(idempotencyKey.trim()).orElse(null);
+            if (keyedPayment != null && keyedPayment.getOrder() != null
+                    && !keyedPayment.getOrder().getId().equals(order.getId())) {
+                throw new ApiException(ErrorCode.CONFLICT, "Idempotency key has already been used");
+            }
+        }
+        String phone = lenientPhone ? fallbackPhone(rawPhone) : PhoneNormalizer.normalize(rawPhone);
+        Payment payment = paymentRepository.findByOrderIdForUpdate(order.getId()).orElse(null);
+        if (payment != null && (payment.getStatus() == PaymentStatus.CONFIRMED
+                || payment.getStatus() == PaymentStatus.RECONCILED)) {
+            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT, "Order is already paid");
+        }
+        if (payment == null) {
+            payment = new Payment();
+            payment.setOrder(order);
+            payment.setAmount(order.getTotalAmount());
+        }
+        if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+            payment.setIdempotencyKey(idempotencyKey.trim());
+        }
+        payment.setMethod(PaymentMethod.OTHER);
+        payment.setStatus(PaymentStatus.CONFIRMED);
+        payment.setPhoneNumber(phone);
+        payment.setAmount(order.getTotalAmount());
+        payment.setInitiatedAt(OffsetDateTime.now());
+        payment.setConfirmedAt(OffsetDateTime.now());
+        payment.setFailureReason(null);
+        payment.setMpesaCheckoutRequestId(null);
+        payment.setMpesaMerchantRequestId(null);
+        payment.setMpesaReceiptNumber(("DEMO" + UUID.randomUUID().toString().replace("-", "")).substring(0, 16));
+        payment.setReconciledNote("DEMO — no money transferred");
+        paymentRepository.save(payment);
+        orderService.confirmPaidOrder(order.getId());
+        return response(payment, "Demo payment confirmed. No money was transferred.");
+    }
+
+    private static String fallbackPhone(String rawPhone) {
+        if (rawPhone == null || rawPhone.isBlank()) {
+            return "254700000000";
+        }
+        try {
+            return PhoneNormalizer.normalize(rawPhone);
+        } catch (RuntimeException ex) {
+            return "254700000000";
+        }
     }
 
     private PaymentInitiateResponse response(Payment payment, String message) {

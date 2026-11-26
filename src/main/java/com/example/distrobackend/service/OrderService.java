@@ -531,16 +531,72 @@ public class OrderService {
         paymentRepository.save(payment);
     }
 
+    /**
+     * Picks and packs a paid customer order so a driver can be dispatched
+     * without the distributor website. Super admin may do this for any organization.
+     */
     @Transactional
-    public OrderResponse dispatchFromTrip(AuthenticatedUser actor, UUID orderId) {
-        if (actor == null || actor.organizationId() == null
-                || (actor.role() != UserRole.DISTRIBUTOR_ADMIN
+    public OrderResponse prepareCustomerOrderForDispatch(AuthenticatedUser actor, UUID orderId) {
+        if (actor == null || (actor.role() != UserRole.SUPER_ADMIN
+                && actor.role() != UserRole.DISTRIBUTOR_ADMIN
                 && actor.role() != UserRole.DISTRIBUTOR_STAFF)) {
             throw new ApiException(ErrorCode.ACCESS_DENIED);
         }
         Order order = orderRepository.findByIdWithItemsForUpdate(orderId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
-        if (!actor.organizationId().equals(order.getOrganization().getId())) {
+        if (actor.role() != UserRole.SUPER_ADMIN
+                && (actor.organizationId() == null
+                || order.getOrganization() == null
+                || !actor.organizationId().equals(order.getOrganization().getId()))) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        if (order.getStatus() == OrderStatus.AWAITING_DISPATCH || order.getStatus() == OrderStatus.IN_TRANSIT) {
+            return mapToResponse(order);
+        }
+        if (order.getStatus() != OrderStatus.CONFIRMED
+                && order.getStatus() != OrderStatus.PROCESSING
+                && order.getStatus() != OrderStatus.READY_TO_PACK) {
+            throw new ApiException(ErrorCode.INVALID_STATE_TRANSITION,
+                    "This order cannot be dispatched from status " + order.getStatus()
+                            + ". Place and pay it first.");
+        }
+        rejectIfPaymentReversed(orderId);
+        if (order.getOrderItems() == null || order.getOrderItems().isEmpty()) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "Order has no items");
+        }
+        if (order.getStatus() == OrderStatus.CONFIRMED || order.getStatus() == OrderStatus.PROCESSING) {
+            OrderStatus previous = order.getStatus();
+            for (OrderItem line : order.getOrderItems()) {
+                line.setPickedQuantity(line.getQuantity());
+            }
+            order.setStatus(OrderStatus.READY_TO_PACK);
+            recordWarehouseHistory(order, actor, previous, order.getStatus(), "All lines picked for dispatch");
+        }
+        if (order.getStatus() == OrderStatus.READY_TO_PACK) {
+            OrderStatus previous = order.getStatus();
+            order.getOrderItems().forEach(item -> item.setPackedQuantity(item.getPickedQuantity()));
+            if (order.getPackageCount() < 1) {
+                order.setPackageCount(1);
+            }
+            order.setStatus(OrderStatus.AWAITING_DISPATCH);
+            recordWarehouseHistory(order, actor, previous, order.getStatus(),
+                    "Packed into " + order.getPackageCount() + " package(s)");
+        }
+        return mapToResponse(orderRepository.save(order));
+    }
+
+    @Transactional
+    public OrderResponse dispatchFromTrip(AuthenticatedUser actor, UUID orderId) {
+        boolean superAdmin = actor != null && actor.role() == UserRole.SUPER_ADMIN;
+        boolean distributor = actor != null && actor.organizationId() != null
+                && (actor.role() == UserRole.DISTRIBUTOR_ADMIN
+                || actor.role() == UserRole.DISTRIBUTOR_STAFF);
+        if (!superAdmin && !distributor) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        Order order = orderRepository.findByIdWithItemsForUpdate(orderId)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
+        if (!superAdmin && !actor.organizationId().equals(order.getOrganization().getId())) {
             throw new ApiException(ErrorCode.ACCESS_DENIED);
         }
         if (order.getStatus() != OrderStatus.AWAITING_DISPATCH) {

@@ -43,7 +43,10 @@ public class TripMapper {
                                     .map(shipment -> shipment.getPurchaseOrder().getPurchaseOrderNumber()).toList())).toList();
         return new TripResponse(trip.getId().toString(), trip.getTripNumber(), trip.getTripType(), trip.getStatus(),
                 trip.getRider() == null ? null : trip.getRider().getId(),
-                trip.getVehicle() == null ? null : trip.getVehicle().getId(), origin, stops, items,
+                trip.getRider() == null ? null : trip.getRider().getFullName(),
+                trip.getVehicle() == null ? null : trip.getVehicle().getId(),
+                trip.getVehicle() == null ? null : trip.getVehicle().getRegistrationNumber(),
+                origin, stops, items,
                 trip.getScheduledStartLabel(), trip.getTotalDistanceKm() == null ? 0 : trip.getTotalDistanceKm());
     }
 }

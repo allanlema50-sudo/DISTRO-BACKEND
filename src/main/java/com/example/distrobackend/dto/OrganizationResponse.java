@@ -19,12 +19,20 @@ public record OrganizationResponse(
         long version,
         String taxRegistrationId,
         String timezone,
-        UUID defaultWarehouseId
+        UUID defaultWarehouseId,
+        String contactName,
+        String location,
+        long userCount
 ) {
     public static OrganizationResponse from(Organization organization) {
+        return from(organization, null, null, 0L);
+    }
+
+    public static OrganizationResponse from(Organization organization, String contactName,
+                                            String location, long userCount) {
         return new OrganizationResponse(organization.getId(), organization.getName(), organization.getName(),
                 organization.getEmail(), organization.getType(), organization.getStatus(), organization.getCreatedAt(),
                 organization.getUpdatedAt(), organization.getVersion(), organization.getTaxRegistrationId(),
-                organization.getTimezone(), organization.getDefaultWarehouseId());
+                organization.getTimezone(), organization.getDefaultWarehouseId(), contactName, location, userCount);
     }
 }

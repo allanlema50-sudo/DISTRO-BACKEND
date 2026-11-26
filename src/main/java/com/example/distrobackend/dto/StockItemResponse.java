@@ -9,9 +9,11 @@ import java.util.UUID;
 public record StockItemResponse(
         UUID id,
         UUID organizationId,
+        String organizationName,
         UUID sourceStockItemId,
         UUID manufacturerOrganizationId,
         UUID warehouseId,
+        String warehouseName,
         String sku,
         String name,
         String category,
@@ -34,10 +36,12 @@ public record StockItemResponse(
         return new StockItemResponse(
                 item.getId(),
                 item.getOrganization() == null ? null : item.getOrganization().getId(),
+                item.getOrganization() == null ? null : item.getOrganization().getName(),
                 item.getSourceStockItem() == null ? null : item.getSourceStockItem().getId(),
                 item.getSourceStockItem() == null || item.getSourceStockItem().getOrganization() == null
                         ? null : item.getSourceStockItem().getOrganization().getId(),
                 item.getWarehouse() == null ? null : item.getWarehouse().getId(),
+                item.getWarehouse() == null ? null : item.getWarehouse().getName(),
                 item.getSku(),
                 item.getName(),
                 item.getCategory(),

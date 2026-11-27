@@ -17,7 +17,9 @@ PAYSTACK_TRANSFERS_ENABLED=false
 PAYSTACK_MODE=test
 PAYSTACK_BASE_URL=https://api.paystack.co
 PAYSTACK_SECRET_KEY=sk_test_...
-PAYSTACK_WEBHOOK_SECRET=whsec_...
+# Optional if Paystack has not issued a webhook signing secret for this mode.
+# When configured, use the mode-matched whsec_... value.
+PAYSTACK_WEBHOOK_SECRET=
 PAYSTACK_CALLBACK_URL=https://your-frontend.example/payments/paystack/complete
 PAYSTACK_RECONCILIATION_SCAN_MS=60000
 PAYSTACK_CUSTOMER_ORDER_REVIEW_AFTER_HOURS=24
@@ -27,14 +29,22 @@ PAYSTACK_SETTLEMENT_RECONCILIATION_INITIAL_DELAY_MS=300000
 PAYSTACK_SETTLEMENT_RECONCILIATION_REPEAT_DELAY_MS=300000
 ```
 
-The application refuses to start with Paystack enabled unless the secret key
-and webhook signing secret are present. `PAYSTACK_MODE=test` requires an
-`sk_test_` key, while `PAYSTACK_MODE=live` requires an `sk_live_` key. The API
-host is restricted to `https://api.paystack.co`; Paystack selects test or live
-transactions from the key. Test mode is suitable for an isolated staging
-deployment and database. Do not run test transactions against production data:
-the backend still records a successful test webhook as paid and starts normal
-fulfilment.
+The application requires the mode-matched secret API key when Paystack is
+enabled: `PAYSTACK_MODE=test` requires an `sk_test_` key, while
+`PAYSTACK_MODE=live` requires an `sk_live_` key. `PAYSTACK_WEBHOOK_SECRET` is
+optional in either mode. If a mode has a Paystack webhook signing secret
+(`whsec_...`), configure it; the backend verifies `Paystack-Signature`. If no
+signing secret is available, the backend verifies the legacy
+`X-Paystack-Signature` using the same mode-matched secret API key. This legacy
+signature is supported by Paystack but deprecated, so use `whsec_...` when the
+dashboard makes it available. Do not put the webhook URL or an API key in
+`PAYSTACK_WEBHOOK_SECRET`; the backend rejects non-`whsec_` values. Keep the
+secret API key configured because it is required for Paystack API calls and
+legacy signature verification. The API host is restricted to
+`https://api.paystack.co`; Paystack selects test or live transactions from the
+key. Test mode is suitable for an isolated staging deployment and database. Do
+not run test transactions against production data: the backend still records a
+successful test webhook as paid and starts normal fulfilment.
 
 ## Checkout flow
 
@@ -147,6 +157,10 @@ Configure this URL in the Paystack dashboard:
 ```text
 POST https://your-api.example/api/v1/checkouts/paystack/webhook
 ```
+
+Set it in the matching Test or Live **Webhook URL** field in the Paystack
+dashboard. The URL is not a secret and does not belong in
+`PAYSTACK_WEBHOOK_SECRET`.
 
 The endpoint accepts `Paystack-Signature` and supports the legacy
 `X-Paystack-Signature` header during provider migration. Do not call this

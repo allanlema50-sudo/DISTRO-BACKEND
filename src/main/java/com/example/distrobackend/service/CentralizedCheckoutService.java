@@ -210,7 +210,8 @@ public class CentralizedCheckoutService {
                     + attempt.paymentId().toString().replace("-", "").substring(0, 12);
             PaystackPaymentService.Initialization result;
             try {
-                paymentAttemptStore.preparePaystack(attempt.paymentId(), reference);
+                paymentAttemptStore.preparePaystack(
+                        attempt.paymentId(), reference, paystackPaymentService.mode());
                 result = paystackPaymentService.initialize(
                         reference, checkout.getTotalAmount(), checkout.getCurrency(),
                         checkout.getCreatedBy().getEmail(), paystackChannel,
@@ -645,7 +646,9 @@ public class CentralizedCheckoutService {
         CheckoutPayment payment = allocation.getPayment();
         return new SupplierFinancialStatusResponse(order.getId(), payment.getCheckout().getCheckoutReference(), allocation.getId(),
                 allocation.getGrossAmount(), allocation.getProviderFee(), allocation.getCommission(), allocation.getSupplierAmount(),
-                allocation.getCurrency(), payment.getStatus().name(), settlement.getStatus().name(), payment.isDemo(),
+                allocation.getCurrency(), payment.getStatus().name(),
+                payment.getProvider() == null ? null : payment.getProvider().name(), payment.getProviderMode(),
+                settlement.getStatus().name(), payment.isDemo(),
                 payment.getDemoLabel(), settlement.getNote());
     }
 
@@ -868,6 +871,7 @@ public class CentralizedCheckoutService {
         return new CheckoutResponse.Payment(payment.getId(), checkout.getCheckoutReference(),
                 payment.isDemo() ? "DEMO" : payment.getMethod().name(),
                 payment.getProvider() == null ? null : payment.getProvider().name(), status.name(), payment.getProviderReference(),
+                payment.getProviderMode(),
                 payment.getProviderAuthorizationUrl(), payment.getProviderAccessCode(),
                 payment.isDemo(), payment.getDemoLabel(), payment.getInitiatedAt(), payment.getConfirmedAt(),
                 payment.getUpdatedAt(), terminal, retryAllowed, message);

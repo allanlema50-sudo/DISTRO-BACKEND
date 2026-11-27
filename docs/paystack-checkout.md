@@ -1,8 +1,8 @@
 # Paystack checkout integration
 
-This branch adds Paystack as a provider for the existing distributor
-marketplace checkout and the reviewed supplier payout workflow. It does not
-replace the internal ledger. A successful Paystack payment creates the same
+Paystack supports both distributor marketplace checkout and customer-to-
+distributor card checkout, plus the reviewed supplier payout workflow. It does
+not replace the internal ledger. A successful Paystack payment creates the same
 allocations and pending supplier settlement records as a verified M-Pesa
 checkout; a separate Super Admin workflow can later execute eligible supplier
 settlements through Paystack Transfers.
@@ -20,6 +20,7 @@ PAYSTACK_SECRET_KEY=sk_test_...
 PAYSTACK_WEBHOOK_SECRET=whsec_...
 PAYSTACK_CALLBACK_URL=https://your-frontend.example/payments/paystack/complete
 PAYSTACK_RECONCILIATION_SCAN_MS=60000
+PAYSTACK_CUSTOMER_ORDER_REVIEW_AFTER_HOURS=24
 PAYSTACK_SETTLEMENT_RECONCILIATION_SCAN_MS=60000
 PAYSTACK_SETTLEMENT_RECONCILIATION_BATCH_SIZE=100
 PAYSTACK_SETTLEMENT_RECONCILIATION_INITIAL_DELAY_MS=300000
@@ -37,11 +38,67 @@ fulfilment.
 
 ## Checkout flow
 
+### Customer order card checkout
+
+Customers can pay a distributor order by card using the existing payment
+initiation route. Send `provider: "PAYSTACK"` (the legacy alias
+`"PAYSTACK_CARD"` is also accepted), the customer order UUID as `orderId`, and
+an idempotency key. `phoneNumber` is not required for card checkout:
+
+```json
+{
+  "orderId": "<customer-order-id>",
+  "provider": "PAYSTACK",
+  "idempotencyKey": "order-card-<unique-client-key>"
+}
+```
+
+The response contains `provider`, `providerMode` (`TEST` or `LIVE`),
+`paymentReference`, and `authorizationUrl`. The client should show the mode
+clearly and open the hosted authorization URL. A browser redirect is not
+payment confirmation; only a signature-verified webhook or server-side
+transaction verification updates the payment and confirms the order. Poll
+`GET /api/v1/payments/{orderId}/status` for the persisted state. Attempts with
+an uncertain provider outcome remain blocked from creating a second charge
+until server-side verification resolves them.
+
+If Paystack still has no conclusive result after
+`PAYSTACK_CUSTOMER_ORDER_REVIEW_AFTER_HOURS` (24 hours by default), the attempt
+moves to manual review. The order and its stock reservation remain held, and the
+customer cannot start a Daraja or replacement Paystack charge. A platform admin
+must check the reference in the Paystack dashboard. Only after confirming that
+Paystack did not collect the payment should the admin use
+`PATCH /api/v1/admin/payments/{paymentId}/status` with `status: "FAILED"` and a
+review note; that action releases the order reservation. A verified late
+Paystack success can still settle the order while it remains pending. Do not
+manually fail an attempt whose provider outcome is still uncertain.
+
+The current Paystack refund API is for marketplace checkout payments, not
+these customer-order `Payment` records. Do not enable live customer-order card
+payments until customer-order refund handling and support procedures are added.
+
+This is distinct from purchase-order payment and marketplace checkout. Direct
+purchase-order settlement remains on its existing M-Pesa flow; marketplace
+checkout has its own `POST /api/v1/checkouts/{checkoutId}/payment` contract.
+
+### Distributor marketplace checkout
+
 1. The distributor creates a checkout with `POST /api/v1/checkouts`.
 2. The distributor starts payment with `POST /api/v1/checkouts/{checkoutId}/payment`.
 3. The backend initializes the transaction server-side and returns
-   `payment.authorizationUrl`, `payment.accessCode`, and
-   `payment.providerReference`.
+   `payment.authorizationUrl`, `payment.accessCode`,
+   `payment.providerReference`, and `payment.providerMode` (`TEST` or `LIVE`).
+   The mode is saved on the payment attempt before contacting Paystack, so a
+   later webhook, verification, or status request retains the environment in
+   which the attempt began. Older payments created before this field was added
+   have an unknown mode and return `null`; their mode is not guessed from the
+   current deployment configuration.
+
+Supplier settlements funded by Paystack checkout can only be transferred in
+the same Paystack mode as the original collection. This prevents a successful
+TEST checkout from becoming a real LIVE payout. Legacy Paystack checkout
+payments whose mode is unknown are blocked from payout until reviewed; the
+system will not infer their mode from whichever keys are configured now.
 4. Web or mobile clients open the authorization URL or use the Paystack SDK.
    The secret key must never be sent to a client.
 5. Paystack calls the public webhook endpoint. The backend verifies the raw

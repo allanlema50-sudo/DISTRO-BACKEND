@@ -18,6 +18,7 @@ public class ProviderWebhookProcessingJob {
     private final PaystackSettlementService settlementService;
     private final PaymentRefundService refundService;
     private final PaymentDisputeService disputeService;
+    private final CustomerOrderPaystackPaymentService customerOrderPaymentService;
 
     @Value("${app.payments.webhook-processing-batch-size:25}")
     private int batchSize;
@@ -44,7 +45,9 @@ public class ProviderWebhookProcessingJob {
                 if (event.getEventName().startsWith("transfer.")) settlementService.processPaystackWebhook(webhook);
                 else if (event.getEventName().startsWith("refund.")) refundService.processWebhook(webhook);
                 else if (event.getEventName().startsWith("charge.dispute.")) disputeService.processWebhook(webhook);
-                else checkoutService.processPaystackWebhook(webhook);
+                else if (!customerOrderPaymentService.processWebhook(webhook)) {
+                    checkoutService.processPaystackWebhook(webhook);
+                }
                 inbox.markProcessed(eventId, claim.claimToken());
             } catch (Exception ex) {
                 log.warn("Provider webhook event {} processing attempt failed", eventId, ex);

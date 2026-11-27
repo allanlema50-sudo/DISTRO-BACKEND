@@ -20,7 +20,10 @@ public record PaymentResponse(
         String orderType,
         String provider,
         String currency,
-        String failureReason
+        String failureReason,
+        String providerMode,
+        String paymentReference,
+        String authorizationUrl
 ) {
     public static PaymentResponse from(Payment payment) {
         return com.example.distrobackend.mapper.PaymentMapper.toResponse(payment);

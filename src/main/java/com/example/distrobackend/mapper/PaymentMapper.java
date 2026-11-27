@@ -12,7 +12,8 @@ public class PaymentMapper {
         return new PaymentResponse(payment.getId(), payment.getOrder() == null ? null : payment.getOrder().getId(),
                 payment.getAmount(), payment.getMethod(), payment.getStatus(), payment.getMpesaReceiptNumber(),
                 payment.getInitiatedAt(), payment.getConfirmedAt(), "CUSTOMER_ORDER",
-                payment.getMethod() == null ? null : payment.getMethod().name(), payment.getCurrency(),
-                payment.getFailureReason());
+                payment.getProvider() == null ? "DARAJA" : payment.getProvider().name(), payment.getCurrency(),
+                payment.getFailureReason(), payment.getProviderMode(), payment.getProviderReference(),
+                payment.getProviderAuthorizationUrl());
     }
 }

@@ -56,6 +56,8 @@ class PaystackSettlementServiceTest {
         settlement.setCurrency("KES");
         CheckoutPayment payment = new CheckoutPayment();
         payment.setId(UUID.randomUUID());
+        payment.setProvider(PaymentProvider.PAYSTACK);
+        payment.setProviderMode("TEST");
         payment.setProviderReference("TX-123");
         PurchaseOrder purchaseOrder = new PurchaseOrder();
         purchaseOrder.setId(UUID.randomUUID());
@@ -110,6 +112,8 @@ class PaystackSettlementServiceTest {
         UUID purchaseOrderId = UUID.randomUUID();
         SupplierSettlement settlement = settlement(settlementId, purchaseOrderId);
         CheckoutPayment payment = settlement.getAllocation().getPayment();
+        payment.setProvider(PaymentProvider.PAYSTACK);
+        payment.setProviderMode("TEST");
         PurchaseOrderShipment shipment = new PurchaseOrderShipment();
         shipment.setStatus(PurchaseOrderShipmentStatus.RECEIVED);
         shipment.setReceivedAt(OffsetDateTime.now().minusDays(1));
@@ -304,6 +308,55 @@ class PaystackSettlementServiceTest {
                 .isInstanceOf(com.example.distrobackend.Exception.ApiException.class)
                 .hasMessageContaining("confirms shipment receipt");
         verify(batchRepository, never()).saveAndFlush(any(SettlementBatch.class));
+    }
+
+    @Test
+    void doesNotCreateLivePayoutBatchFromPaystackTestCollection() {
+        UUID settlementId = UUID.randomUUID();
+        UUID adminId = UUID.randomUUID();
+        UUID purchaseOrderId = UUID.randomUUID();
+        SupplierSettlement settlement = settlement(settlementId, purchaseOrderId);
+        CheckoutPayment payment = settlement.getAllocation().getPayment();
+        payment.setProvider(PaymentProvider.PAYSTACK);
+        payment.setProviderMode("TEST");
+        when(settlementRepository.findAllById(java.util.List.of(settlementId)))
+                .thenReturn(java.util.List.of(settlement));
+        when(settlementRepository.findByIdForUpdate(settlementId)).thenReturn(Optional.of(settlement));
+        when(checkoutPaymentRepository.findByIdForUpdate(payment.getId())).thenReturn(Optional.of(payment));
+        when(paystackPaymentService.mode()).thenReturn("LIVE");
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.createBatch(
+                new AuthenticatedUser(adminId, UserRole.SUPER_ADMIN, null, null, null),
+                new CreateSettlementBatchRequest(java.util.List.of(settlementId), "test payment")))
+                .isInstanceOf(com.example.distrobackend.Exception.ApiException.class)
+                .hasMessageContaining("same provider mode");
+
+        verify(batchRepository, never()).saveAndFlush(any(SettlementBatch.class));
+        verifyNoInteractions(beneficiaryRepository);
+    }
+
+    @Test
+    void blocksPayoutWhenLegacyPaystackCollectionModeIsUnknown() {
+        UUID settlementId = UUID.randomUUID();
+        UUID adminId = UUID.randomUUID();
+        SupplierSettlement settlement = settlement(settlementId, UUID.randomUUID());
+        CheckoutPayment payment = settlement.getAllocation().getPayment();
+        payment.setProvider(PaymentProvider.PAYSTACK);
+        payment.setProviderMode(null);
+        when(settlementRepository.findAllById(java.util.List.of(settlementId)))
+                .thenReturn(java.util.List.of(settlement));
+        when(settlementRepository.findByIdForUpdate(settlementId)).thenReturn(Optional.of(settlement));
+        when(checkoutPaymentRepository.findByIdForUpdate(payment.getId())).thenReturn(Optional.of(payment));
+        when(paystackPaymentService.mode()).thenReturn("LIVE");
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.createBatch(
+                new AuthenticatedUser(adminId, UserRole.SUPER_ADMIN, null, null, null),
+                new CreateSettlementBatchRequest(java.util.List.of(settlementId), "legacy payment")))
+                .isInstanceOf(com.example.distrobackend.Exception.ApiException.class)
+                .hasMessageContaining("unknown historical mode");
+
+        verify(batchRepository, never()).saveAndFlush(any(SettlementBatch.class));
+        verifyNoInteractions(beneficiaryRepository);
     }
 
     @Test

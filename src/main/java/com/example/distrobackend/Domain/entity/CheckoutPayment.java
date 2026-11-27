@@ -22,6 +22,7 @@ public class CheckoutPayment {
  @Enumerated(EnumType.STRING) @Column(name="method", nullable=false) private PaymentMethod method;
  @Enumerated(EnumType.STRING) @Column(name="status", nullable=false) private CheckoutPaymentStatus status=CheckoutPaymentStatus.PENDING;
  @Enumerated(EnumType.STRING) @Column(name="provider", length=20) private PaymentProvider provider;
+ @Column(name="provider_mode", length=8) private String providerMode;
  @Column(name="amount", nullable=false, precision=14, scale=2) private BigDecimal amount;
  @Column(name="currency", nullable=false, length=3) private String currency="KES";
  @Column(name="provider_reference", unique=true, length=120) private String providerReference;

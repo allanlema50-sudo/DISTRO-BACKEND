@@ -10,5 +10,9 @@ public record PaymentStatusResponse(
         PaymentStatus status,
         BigDecimal amount,
         String mpesaReceiptNumber,
-        String failureReason
+        String failureReason,
+        String provider,
+        String paymentReference,
+        String authorizationUrl,
+        String providerMode
 ) {}

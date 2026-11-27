@@ -7,10 +7,12 @@ import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.enums.OrderStatus;
 import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.PaymentStatus;
+import com.example.distrobackend.Domain.enums.PaymentProvider;
 import com.example.distrobackend.Domain.enums.UserRole;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.dto.PaymentInitiateRequest;
 import com.example.distrobackend.dto.mpesa.MpesaCallbackRequest;
+import com.example.distrobackend.dto.mpesa.MpesaStkPushResponse;
 import com.example.distrobackend.repository.OrderRepository;
 import com.example.distrobackend.repository.PaymentRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
@@ -196,6 +198,7 @@ class PaymentServiceTest {
         Payment payment = new Payment();
         payment.setOrder(order);
         payment.setAmount(order.getTotalAmount());
+        payment.setStatus(PaymentStatus.FAILED);
         CustomerCollectionProvider provider = org.mockito.Mockito.mock(CustomerCollectionProvider.class);
         ReflectionTestUtils.setField(paymentService, "collectionProvider", provider);
         when(orderRepository.findByIdWithOwnershipForUpdate(orderId)).thenReturn(Optional.of(order));
@@ -211,6 +214,80 @@ class PaymentServiceTest {
         org.assertj.core.api.Assertions.assertThat(payment.getStatus()).isEqualTo(PaymentStatus.FAILED);
         verify(orderService, never()).failPaymentAndReleaseOrder(any(), anyString());
         verify(paymentRepository).save(payment);
+    }
+
+    @Test
+    void darajaCannotStartWhilePaystackAttemptIsStillPending() {
+        Order order = order();
+        Payment payment = new Payment();
+        payment.setOrder(order);
+        payment.setProvider(PaymentProvider.PAYSTACK);
+        payment.setProviderReference("LF-ORD-pending");
+        payment.setStatus(PaymentStatus.PENDING);
+        when(orderRepository.findByIdWithOwnershipForUpdate(orderId)).thenReturn(Optional.of(order));
+        when(paymentRepository.findByOrderIdForUpdate(orderId)).thenReturn(Optional.of(payment));
+
+        assertThatThrownBy(() -> paymentService.initiatePayment(
+                principal(customerId), new PaymentInitiateRequest(orderId, "0712345678", null,
+                        "CUSTOMER_ORDER", "DARAJA")))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("Another payment provider has an unresolved payment");
+
+        verifyNoInteractions(restTemplate);
+        verify(paymentRepository, never()).save(any(Payment.class));
+    }
+
+    @Test
+    void darajaCanStartAfterFailedPaystackAndReplacesProviderMetadata() {
+        Order order = order();
+        Payment payment = new Payment();
+        payment.setOrder(order);
+        payment.setProvider(PaymentProvider.PAYSTACK);
+        payment.setProviderReference("LF-ORD-failed");
+        payment.setProviderAuthorizationUrl("https://checkout.paystack.test/expired");
+        payment.setProviderMode("TEST");
+        payment.setStatus(PaymentStatus.FAILED);
+        CustomerCollectionProvider provider = mock(CustomerCollectionProvider.class);
+        ReflectionTestUtils.setField(paymentService, "collectionProvider", provider);
+        MpesaStkPushResponse stkResponse = new MpesaStkPushResponse();
+        stkResponse.setResponseCode("0");
+        stkResponse.setCheckoutRequestId("ws_CO_new");
+        stkResponse.setMerchantRequestId("merchant_new");
+        stkResponse.setCustomerMessage("Check your phone");
+        when(orderRepository.findByIdWithOwnershipForUpdate(orderId)).thenReturn(Optional.of(order));
+        when(paymentRepository.findByOrderIdForUpdate(orderId)).thenReturn(Optional.of(payment));
+        when(provider.push(any(), any(), any(), anyInt(), any())).thenReturn(stkResponse);
+
+        paymentService.initiatePayment(principal(customerId),
+                new PaymentInitiateRequest(orderId, "0712345678", null, "CUSTOMER_ORDER", "DARAJA"));
+
+        assertThat(payment.getProvider()).isEqualTo(PaymentProvider.DARAJA);
+        assertThat(payment.getProviderReference()).isNull();
+        assertThat(payment.getProviderAuthorizationUrl()).isNull();
+        assertThat(payment.getProviderMode()).isNull();
+        assertThat(payment.getStatus()).isEqualTo(PaymentStatus.PENDING);
+    }
+
+    @Test
+    void expiredReservationRemainsHeldWhilePaystackAttemptIsUnresolved() {
+        CustomerOrderPaystackPaymentService customerPaystack = mock(CustomerOrderPaystackPaymentService.class);
+        ReflectionTestUtils.setField(paymentService, "customerOrderPaystackPaymentService", customerPaystack);
+        Order order = order();
+        Payment payment = new Payment();
+        payment.setId(UUID.randomUUID());
+        payment.setOrder(order);
+        payment.setProvider(PaymentProvider.PAYSTACK);
+        payment.setProviderReference("LF-ORD-unresolved");
+        payment.setStatus(PaymentStatus.PENDING);
+        when(orderRepository.findByIdWithOwnershipForUpdate(orderId)).thenReturn(Optional.of(order));
+        when(paymentRepository.findByOrderIdForUpdate(orderId)).thenReturn(Optional.of(payment));
+        when(customerPaystack.hasUnresolvedAttemptForPayment(payment.getId())).thenReturn(true);
+
+        assertThat(paymentService.reconcileExpiredPayment(orderId)).isTrue();
+
+        verifyNoInteractions(restTemplate);
+        verify(orderService, never()).failPaymentAndReleaseOrder(any(), anyString());
+        verify(customerPaystack).hasUnresolvedAttemptForPayment(payment.getId());
     }
 
     @Test

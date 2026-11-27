@@ -980,7 +980,7 @@ payout journal; provider-reversed transfers post a matching reversal journal.
 
 | Method | Endpoint | Access | Purpose / integration note |
 |---|---|---|---|
-| `POST` | `/api/v1/payments/initiate` | Customer or distributor admin/staff with order access | Start an M-Pesa STK Push; send `orderId`, Kenyan `phoneNumber`, and optional idempotency key |
+| `POST` | `/api/v1/payments/initiate` | Customer or distributor admin/staff with order access | Start Daraja M-Pesa STK Push by default, or customer-order Paystack card checkout with `provider: "PAYSTACK"`; for Paystack send `orderId`, optional idempotency key, and omit `phoneNumber` |
 | `GET` | `/api/v1/payments` | Authenticated payment roles | List payments visible to the caller |
 | `GET` | `/api/v1/payments/{paymentId}` | Authorized payment participant | Read one payment |
 | `PATCH` | `/api/v1/admin/payments/{paymentId}/status` | `SUPER_ADMIN` | Mark an unsettled payment failed with a reason; cannot forge confirmation or manually reverse a payment |
@@ -989,11 +989,36 @@ payout journal; provider-reversed transfers post a matching reversal journal.
 | `POST` | `/api/v1/checkouts/{checkoutId}/payment` | Distributor admin/staff | Start Paystack hosted checkout with `method: PAYSTACK` and a supported `channel`; response contains the authorization URL |
 | `POST` | `/api/v1/checkouts/paystack/webhook` | Paystack gateway only | Public signed webhook; backend verifies the raw body and never trusts frontend payment confirmation |
 
-Payment initiation requires valid Daraja configuration. The callback URL must
-be reachable by Safaricom/Daraja; a localhost URL is not reachable from the
-provider. Callback confirmation also requires the shared secret and provider
-result verification. Never disable callback verification in an environment
-that handles real payments.
+Daraja payment initiation requires valid Daraja configuration. Its callback URL
+must be reachable by Safaricom/Daraja; a localhost URL is not reachable from
+the provider. Callback confirmation also requires the shared secret and
+provider-result verification. Never disable callback verification in an
+environment that handles real payments.
+
+Customer-order Paystack card checkout uses the same initiation endpoint with
+`provider: "PAYSTACK"` (or the compatibility alias `"PAYSTACK_CARD"`). The
+response includes `provider`, `providerMode`, `paymentReference`, and `authorizationUrl`; the
+client must open that hosted URL and must not treat the browser return as proof
+of payment. Signed Paystack webhooks and scheduled server-side transaction
+verification confirm the payment. Status responses also include `providerMode`
+(`TEST` or `LIVE`) so clients can label sandbox results. For example:
+
+```json
+{
+  "orderId": "<customer-order-id>",
+  "provider": "PAYSTACK",
+  "idempotencyKey": "customer-order-card-<unique-client-key>"
+}
+```
+
+The request does not need a phone number for card checkout. `PAYSTACK_ENABLED`
+must be true and configured with a mode-matching secret key, webhook secret,
+and public HTTPS callback URL. The payment response/status identifies the
+provider mode as TEST or LIVE through the payment record; a successful TEST
+payment is a test transaction, not money received by the distributor. The
+existing refund workflow covers marketplace checkout payments; customer-order
+Paystack refunds need a dedicated extension before live customer-order card
+payments are launched.
 
 Paystack checkout setup, request fields, webhook handling, and deployment
 variables are documented in [`docs/paystack-checkout.md`](docs/paystack-checkout.md).

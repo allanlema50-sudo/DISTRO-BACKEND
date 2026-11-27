@@ -6,6 +6,7 @@ import com.example.distrobackend.Domain.entity.PurchaseOrder;
 import com.example.distrobackend.Domain.entity.PurchaseOrderSettlement;
 import com.example.distrobackend.Domain.enums.OrderStatus;
 import com.example.distrobackend.Domain.enums.PaymentMethod;
+import com.example.distrobackend.Domain.enums.PaymentProvider;
 import com.example.distrobackend.Domain.enums.PaymentStatus;
 import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.PurchaseOrderStatus;
@@ -67,6 +68,7 @@ public class PaymentService {
     private final ApplicationEventPublisher eventPublisher;
     private final CustomerCollectionProvider collectionProvider;
     private final MpesaCallbackGuard callbackGuard;
+    private final CustomerOrderPaystackPaymentService customerOrderPaystackPaymentService;
 
     @Autowired
     public PaymentService(PaymentRepository paymentRepository,
@@ -79,7 +81,8 @@ public class PaymentService {
                           PurchaseOrderShipmentService purchaseOrderShipmentService,
                           ApplicationEventPublisher eventPublisher,
                           CustomerCollectionProvider collectionProvider,
-                          MpesaCallbackGuard callbackGuard) {
+                          MpesaCallbackGuard callbackGuard,
+                          CustomerOrderPaystackPaymentService customerOrderPaystackPaymentService) {
         this.paymentRepository = paymentRepository;
         this.purchaseOrderRepository = purchaseOrderRepository;
         this.settlementRepository = settlementRepository;
@@ -91,6 +94,7 @@ public class PaymentService {
         this.eventPublisher = eventPublisher;
         this.collectionProvider = collectionProvider;
         this.callbackGuard = callbackGuard;
+        this.customerOrderPaystackPaymentService = customerOrderPaystackPaymentService;
     }
 
     /** Compatibility constructor for existing customer-order unit fixtures. */
@@ -99,7 +103,7 @@ public class PaymentService {
                           OrderService orderService,
                           RestTemplate darajaRestTemplate) {
         this(paymentRepository, null, null, orderRepository, orderService, darajaRestTemplate,
-                null, null, null, null, null);
+                null, null, null, null, null, null);
     }
 
     @Value("${mpesa.base-url}")
@@ -159,6 +163,17 @@ public class PaymentService {
         if (request.orderType() != null && !"CUSTOMER_ORDER".equalsIgnoreCase(request.orderType())) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Unsupported payment orderType");
         }
+        String requestedProvider = request.provider() == null || request.provider().isBlank()
+                ? "DARAJA" : request.provider().trim().toUpperCase(java.util.Locale.ROOT);
+        if ("PAYSTACK".equals(requestedProvider) || "PAYSTACK_CARD".equals(requestedProvider)) {
+            if (customerOrderPaystackPaymentService == null) {
+                throw new ApiException(ErrorCode.PAYMENT_NOT_CONFIGURED, "Paystack card checkout is not configured");
+            }
+            return customerOrderPaystackPaymentService.initiate(actor, request);
+        }
+        if (!"DARAJA".equals(requestedProvider) && !"MPESA".equals(requestedProvider)) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "provider must be DARAJA, MPESA or PAYSTACK");
+        }
         Order order = orderRepository.findByIdWithOwnershipForUpdate(request.orderId())
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
         requireOrderAccess(actor, order);
@@ -187,9 +202,13 @@ public class PaymentService {
                 throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
                         "A payment request is already being initiated");
             }
-            if (payment.getStatus() == PaymentStatus.PENDING
-                    && payment.getMpesaCheckoutRequestId() != null) {
-                return response(payment, "Payment request is already pending");
+            if (payment.getStatus() == PaymentStatus.PENDING) {
+                if (payment.getProvider() == PaymentProvider.DARAJA
+                        && !isBlank(payment.getMpesaCheckoutRequestId())) {
+                    return response(payment, "Payment request is already pending");
+                }
+                throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                        "Another payment provider has an unresolved payment for this order");
             }
         } else {
             payment = new Payment();
@@ -199,6 +218,8 @@ public class PaymentService {
 
         if (request.idempotencyKey() != null && !request.idempotencyKey().isBlank()) {
             payment.setIdempotencyKey(request.idempotencyKey().trim());
+        } else if (payment.getProvider() == PaymentProvider.PAYSTACK) {
+            payment.setIdempotencyKey(null);
         }
 
         String phone = PhoneNormalizer.normalize(request.phoneNumber());
@@ -217,6 +238,11 @@ public class PaymentService {
         }
 
         payment.setStatus(PaymentStatus.INITIATING);
+        payment.setProvider(PaymentProvider.DARAJA);
+        payment.setMethod(PaymentMethod.MPESA);
+        payment.setProviderReference(null);
+        payment.setProviderAuthorizationUrl(null);
+        payment.setProviderMode(null);
         payment.setPhoneNumber(phone);
         payment.setInitiatedAt(OffsetDateTime.now());
         payment.setFailureReason(null);
@@ -367,6 +393,12 @@ public class PaymentService {
         }
 
         Payment payment = paymentRepository.findByOrderIdForUpdate(orderId).orElse(null);
+        if (payment != null && payment.getProvider() == PaymentProvider.PAYSTACK
+                && (payment.getStatus() == PaymentStatus.INITIATING
+                || payment.getStatus() == PaymentStatus.PENDING)) {
+            return customerOrderPaystackPaymentService != null
+                    && customerOrderPaystackPaymentService.hasUnresolvedAttemptForPayment(payment.getId());
+        }
         if (payment == null || payment.getStatus() != PaymentStatus.PENDING
                 || isBlank(payment.getMpesaCheckoutRequestId())) {
             return false;
@@ -447,7 +479,9 @@ public class PaymentService {
                 .orElseThrow(() -> new ApiException(ErrorCode.PAYMENT_NOT_FOUND, "No payment found for this order"));
         requireOrderAccess(actor, payment.getOrder());
         return new PaymentStatusResponse(orderId, payment.getId(), payment.getStatus(), payment.getAmount(),
-                payment.getMpesaReceiptNumber(), payment.getFailureReason());
+                payment.getMpesaReceiptNumber(), payment.getFailureReason(),
+                payment.getProvider() == null ? "DARAJA" : payment.getProvider().name(),
+                payment.getProviderReference(), payment.getProviderAuthorizationUrl(), payment.getProviderMode());
     }
 
     private MpesaStkPushResponse sendStkPush(Order order, String phone, int amount) {
@@ -758,6 +792,7 @@ public class PaymentService {
             payment.setIdempotencyKey(idempotencyKey.trim());
         }
         payment.setMethod(PaymentMethod.OTHER);
+        payment.setProvider(PaymentProvider.DEMO);
         payment.setStatus(PaymentStatus.CONFIRMED);
         payment.setPhoneNumber(phone);
         payment.setAmount(order.getTotalAmount());

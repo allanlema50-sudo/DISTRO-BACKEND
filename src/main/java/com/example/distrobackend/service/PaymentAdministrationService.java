@@ -2,6 +2,8 @@ package com.example.distrobackend.service;
 
 import com.example.distrobackend.Domain.entity.Order;
 import com.example.distrobackend.Domain.entity.Payment;
+import com.example.distrobackend.Domain.entity.CustomerPaymentAttempt;
+import com.example.distrobackend.Domain.enums.CustomerPaymentAttemptStatus;
 import com.example.distrobackend.Domain.enums.PaymentStatus;
 import com.example.distrobackend.Domain.enums.PaymentProvider;
 import com.example.distrobackend.Domain.enums.UserRole;
@@ -10,6 +12,7 @@ import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.dto.PaymentResponse;
 import com.example.distrobackend.dto.PaymentStatusUpdateRequest;
 import com.example.distrobackend.repository.OrderRepository;
+import com.example.distrobackend.repository.CustomerPaymentAttemptRepository;
 import com.example.distrobackend.repository.PaymentRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +29,7 @@ public class PaymentAdministrationService {
 
     private final PaymentRepository paymentRepository;
     private final OrderRepository orderRepository;
+    private final CustomerPaymentAttemptRepository customerPaymentAttemptRepository;
     private final OrderService orderService;
     private final FinancialLedgerService financialLedgerService;
 
@@ -89,16 +93,31 @@ public class PaymentAdministrationService {
             throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
                     "An accepted M-Pesa payment must be reconciled before it can be failed manually");
         }
-        if (payment.getStatus() == PaymentStatus.PENDING
-                && payment.getProvider() == PaymentProvider.PAYSTACK
-                && payment.getProviderReference() != null) {
-            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
-                    "A Paystack payment must be verified before it can be failed manually");
+        CustomerPaymentAttempt reviewAttempt = null;
+        if ((payment.getStatus() == PaymentStatus.INITIATING || payment.getStatus() == PaymentStatus.PENDING)
+                && payment.getProvider() == PaymentProvider.PAYSTACK) {
+            reviewAttempt = customerPaymentAttemptRepository
+                    .findFirstByPayment_IdOrderByAttemptNumberDesc(paymentId).orElse(null);
+            if (reviewAttempt == null || reviewAttempt.getStatus() != CustomerPaymentAttemptStatus.REVIEW_REQUIRED) {
+                throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                        "A Paystack payment must be verified before it can be failed manually");
+            }
+            if (request.note() == null || request.note().isBlank()) {
+                throw new ApiException(ErrorCode.BAD_REQUEST,
+                        "A review note confirming the provider-side check is required");
+            }
         }
         String note = request.note() == null || request.note().isBlank()
                 ? "Payment status updated by platform administrator" : request.note().trim();
         payment.setStatus(requested);
         payment.setFailureReason(note);
+        if (reviewAttempt != null) {
+            reviewAttempt.setStatus(CustomerPaymentAttemptStatus.FAILED);
+            reviewAttempt.setFailureReason(note);
+            reviewAttempt.setCompletedAt(java.time.OffsetDateTime.now());
+            reviewAttempt.setNextVerificationAt(null);
+            customerPaymentAttemptRepository.saveAndFlush(reviewAttempt);
+        }
         paymentRepository.save(payment);
         orderService.failPaymentAndReleaseOrder(payment.getOrder().getId(), note);
         return PaymentResponse.from(payment);

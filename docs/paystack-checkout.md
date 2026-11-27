@@ -20,6 +20,7 @@ PAYSTACK_SECRET_KEY=sk_test_...
 PAYSTACK_WEBHOOK_SECRET=whsec_...
 PAYSTACK_CALLBACK_URL=https://your-frontend.example/payments/paystack/complete
 PAYSTACK_RECONCILIATION_SCAN_MS=60000
+PAYSTACK_CUSTOMER_ORDER_REVIEW_AFTER_HOURS=24
 PAYSTACK_SETTLEMENT_RECONCILIATION_SCAN_MS=60000
 PAYSTACK_SETTLEMENT_RECONCILIATION_BATCH_SIZE=100
 PAYSTACK_SETTLEMENT_RECONCILIATION_INITIAL_DELAY_MS=300000
@@ -60,6 +61,17 @@ transaction verification updates the payment and confirms the order. Poll
 `GET /api/v1/payments/{orderId}/status` for the persisted state. Attempts with
 an uncertain provider outcome remain blocked from creating a second charge
 until server-side verification resolves them.
+
+If Paystack still has no conclusive result after
+`PAYSTACK_CUSTOMER_ORDER_REVIEW_AFTER_HOURS` (24 hours by default), the attempt
+moves to manual review. The order and its stock reservation remain held, and the
+customer cannot start a Daraja or replacement Paystack charge. A platform admin
+must check the reference in the Paystack dashboard. Only after confirming that
+Paystack did not collect the payment should the admin use
+`PATCH /api/v1/admin/payments/{paymentId}/status` with `status: "FAILED"` and a
+review note; that action releases the order reservation. A verified late
+Paystack success can still settle the order while it remains pending. Do not
+manually fail an attempt whose provider outcome is still uncertain.
 
 The current Paystack refund API is for marketplace checkout payments, not
 these customer-order `Payment` records. Do not enable live customer-order card

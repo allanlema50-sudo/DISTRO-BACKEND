@@ -17,6 +17,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.beans.factory.annotation.Value;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
@@ -29,6 +30,9 @@ public class CustomerOrderPaymentAttemptStore {
     private final OrderRepository orderRepository;
     private final PaymentRepository paymentRepository;
     private final CustomerPaymentAttemptRepository attemptRepository;
+
+    @Value("${paystack.customer-order.review-after-hours:24}")
+    private long reviewAfterHours;
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public StartResult start(UUID orderId, String reference, String mode, BigDecimal amount,
@@ -53,15 +57,19 @@ public class CustomerOrderPaymentAttemptStore {
                 || payment.getStatus() == PaymentStatus.RECONCILED)) {
             throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT, "Order is already paid");
         }
-        if (payment != null && payment.getStatus() == PaymentStatus.PENDING
+        if (payment != null && (payment.getStatus() == PaymentStatus.INITIATING
+                || payment.getStatus() == PaymentStatus.PENDING)
                 && payment.getProvider() == PaymentProvider.PAYSTACK) {
             CustomerPaymentAttempt current = attemptRepository
                     .findFirstByPayment_IdOrderByAttemptNumberDesc(payment.getId()).orElse(null);
             if (current != null && (current.getStatus() == CustomerPaymentAttemptStatus.INITIALIZING
                     || current.getStatus() == CustomerPaymentAttemptStatus.PENDING
-                    || current.getStatus() == CustomerPaymentAttemptStatus.OUTCOME_UNKNOWN)) {
+                    || current.getStatus() == CustomerPaymentAttemptStatus.OUTCOME_UNKNOWN
+                    || current.getStatus() == CustomerPaymentAttemptStatus.REVIEW_REQUIRED)) {
                 return new StartResult(payment.getId(), current.getId(), false);
             }
+            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                    "A Paystack payment is already being initiated or requires reconciliation");
         }
         if (payment != null && payment.getStatus() == PaymentStatus.PENDING) {
             throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
@@ -115,10 +123,17 @@ public class CustomerOrderPaymentAttemptStore {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void markAccepted(UUID attemptId, PaystackPaymentService.Initialization initialization) {
-        CustomerPaymentAttempt attempt = requireAttempt(attemptId);
+        CustomerPaymentAttempt attempt = requireAttemptForUpdate(attemptId);
         if (!active(attempt.getStatus())) return;
         Payment payment = paymentRepository.findByIdForUpdate(attempt.getPayment().getId())
                 .orElseThrow(() -> new ApiException(ErrorCode.PAYMENT_NOT_FOUND, "Payment not found"));
+        if (payment.getProvider() != PaymentProvider.PAYSTACK
+                || !attempt.getProviderReference().equals(payment.getProviderReference())
+                || payment.getStatus() != PaymentStatus.INITIATING) {
+            markForReview(attempt, payment,
+                    "Paystack accepted initialization, but the local payment state changed before acceptance was saved");
+            return;
+        }
         attempt.setStatus(CustomerPaymentAttemptStatus.PENDING);
         attempt.setAuthorizationUrl(initialization.authorizationUrl());
         attempt.setAccessCode(initialization.accessCode());
@@ -135,25 +150,30 @@ public class CustomerOrderPaymentAttemptStore {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void markOutcomeUnknown(UUID attemptId, String reason) {
-        CustomerPaymentAttempt attempt = requireAttempt(attemptId);
+        CustomerPaymentAttempt attempt = requireAttemptForUpdate(attemptId);
         if (!active(attempt.getStatus())) return;
+        Payment payment = paymentRepository.findByIdForUpdate(attempt.getPayment().getId())
+                .orElseThrow(() -> new ApiException(ErrorCode.PAYMENT_NOT_FOUND, "Payment not found"));
+        if (payment.getProvider() != PaymentProvider.PAYSTACK
+                || !attempt.getProviderReference().equals(payment.getProviderReference())
+                || (payment.getStatus() != PaymentStatus.INITIATING && payment.getStatus() != PaymentStatus.PENDING)) {
+            markForReview(attempt, payment,
+                    "Paystack initialization outcome is unknown and the local payment state changed; manual review is required");
+            return;
+        }
         attempt.setStatus(CustomerPaymentAttemptStatus.OUTCOME_UNKNOWN);
         attempt.setFailureReason(reason);
         attempt.setNextVerificationAt(OffsetDateTime.now().plusMinutes(1));
-        Payment payment = paymentRepository.findByIdForUpdate(attempt.getPayment().getId())
-                .orElseThrow(() -> new ApiException(ErrorCode.PAYMENT_NOT_FOUND, "Payment not found"));
-        if (attempt.getProviderReference().equals(payment.getProviderReference())) {
-            payment.setStatus(PaymentStatus.PENDING);
-            payment.setProviderMode(attempt.getProviderMode());
-            payment.setFailureReason("Paystack is verifying the payment outcome; do not submit another payment yet");
-            paymentRepository.saveAndFlush(payment);
-        }
+        payment.setStatus(PaymentStatus.PENDING);
+        payment.setProviderMode(attempt.getProviderMode());
+        payment.setFailureReason("Paystack is verifying the payment outcome; do not submit another payment yet");
+        paymentRepository.saveAndFlush(payment);
         attemptRepository.saveAndFlush(attempt);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void markFailed(UUID attemptId, String reason) {
-        CustomerPaymentAttempt attempt = requireAttempt(attemptId);
+        CustomerPaymentAttempt attempt = requireAttemptForUpdate(attemptId);
         if (!active(attempt.getStatus())) return;
         attempt.setStatus(CustomerPaymentAttemptStatus.FAILED);
         attempt.setFailureReason(reason);
@@ -172,19 +192,51 @@ public class CustomerOrderPaymentAttemptStore {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void scheduleVerificationRetry(UUID attemptId, String reason) {
-        CustomerPaymentAttempt attempt = attemptRepository.findById(attemptId).orElse(null);
+        CustomerPaymentAttempt candidate = attemptRepository.findById(attemptId).orElse(null);
+        if (candidate == null) return;
+        orderRepository.findByIdWithOwnershipForUpdate(candidate.getPayment().getOrder().getId())
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
+        CustomerPaymentAttempt attempt = attemptRepository.findByIdForUpdate(attemptId).orElse(null);
         if (attempt == null || !active(attempt.getStatus())) return;
         int count = attempt.getVerificationAttempts() + 1;
         attempt.setVerificationAttempts(count);
         attempt.setLastVerifiedAt(OffsetDateTime.now());
         attempt.setFailureReason(reason);
+        OffsetDateTime now = OffsetDateTime.now();
+        if (reviewAfterHours > 0 && attempt.getCreatedAt() != null
+                && attempt.getCreatedAt().isBefore(now.minusHours(reviewAfterHours))) {
+            Payment payment = paymentRepository.findByIdForUpdate(attempt.getPayment().getId())
+                    .orElseThrow(() -> new ApiException(ErrorCode.PAYMENT_NOT_FOUND, "Payment not found"));
+            markForReview(attempt, payment,
+                    "Paystack has not returned a conclusive payment result; manual review is required. Verify this reference in the Paystack dashboard before releasing the order");
+            return;
+        }
         long delaySeconds = Math.min(21_600L, 60L << Math.min(count, 8));
-        attempt.setNextVerificationAt(OffsetDateTime.now().plusSeconds(delaySeconds));
+        attempt.setNextVerificationAt(now.plusSeconds(delaySeconds));
         attemptRepository.saveAndFlush(attempt);
     }
 
-    private CustomerPaymentAttempt requireAttempt(UUID id) {
-        return attemptRepository.findById(id)
+    private void markForReview(CustomerPaymentAttempt attempt, Payment payment, String reason) {
+        attempt.setStatus(CustomerPaymentAttemptStatus.REVIEW_REQUIRED);
+        attempt.setFailureReason(reason);
+        attempt.setAuthorizationUrl(null);
+        attempt.setAccessCode(null);
+        attempt.setCompletedAt(null);
+        attempt.setNextVerificationAt(null);
+        if (attempt.getProviderReference().equals(payment.getProviderReference())) {
+            payment.setFailureReason(reason);
+            payment.setProviderAuthorizationUrl(null);
+            paymentRepository.saveAndFlush(payment);
+        }
+        attemptRepository.saveAndFlush(attempt);
+    }
+
+    private CustomerPaymentAttempt requireAttemptForUpdate(UUID id) {
+        CustomerPaymentAttempt candidate = attemptRepository.findById(id)
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Payment attempt not found"));
+        orderRepository.findByIdWithOwnershipForUpdate(candidate.getPayment().getOrder().getId())
+                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Order not found"));
+        return attemptRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Payment attempt not found"));
     }
 

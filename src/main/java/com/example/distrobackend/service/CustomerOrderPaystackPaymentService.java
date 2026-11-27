@@ -22,6 +22,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -43,6 +45,7 @@ public class CustomerOrderPaystackPaymentService {
     private final OrderRepository orderRepository;
     private final OrderService orderService;
     private final FinancialLedgerService financialLedgerService;
+    private final PlatformTransactionManager transactionManager;
 
     public PaymentInitiateResponse initiate(AuthenticatedUser actor, PaymentInitiateRequest request) {
         if (request == null || request.orderId() == null) {
@@ -186,7 +189,9 @@ public class CustomerOrderPaystackPaymentService {
                 if (attempt == null || !active(attempt.getStatus())) continue;
                 PaystackPaymentService.Verification verification =
                         paystackPaymentService.verifyTransaction(attempt.getProviderReference());
-                if (!applyVerification(attemptId, verification)) {
+                Boolean applied = new TransactionTemplate(transactionManager)
+                        .execute(status -> applyVerification(attemptId, verification));
+                if (!Boolean.TRUE.equals(applied)) {
                     attemptStore.scheduleVerificationRetry(attemptId,
                             "Paystack has not reported a final card payment status");
                 }
@@ -201,6 +206,14 @@ public class CustomerOrderPaystackPaymentService {
                 }
             }
         }
+    }
+
+    public boolean hasUnresolvedAttemptForPayment(UUID paymentId) {
+        return attemptRepository.existsByPayment_IdAndStatusIn(paymentId, java.util.List.of(
+                CustomerPaymentAttemptStatus.INITIALIZING,
+                CustomerPaymentAttemptStatus.PENDING,
+                CustomerPaymentAttemptStatus.OUTCOME_UNKNOWN,
+                CustomerPaymentAttemptStatus.REVIEW_REQUIRED));
     }
 
     private void settle(Order order, Payment payment, CustomerPaymentAttempt attempt) {
@@ -269,10 +282,13 @@ public class CustomerOrderPaystackPaymentService {
         String customerMessage = attempt.getStatus() == CustomerPaymentAttemptStatus.OUTCOME_UNKNOWN
                 || attempt.getStatus() == CustomerPaymentAttemptStatus.INITIALIZING
                 ? "Payment status is being verified. Do not submit another payment yet."
+                : attempt.getStatus() == CustomerPaymentAttemptStatus.REVIEW_REQUIRED
+                ? "Payment needs manual review. Do not retry or choose another payment method yet."
                 : message;
         return new PaymentInitiateResponse(payment.getId(), payment.getMpesaCheckoutRequestId(),
                 payment.getStatus(), customerMessage, attempt.getProviderReference(), "PAYSTACK",
-                attempt.getAuthorizationUrl(), attempt.getProviderMode());
+                attempt.getStatus() == CustomerPaymentAttemptStatus.REVIEW_REQUIRED
+                        ? null : attempt.getAuthorizationUrl(), attempt.getProviderMode());
     }
 
     private static BigDecimal toMinorAmount(BigDecimal amount) {

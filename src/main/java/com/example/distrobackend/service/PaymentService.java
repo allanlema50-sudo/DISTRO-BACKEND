@@ -202,9 +202,13 @@ public class PaymentService {
                 throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
                         "A payment request is already being initiated");
             }
-            if (payment.getStatus() == PaymentStatus.PENDING
-                    && payment.getMpesaCheckoutRequestId() != null) {
-                return response(payment, "Payment request is already pending");
+            if (payment.getStatus() == PaymentStatus.PENDING) {
+                if (payment.getProvider() == PaymentProvider.DARAJA
+                        && !isBlank(payment.getMpesaCheckoutRequestId())) {
+                    return response(payment, "Payment request is already pending");
+                }
+                throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                        "Another payment provider has an unresolved payment for this order");
             }
         } else {
             payment = new Payment();
@@ -214,6 +218,8 @@ public class PaymentService {
 
         if (request.idempotencyKey() != null && !request.idempotencyKey().isBlank()) {
             payment.setIdempotencyKey(request.idempotencyKey().trim());
+        } else if (payment.getProvider() == PaymentProvider.PAYSTACK) {
+            payment.setIdempotencyKey(null);
         }
 
         String phone = PhoneNormalizer.normalize(request.phoneNumber());
@@ -232,6 +238,11 @@ public class PaymentService {
         }
 
         payment.setStatus(PaymentStatus.INITIATING);
+        payment.setProvider(PaymentProvider.DARAJA);
+        payment.setMethod(PaymentMethod.MPESA);
+        payment.setProviderReference(null);
+        payment.setProviderAuthorizationUrl(null);
+        payment.setProviderMode(null);
         payment.setPhoneNumber(phone);
         payment.setInitiatedAt(OffsetDateTime.now());
         payment.setFailureReason(null);
@@ -382,6 +393,12 @@ public class PaymentService {
         }
 
         Payment payment = paymentRepository.findByOrderIdForUpdate(orderId).orElse(null);
+        if (payment != null && payment.getProvider() == PaymentProvider.PAYSTACK
+                && (payment.getStatus() == PaymentStatus.INITIATING
+                || payment.getStatus() == PaymentStatus.PENDING)) {
+            return customerOrderPaystackPaymentService != null
+                    && customerOrderPaystackPaymentService.hasUnresolvedAttemptForPayment(payment.getId());
+        }
         if (payment == null || payment.getStatus() != PaymentStatus.PENDING
                 || isBlank(payment.getMpesaCheckoutRequestId())) {
             return false;

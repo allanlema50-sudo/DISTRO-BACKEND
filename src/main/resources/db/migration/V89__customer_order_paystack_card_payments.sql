@@ -31,7 +31,8 @@ CREATE TABLE customer_payment_attempts (
     version BIGINT NOT NULL DEFAULT 0,
     CONSTRAINT uk_customer_payment_attempt_number UNIQUE (payment_id, attempt_number),
     CONSTRAINT ck_customer_payment_attempt_status CHECK
-        (status IN ('INITIALIZING', 'PENDING', 'OUTCOME_UNKNOWN', 'SUCCEEDED', 'FAILED', 'EXPIRED')),
+        (status IN ('INITIALIZING', 'PENDING', 'OUTCOME_UNKNOWN', 'REVIEW_REQUIRED',
+                    'SUCCEEDED', 'FAILED', 'EXPIRED')),
     CONSTRAINT ck_customer_payment_attempt_mode CHECK (provider_mode IN ('TEST', 'LIVE')),
     CONSTRAINT ck_customer_payment_attempt_amount CHECK (amount > 0),
     CONSTRAINT ck_customer_payment_attempt_currency CHECK

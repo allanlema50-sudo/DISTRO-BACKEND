@@ -35,11 +35,5 @@ public record PurchaseOrderResponse(
         OffsetDateTime paymentConfirmedAt,
         String fulfilmentStatus,
         boolean dispatchEligible,
-        int packageCount,
-        com.example.distrobackend.Domain.enums.PaymentTerms paymentTerms,
-        OffsetDateTime dueAt,
-        boolean overdue,
-        BigDecimal amountPaid,
-        BigDecimal amountOutstanding
+        int packageCount
 ) {}
-

@@ -156,7 +156,7 @@ public class PurchaseOrderShipmentService {
                 setFulfilmentException(order, "DISTRIBUTOR_OFFER_EXCEPTION");
                 continue;
             }
-            if (!reserveStock(order)) {
+            if (!reserveStockAfterPayment(order)) {
                 setFulfilmentException(order, "INVENTORY_EXCEPTION");
                 continue;
             }
@@ -207,13 +207,15 @@ public class PurchaseOrderShipmentService {
     public void handleSettledPurchaseOrder(UUID purchaseOrderId) {
         PurchaseOrder order = lockedPurchaseOrder(purchaseOrderId);
         if (order.getCheckout() != null) return;
-        if (!FulfilmentGate.paidInFull(order,
-                settlementRepository.findByPurchaseOrderIdOrderByCreatedAtDesc(order.getId()))) return;
+        PurchaseOrderSettlement settlement = settlementRepository
+                .findByPurchaseOrderIdOrderByCreatedAtDesc(order.getId()).stream()
+                .findFirst().orElse(null);
+        if (settlement == null || settlement.getStatus() != SettlementStatus.SETTLED
+                || settlement.getAmount() == null
+                || settlement.getAmount().compareTo(order.getTotalAmount()) != 0
+                || !order.getCurrency().equalsIgnoreCase(settlement.getCurrency())) return;
         if (order.getStatus() != PurchaseOrderStatus.APPROVED) return;
-        // Credit orders reserve stock when created and may already be mid-fulfilment.
-        if (order.getPaymentTerms() == com.example.distrobackend.Domain.enums.PaymentTerms.CREDIT
-                && order.isStockReserved()) return;
-        if (reserveStock(order)) {
+        if (reserveStockAfterPayment(order)) {
             order.setFulfilmentStatus("READY_FOR_PICKING");
         } else {
             order.setFulfilmentStatus("INVENTORY_EXCEPTION");
@@ -221,12 +223,7 @@ public class PurchaseOrderShipmentService {
         purchaseOrderRepository.save(order);
     }
 
-    /**
-     * Reserves the order's stock from a single manufacturer warehouse. Direct
-     * PAY_NOW orders call this once payment is settled; CREDIT orders call it
-     * when the order is created. Joins the caller's transaction.
-     */
-    public boolean reserveStock(PurchaseOrder order) {
+    private boolean reserveStockAfterPayment(PurchaseOrder order) {
         if (order.isStockReserved()) return true;
         if (order.getItems().isEmpty()) return false;
         List<StockItem> lockedItems = new ArrayList<>();
@@ -357,15 +354,16 @@ public class PurchaseOrderShipmentService {
             throw new ApiException(ErrorCode.CONFLICT, "The purchase order has no active stock reservation");
         }
         if (purchaseOrder.getCheckout() == null) {
-            List<PurchaseOrderSettlement> settlements = settlementRepository
-                    .findByPurchaseOrderIdOrderByCreatedAtDesc(purchaseOrder.getId());
-            if (settlements.isEmpty()
-                    && purchaseOrder.getPaymentTerms() != com.example.distrobackend.Domain.enums.PaymentTerms.CREDIT) {
-                throw new ApiException(ErrorCode.CONFLICT, "The purchase order has no settlement record");
+            PurchaseOrderSettlement settlement = settlementRepository
+                    .findByPurchaseOrderIdOrderByCreatedAtDesc(purchaseOrder.getId()).stream()
+                    .findFirst().orElseThrow(() -> new ApiException(ErrorCode.CONFLICT,
+                            "The purchase order has no settlement record"));
+            if (settlement.getStatus() != SettlementStatus.SETTLED || settlement.getAmount() == null
+                    || settlement.getAmount().compareTo(purchaseOrder.getTotalAmount()) != 0
+                    || !purchaseOrder.getCurrency().equalsIgnoreCase(settlement.getCurrency())) {
+                throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                        "The purchase order must be settled for the exact amount before dispatch");
             }
-            // PAY_NOW needs a settlement for the exact total; CREDIT may dispatch before settlement.
-            FulfilmentGate.requirePaymentSatisfied(purchaseOrder, settlements,
-                    "The purchase order must be settled for the exact amount before dispatch");
         } else {
             var payment = checkoutPaymentRepository.findFirstByCheckout_IdOrderByInitiatedAtDesc(purchaseOrder.getCheckout().getId())
                     .orElseThrow(() -> new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT, "Checkout payment is not confirmed"));
@@ -399,8 +397,6 @@ public class PurchaseOrderShipmentService {
             throw new ApiException(ErrorCode.CONFLICT, "The destination warehouse is inactive");
         }
 
-        // Select and lock every destination offer before creating the shipment.
-        // This makes receipt deterministic even when a distributor has several offers.
         for (PurchaseOrderItem item : purchaseOrder.getItems()) {
             if (item.getId() == null || item.getStockItem() == null || item.getQuantity() <= 0
                     || item.getProductSkuSnapshot() == null || item.getProductSkuSnapshot().isBlank()
@@ -408,12 +404,9 @@ public class PurchaseOrderShipmentService {
                 throw new ApiException(ErrorCode.CONFLICT,
                         "Purchase order line is missing its persisted product ID, SKU, name, or ordered quantity; repair the PO line before creating a shipment");
             }
-            StockItem offer = resolveOffer(item, purchaseOrder.getBuyerOrganization(), warehouse);
-            item.setDistributorOffer(offer);
         }
-        if (purchaseOrder.getItems().isEmpty()) {
+        if (purchaseOrder.getItems().isEmpty())
             throw new ApiException(ErrorCode.CONFLICT, "Purchase order has no persisted lines to ship");
-        }
 
         if (shipment == null) {
             shipment = new PurchaseOrderShipment();

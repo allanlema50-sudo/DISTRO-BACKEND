@@ -10,10 +10,7 @@ import com.example.distrobackend.Domain.enums.PaymentProvider;
 import com.example.distrobackend.Domain.enums.PaymentStatus;
 import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.PurchaseOrderStatus;
-import com.example.distrobackend.Domain.enums.SettlementMethod;
-import com.example.distrobackend.Domain.enums.SettlementPaymentStatus;
 import com.example.distrobackend.Domain.enums.SettlementStatus;
-import com.example.distrobackend.Domain.entity.PurchaseOrderSettlementPayment;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.Util.PhoneNormalizer;
@@ -25,7 +22,6 @@ import com.example.distrobackend.dto.mpesa.MpesaStkPushResponse;
 import com.example.distrobackend.repository.OrderRepository;
 import com.example.distrobackend.repository.PaymentRepository;
 import com.example.distrobackend.repository.PurchaseOrderRepository;
-import com.example.distrobackend.repository.PurchaseOrderSettlementPaymentRepository;
 import com.example.distrobackend.repository.PurchaseOrderSettlementRepository;
 import com.example.distrobackend.security.AuthenticatedUser;
 import jakarta.annotation.PostConstruct;
@@ -73,8 +69,6 @@ public class PaymentService {
     private final CustomerCollectionProvider collectionProvider;
     private final MpesaCallbackGuard callbackGuard;
     private final CustomerOrderPaystackPaymentService customerOrderPaystackPaymentService;
-    private final PurchaseOrderSettlementPaymentRepository settlementPaymentRepository;
-    private final PlatformFeeService platformFeeService;
 
     @Autowired
     public PaymentService(PaymentRepository paymentRepository,
@@ -88,9 +82,7 @@ public class PaymentService {
                           ApplicationEventPublisher eventPublisher,
                           CustomerCollectionProvider collectionProvider,
                           MpesaCallbackGuard callbackGuard,
-                          CustomerOrderPaystackPaymentService customerOrderPaystackPaymentService,
-                          PurchaseOrderSettlementPaymentRepository settlementPaymentRepository,
-                          PlatformFeeService platformFeeService) {
+                          CustomerOrderPaystackPaymentService customerOrderPaystackPaymentService) {
         this.paymentRepository = paymentRepository;
         this.purchaseOrderRepository = purchaseOrderRepository;
         this.settlementRepository = settlementRepository;
@@ -103,8 +95,6 @@ public class PaymentService {
         this.collectionProvider = collectionProvider;
         this.callbackGuard = callbackGuard;
         this.customerOrderPaystackPaymentService = customerOrderPaystackPaymentService;
-        this.settlementPaymentRepository = settlementPaymentRepository;
-        this.platformFeeService = platformFeeService;
     }
 
     /** Compatibility constructor for existing customer-order unit fixtures. */
@@ -113,7 +103,7 @@ public class PaymentService {
                           OrderService orderService,
                           RestTemplate darajaRestTemplate) {
         this(paymentRepository, null, null, orderRepository, orderService, darajaRestTemplate,
-                null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null);
     }
 
     @Value("${mpesa.base-url}")
@@ -525,16 +515,6 @@ public class PaymentService {
             throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
                     "Only approved purchase orders can be paid");
         }
-        java.util.List<PurchaseOrderSettlement> priorSettlements =
-                settlementRepository.findByPurchaseOrderIdOrderByCreatedAtDesc(order.getId());
-        if (FulfilmentGate.paidInFull(order, priorSettlements)) {
-            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT, "Purchase order is already paid");
-        }
-        if (settlementPaymentRepository != null
-                && settlementPaymentRepository.existsBySettlement_PurchaseOrder_Id(order.getId())) {
-            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
-                    "A bank transfer payment is already under way for this purchase order");
-        }
         ensureConfigured();
         String key = request.idempotencyKey() == null ? null : request.idempotencyKey().trim();
         if (!isBlank(key)) {
@@ -567,10 +547,7 @@ public class PaymentService {
         String phone = PhoneNormalizer.normalize(request.phoneNumber());
         PurchaseOrderSettlement settlement = new PurchaseOrderSettlement();
         settlement.setPurchaseOrder(order);
-        settlement.setMethod(SettlementMethod.MPESA);
         settlement.setAmount(amount);
-        settlement.setTotalDue(amount);
-        settlement.setAmountPaid(BigDecimal.ZERO.setScale(2));
         settlement.setCurrency("KES");
         settlement.setStatus(SettlementStatus.PENDING);
         settlement.setIdempotencyKey(isBlank(key) ? null : key);
@@ -634,7 +611,6 @@ public class PaymentService {
             settlement.setStatus(SettlementStatus.SETTLED);
             settlement.setProviderReference(receipt);
             settlement.setSettledAt(OffsetDateTime.now());
-            finalizePurchaseOrderSettlement(settlement);
         } else {
             settlement.setStatus(SettlementStatus.FAILED);
             settlement.setFailureReason(callback.getResultDesc());
@@ -647,43 +623,6 @@ public class PaymentService {
             } else if (purchaseOrderShipmentService != null) {
                 purchaseOrderShipmentService.handleSettledPurchaseOrder(settlement.getPurchaseOrder().getId());
             }
-        }
-    }
-
-    /**
-     * A direct purchase order paid by STK push is collected on the platform till,
-     * so the full amount is owed to the manufacturer (no commission) and the
-     * payment is recorded as one confirmed M-Pesa payment on the settlement.
-     * The platform fee, which defaults to zero, accrues here as for any method.
-     */
-    private void finalizePurchaseOrderSettlement(PurchaseOrderSettlement settlement) {
-        PurchaseOrder order = settlement.getPurchaseOrder();
-        settlement.setMethod(SettlementMethod.MPESA);
-        settlement.setAmountPaid(settlement.getAmount());
-        if (settlement.getTotalDue() == null) {
-            settlement.setTotalDue(settlement.getAmount());
-        }
-        String receipt = settlement.getProviderReference();
-        if (settlementPaymentRepository != null && order != null && receipt != null
-                && settlementPaymentRepository.findBySupplierOrganization_IdAndPayerReference(
-                        order.getSupplierOrganization().getId(), receipt).isEmpty()) {
-            PurchaseOrderSettlementPayment payment = new PurchaseOrderSettlementPayment();
-            payment.setSettlement(settlement);
-            payment.setSupplierOrganization(order.getSupplierOrganization());
-            payment.setMethod(SettlementMethod.MPESA);
-            payment.setPayerReference(receipt);
-            payment.setAmount(settlement.getAmount());
-            payment.setStatus(SettlementPaymentStatus.CONFIRMED);
-            payment.setConfirmedAt(OffsetDateTime.now());
-            settlementPaymentRepository.save(payment);
-        }
-        if (financialLedgerService != null && order != null) {
-            financialLedgerService.recordFullAmountCapture(FinancialLedgerService.PURCHASE_ORDER_SETTLEMENT,
-                    settlement.getId(), order.getSupplierOrganization(), settlement.getAmount(),
-                    settlement.getCurrency());
-        }
-        if (platformFeeService != null) {
-            platformFeeService.accrueOnSettlement(settlement);
         }
     }
 

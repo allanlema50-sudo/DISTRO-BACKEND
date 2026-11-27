@@ -48,7 +48,15 @@ public class DeploymentEnvironmentDiagnostics
                 environment.getProperty("PAYSTACK_TRANSFERS_ENABLED", "false"));
         if (paystackEnabled) {
             addIfBlank(environment, enabledFeatureMissing, "PAYSTACK_SECRET_KEY");
-            addIfBlank(environment, enabledFeatureMissing, "PAYSTACK_WEBHOOK_SECRET");
+            String webhookSecret = environment.getProperty("PAYSTACK_WEBHOOK_SECRET", "").trim();
+            if (webhookSecret.isBlank()) {
+                optionalFeatureMissing.add(
+                        "Paystack webhook signing secret is not configured; legacy X-Paystack-Signature "
+                                + "verification will use PAYSTACK_SECRET_KEY");
+            } else if (!webhookSecret.startsWith("whsec_")) {
+                enabledFeatureMissing.add(
+                        "PAYSTACK_WEBHOOK_SECRET must be a Paystack signing secret (whsec_...), not a URL or API key");
+            }
             String mode = environment.getProperty("PAYSTACK_MODE", "test").trim();
             String key = environment.getProperty("PAYSTACK_SECRET_KEY", "").trim();
             String expectedPrefix = "live".equalsIgnoreCase(mode) ? "sk_live_"

@@ -93,8 +93,9 @@ public class PaystackPaymentService {
         if (!secretKey.startsWith(expectedKeyPrefix)) {
             throw new IllegalStateException("PAYSTACK_SECRET_KEY does not match PAYSTACK_MODE=" + mode);
         }
-        if (webhookSecret.isBlank()) {
-            throw new IllegalStateException("PAYSTACK_WEBHOOK_SECRET must be set when PAYSTACK_ENABLED=true");
+        if (!webhookSecret.isBlank() && !webhookSecret.startsWith("whsec_")) {
+            throw new IllegalStateException(
+                    "PAYSTACK_WEBHOOK_SECRET must be a Paystack webhook signing secret (whsec_...) or blank");
         }
         if (!callbackUrl.isBlank()) validateCallbackUrl();
     }
@@ -291,7 +292,7 @@ public class PaystackPaymentService {
     }
 
     private boolean verifySignature(byte[] rawBody, String structuredSignature, String legacySignature) {
-        if (structuredSignature != null && !structuredSignature.isBlank()) {
+        if (structuredSignature != null && !structuredSignature.isBlank() && !webhookSecret.isBlank()) {
             String timestamp = null;
             List<String> signatures = new ArrayList<>();
             for (String part : structuredSignature.split(",")) {
@@ -303,19 +304,22 @@ public class PaystackPaymentService {
                     signatures.add(keyedSignature.length == 2 ? keyedSignature[1] : pair[1]);
                 }
             }
-            if (timestamp == null || signatures.isEmpty()) return false;
-            long signedAt;
-            try {
-                signedAt = Long.parseLong(timestamp);
-            } catch (NumberFormatException ex) {
-                return false;
+            if (timestamp != null && !signatures.isEmpty()) {
+                try {
+                    long signedAt = Long.parseLong(timestamp);
+                    if (Math.abs(Instant.now().getEpochSecond() - signedAt) <= WEBHOOK_TOLERANCE_SECONDS) {
+                        byte[] expected = hmac((timestamp + ".").getBytes(StandardCharsets.UTF_8),
+                                rawBody, webhookSecret);
+                        if (signatures.stream().anyMatch(value -> matchesHex(expected, value))) return true;
+                    }
+                } catch (NumberFormatException ignored) {
+                    // Try the supported legacy signature below, if supplied.
+                }
             }
-            if (Math.abs(Instant.now().getEpochSecond() - signedAt) > WEBHOOK_TOLERANCE_SECONDS) return false;
-            byte[] expected = hmac((timestamp + ".").getBytes(StandardCharsets.UTF_8), rawBody, webhookSecret);
-            return signatures.stream().anyMatch(value -> matchesHex(expected, value));
         }
-        if (legacySignature == null || !HEX_SIGNATURE.matcher(legacySignature.trim()).matches()) return false;
-        return matchesHex(hmac(new byte[0], rawBody, secretKey), legacySignature.trim());
+        return legacySignature != null
+                && HEX_SIGNATURE.matcher(legacySignature.trim()).matches()
+                && matchesHex(hmac(new byte[0], rawBody, secretKey), legacySignature.trim());
     }
 
     private byte[] hmac(byte[] prefix, byte[] rawBody, String signingSecret) {

@@ -1,15 +1,12 @@
 package com.example.distrobackend.controller;
 
+import com.example.distrobackend.dto.PurchaseOrderDecisionRequest;
 import com.example.distrobackend.dto.PurchaseOrderResponse;
 import com.example.distrobackend.dto.PurchaseOrderSettlementResponse;
 import com.example.distrobackend.dto.PickPurchaseOrderItemRequest;
 import com.example.distrobackend.dto.PackPurchaseOrderRequest;
 import com.example.distrobackend.security.AuthenticatedUser;
-import com.example.distrobackend.service.BankTransferSettlementService;
 import com.example.distrobackend.service.PurchaseOrderService;
-import com.example.distrobackend.service.SettlementProofDocumentService;
-import com.example.distrobackend.dto.ConfirmBankPaymentRequest;
-import com.example.distrobackend.dto.PurchaseOrderDecisionRequest;
 import com.example.distrobackend.service.CentralizedCheckoutService;
 import com.example.distrobackend.service.PurchaseOrderShipmentService;
 import com.example.distrobackend.dto.SupplierFinancialStatusResponse;
@@ -27,7 +24,6 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.http.ResponseEntity;
 
 import java.util.List;
 import java.util.UUID;
@@ -41,8 +37,6 @@ public class ManufacturerPurchaseOrderController {
     private final PurchaseOrderService purchaseOrderService;
     private final CentralizedCheckoutService centralizedCheckoutService;
     private final PurchaseOrderShipmentService purchaseOrderShipmentService;
-    private final BankTransferSettlementService bankTransferSettlementService;
-    private final SettlementProofDocumentService proofService;
 
     @GetMapping
     public Page<PurchaseOrderResponse> list(
@@ -97,28 +91,4 @@ public class ManufacturerPurchaseOrderController {
             @PathVariable UUID purchaseOrderId) {
         return purchaseOrderService.settlements(actor, purchaseOrderId);
     }
-
-    /** Records a bank payment the supplier has seen arrive. Supplier administrators only. */
-    @PostMapping("/{purchaseOrderId}/settlement/confirm")
-    @PreAuthorize("hasRole('MANUFACTURER_ADMIN')")
-    public PurchaseOrderResponse confirmBankPayment(@AuthenticationPrincipal AuthenticatedUser actor,
-                                                    @PathVariable UUID purchaseOrderId,
-                                                    @Valid @RequestBody ConfirmBankPaymentRequest request) {
-        bankTransferSettlementService.confirm(actor, purchaseOrderId, request);
-        return purchaseOrderService.getForManufacturer(actor, purchaseOrderId);
-    }
-
-    @PostMapping("/{purchaseOrderId}/cancel-overdue")
-    @PreAuthorize("hasRole('MANUFACTURER_ADMIN')")
-    public PurchaseOrderResponse cancelOverdue(@AuthenticationPrincipal AuthenticatedUser actor,
-                                               @PathVariable UUID purchaseOrderId,
-                                               @Valid @RequestBody(required = false) com.example.distrobackend.dto.CancelOverdueRequest note) {
-        return purchaseOrderService.cancelOverdue(actor, purchaseOrderId, note == null ? null : note.note());
-    }
-
-    @GetMapping("/{purchaseOrderId}/settlement/proofs/{documentId}")
-    public ResponseEntity<byte[]> proof(@AuthenticationPrincipal AuthenticatedUser actor,
-                                        @PathVariable UUID purchaseOrderId,
-                                        @PathVariable UUID documentId) {
-        return ProofDownloadResponses.of(proofService.download(actor, purchaseOrderId, documentId));
-    }}
+}

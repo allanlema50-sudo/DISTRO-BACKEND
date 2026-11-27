@@ -15,14 +15,6 @@ public interface PurchaseOrderSettlementRepository extends JpaRepository<Purchas
     java.util.Optional<PurchaseOrderSettlement> findByMpesaCheckoutRequestId(String checkoutRequestId);
     java.util.Optional<PurchaseOrderSettlement> findFirstByPurchaseOrder_IdOrderByCreatedAtDesc(UUID purchaseOrderId);
 
-    /** Money received so far across the live settlements of one purchase order. */
-    @Query("select coalesce(sum(s.amountPaid), 0) from PurchaseOrderSettlement s "
-            + "where s.purchaseOrder.id = :purchaseOrderId and s.status in ("
-            + "com.example.distrobackend.Domain.enums.SettlementStatus.PENDING, "
-            + "com.example.distrobackend.Domain.enums.SettlementStatus.SETTLED)")
-    java.math.BigDecimal sumAmountPaid(@org.springframework.data.repository.query.Param("purchaseOrderId")
-                                       UUID purchaseOrderId);
-
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from PurchaseOrderSettlement s join fetch s.purchaseOrder p "
             + "join fetch p.buyerOrganization buyer join fetch p.supplierOrganization supplier "

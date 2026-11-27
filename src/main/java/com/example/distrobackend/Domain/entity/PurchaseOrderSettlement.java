@@ -1,7 +1,5 @@
 package com.example.distrobackend.Domain.entity;
 
-import com.example.distrobackend.Domain.enums.FeePayer;
-import com.example.distrobackend.Domain.enums.SettlementMethod;
 import com.example.distrobackend.Domain.enums.SettlementStatus;
 import jakarta.persistence.*;
 import lombok.Getter;
@@ -71,40 +69,6 @@ public class PurchaseOrderSettlement {
 
     @Column(name = "settled_at")
     private OffsetDateTime settledAt;
-
-    /** Channel this settlement is paid through. Individual payments carry their own method. */
-    @Enumerated(EnumType.STRING)
-    @Column(name = "method", nullable = false, length = 20)
-    private SettlementMethod method = SettlementMethod.MPESA;
-
-    /** What the purchase order owes. Defaults to {@link #amount}. */
-    @Column(name = "total_due", precision = 12, scale = 2)
-    private BigDecimal totalDue;
-
-    /**
-     * Sum of CONFIRMED payments. SETTLED exactly when this equals total due;
-     * partial payment is derived (amount paid below total due), not a status.
-     */
-    @Column(name = "amount_paid", nullable = false, precision = 12, scale = 2)
-    private BigDecimal amountPaid = BigDecimal.ZERO.setScale(2);
-
-    @Column(name = "platform_fee_amount", precision = 12, scale = 2)
-    private BigDecimal platformFeeAmount;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "platform_fee_payer", length = 10)
-    private FeePayer platformFeePayer;
-
-    @PrePersist
-    void defaultTotalDue() {
-        if (totalDue == null) {
-            totalDue = amount;
-        }
-    }
-
-    public BigDecimal effectiveTotalDue() {
-        return totalDue != null ? totalDue : amount;
-    }
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

@@ -86,8 +86,19 @@ checkout has its own `POST /api/v1/checkouts/{checkoutId}/payment` contract.
 1. The distributor creates a checkout with `POST /api/v1/checkouts`.
 2. The distributor starts payment with `POST /api/v1/checkouts/{checkoutId}/payment`.
 3. The backend initializes the transaction server-side and returns
-   `payment.authorizationUrl`, `payment.accessCode`, and
-   `payment.providerReference`.
+   `payment.authorizationUrl`, `payment.accessCode`,
+   `payment.providerReference`, and `payment.providerMode` (`TEST` or `LIVE`).
+   The mode is saved on the payment attempt before contacting Paystack, so a
+   later webhook, verification, or status request retains the environment in
+   which the attempt began. Older payments created before this field was added
+   have an unknown mode and return `null`; their mode is not guessed from the
+   current deployment configuration.
+
+Supplier settlements funded by Paystack checkout can only be transferred in
+the same Paystack mode as the original collection. This prevents a successful
+TEST checkout from becoming a real LIVE payout. Legacy Paystack checkout
+payments whose mode is unknown are blocked from payout until reviewed; the
+system will not infer their mode from whichever keys are configured now.
 4. Web or mobile clients open the authorization URL or use the Paystack SDK.
    The secret key must never be sent to a client.
 5. Paystack calls the public webhook endpoint. The backend verifies the raw

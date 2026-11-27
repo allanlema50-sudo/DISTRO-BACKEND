@@ -97,9 +97,10 @@ public class CheckoutPaymentAttemptStore {
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void preparePaystack(UUID paymentId, String providerReference) {
+    public void preparePaystack(UUID paymentId, String providerReference, String providerMode) {
         CheckoutPayment payment = requirePayment(paymentId);
         payment.setProvider(PaymentProvider.PAYSTACK);
+        payment.setProviderMode(providerMode);
         payment.setProviderReference(providerReference);
         payment.setProviderPayload(Map.of("provider", PaymentProvider.PAYSTACK.name(), "state", "INITIALIZATION_STARTED"));
         payment.setProviderVerificationAttempts(0);

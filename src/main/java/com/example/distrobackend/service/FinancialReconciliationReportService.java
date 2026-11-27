@@ -252,6 +252,7 @@ public class FinancialReconciliationReportService {
         long unclearedDisputes = disputes.stream().filter(dispute -> dispute.getClearedAt() == null).count();
         if (unclearedDisputes > 0) issues.add("DISPUTE_REVIEW_REQUIRED");
         return new FinancialReconciliationItem(payment.getId(), payment.getCheckout().getCheckoutReference(),
+                payment.getProvider() == null ? null : payment.getProvider().name(), payment.getProviderMode(),
                 payment.getProviderReference(), payment.getStatus().name(), payment.getAmount(),
                 payment.getCurrency(), payment.getInitiatedAt(), allocationTotal, allocations.size(),
                 captureCount, refundJournalCount, unbalancedCount, settlements.size(), settledTotal,

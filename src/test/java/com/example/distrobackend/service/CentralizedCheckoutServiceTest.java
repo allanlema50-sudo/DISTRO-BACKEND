@@ -50,6 +50,24 @@ class CentralizedCheckoutServiceTest {
   assertThat(persistedMethod).isEqualTo(PaymentMethod.MOBILE_MONEY);
  }
 
+ @Test void checkoutPaymentStatusExposesStoredPaystackModeSeparatelyFromDemo() {
+  Checkout checkout = new Checkout();
+  checkout.setCheckoutReference("CHK-TEST-MODE");
+  CheckoutPayment payment = new CheckoutPayment();
+  payment.setProvider(PaymentProvider.PAYSTACK);
+  payment.setProviderMode("TEST");
+  payment.setMethod(PaymentMethod.CARD);
+  payment.setStatus(CheckoutPaymentStatus.PENDING);
+  payment.setInitiatedAt(OffsetDateTime.now());
+
+  CheckoutResponse.Payment response = ReflectionTestUtils.invokeMethod(
+    service, "paymentResponse", checkout, payment);
+
+  assertThat(response.providerMode()).isEqualTo("TEST");
+  assertThat(response.demo()).isFalse();
+  assertThat(response.provider()).isEqualTo("PAYSTACK");
+ }
+
  @Test void successfulDemoAllocatesFiveMillionAcrossThreeIndependentOrdersWithoutMarkingPayoutsSettled() {
   ReflectionTestUtils.setField(service,"demoEnabled",true);
   ReflectionTestUtils.setField(service,"demoOutcome","SUCCESS");

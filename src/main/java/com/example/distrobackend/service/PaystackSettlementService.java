@@ -441,6 +441,12 @@ public class PaystackSettlementService {
         UUID paymentId = settlement.getAllocation().getPayment().getId();
         CheckoutPayment payment = checkoutPaymentRepository.findByIdForUpdate(paymentId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Checkout payment not found"));
+        if (payment.getProvider() == PaymentProvider.PAYSTACK
+                && !Objects.equals(payment.getProviderMode(), paystackPaymentService.mode())) {
+            throw new ApiException(ErrorCode.PAYMENT_STATE_CONFLICT,
+                    "A Paystack-funded settlement can only be paid in the same provider mode as its collection; "
+                            + "payments with an unknown historical mode cannot be paid automatically");
+        }
         requireDeliveryHoldElapsed(settlement);
         boolean hasUnclearedDispute = disputeRepository.existsUnclearedForPaymentOrReference(
                 paymentId, payment.getProviderReference());

@@ -8,6 +8,8 @@ import java.util.UUID;
 public record FinancialReconciliationItem(
         UUID paymentId,
         String checkoutReference,
+        String paymentProvider,
+        String providerMode,
         String providerReference,
         String paymentStatus,
         BigDecimal paymentAmount,

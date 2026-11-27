@@ -6,6 +6,11 @@ the backend contract and the intended user experience. Keep the project's
 existing API client, authentication, routing, component library, and visual
 system; do not invent a parallel payment model.
 
+The inspected LogiFlow client is an Angular app with `PaymentService`, shared
+`API_ENDPOINTS`, and a payment-history table. Implement the response adapter in
+that existing service/model boundary. The backend does **not** currently return
+one normalized transaction DTO for both payment journeys.
+
 ## The two payment journeys are different
 
 1. **Customer → distributor:** a customer pays for a distributor's customer
@@ -97,6 +102,44 @@ explicitly support it.
 - Demo: show `DEMO — NO MONEY TRANSFERRED`. A Paystack TEST transaction is a
   real provider sandbox event, not LogiFlow's mock/demo payment.
 
+### Checkout screens and interaction details
+
+Implement a review/confirmation step followed by a payment-status view, using
+the existing Angular routes and shared components:
+
+1. **Review checkout:** list each supplier, product/quantity, destination
+   warehouse, server total, and currency. Confirm before creating the checkout.
+   Disable submit while pending; on network retry reuse the original
+   idempotency key. On validation/authorization errors, keep form values and
+   show API messages beside the relevant control.
+2. **Choose method:** show only methods enabled by current app configuration.
+   Daraja asks for a Kenyan number and explains an STK prompt will arrive.
+   Paystack card says “Card (Paystack)”; generic Paystack mobile money says
+   “Mobile money (Paystack)”—never “Paystack M-Pesa”. Explain TEST is sandbox
+   activity. Do not present DEMO beside provider methods as another provider.
+3. **Starting/redirecting:** show progress and prevent double submit. For
+   Paystack, open only the backend-returned HTTPS authorization URL; don't
+   construct it. On return, refresh once and provide “Check payment status”.
+   The redirect itself is not proof of payment.
+4. **Waiting:** show amount, reference, provider, TEST/LIVE badge, and
+   “Payment pending confirmation”. Poll at a bounded interval while active,
+   stop on terminal state or after a reasonable timeout, and retain a manual
+   refresh action. Never start another charge while the API says unresolved.
+5. **Paid/cancelled/failed:** show distinct success, cancellation, and
+   definitive-failure states. After verified success, show supplier
+   allocations separately as payable/awaiting settlement. Closing the browser
+   is not a provider failure unless the API says so. On timeout, 5xx, or
+   malformed response, preserve the checkout and let the user refresh; don't
+   claim failure or clear order state.
+6. **Empty/error:** checkout history gets a useful “No checkouts yet” state
+   and a return-to-procurement action. `401/403` use the existing auth/permission
+   flow; `404` refreshes the list; `409` reloads checkout and displays the API
+   conflict. Never show stack traces, webhook payloads, or credentials.
+
+Provide a detail view reachable from checkout history so the user can inspect
+supplier orders, payment state, allocations, and settlement state later without
+restarting payment.
+
 `CheckoutResponse.Payment` includes `method`, `provider`, `status`,
 `providerReference`, `providerMode`, `authorizationUrl`, `accessCode`, `demo`,
 `demoLabel`, `terminal`, `retryAllowed`, and `userMessage`. An allocation
@@ -130,6 +173,55 @@ require the customer's Kenyan number. The initiation response includes
 `paymentId`, `status`, `customerMessage`, `paymentReference`, `provider`,
 `authorizationUrl`, and `providerMode`. Poll the status endpoint after browser
 return/app resume; only the backend's verified status is authoritative.
+
+## Payment-history adapter: actual DTOs and safe normalization
+
+The current web table expects `direction`, `counterpartyName`, `updatedAt`, and
+reconciliation details. Those fields are not present on every backend response.
+Keep a UI `PaymentTransaction` model if useful, but parse the two server DTOs
+separately in `PaymentService` and normalize only at that API boundary:
+
+| Request | Actual backend response | Mapping rules |
+| --- | --- | --- |
+| `GET /api/v1/payments?orderType=CUSTOMER_ORDER` | Spring `Page<PaymentResponse>` (`content` plus paging metadata). Fields include `id`, `orderId`, `amount`, `method`, `status`, `mpesaReceiptNumber`, `initiatedAt`, `confirmedAt`, `orderType`, `provider`, `currency`, `failureReason`, `providerMode`, `paymentReference`, and `authorizationUrl`. | Use `initiatedAt` as created time and `confirmedAt ?? initiatedAt` as last known update. Keep provider, mode, reference, status, currency, receipt, and failure reason from the API. Derive direction from authenticated organization context. Reconciliation fields are unavailable: show “Not provided”/“—”, never claim `RECONCILED`. |
+| `GET /api/v1/payments?orderType=CUSTOMER_ORDER&orderId=<id>` | A one-element `List<PaymentResponse>` when found (or empty list). | Use the same customer mapping; do not assume a `Page` wrapper. |
+| `GET /api/v1/payments?orderType=PURCHASE_ORDER&orderId=<id>` | `List<PurchaseOrderSettlementResponse>`: `id`, `status`, `amount`, `currency`, `providerReference`, `note`, `settledAt`, and `createdAt`. Order ID is known from the request and not repeated in each row. | Attach the requested order ID. Direction is `INCOMING` for manufacturer and `OUTGOING` for distributor. Use `createdAt` and `settledAt ?? createdAt`; map `providerReference` only as a reference. Provider, mode, counterparty name, M-Pesa receipt, and reconciliation state are not supplied; render “Not provided”/“—”, do not infer them. |
+
+Map only backend statuses: customer payment uses `INITIATING`, `PENDING`,
+`CONFIRMED`, `FAILED`, `REVERSED`, or `RECONCILED`; purchase-order settlement
+uses `PENDING`, `SETTLED`, `FAILED`, or `REVERSED`. Treat `CONFIRMED`,
+`RECONCILED`, and `SETTLED` as successful for their own record type, but don't
+collapse settlement success into “provider payment” or “payout complete”.
+Unknown future status strings should display as “Needs review” with the raw
+status available in details, not crash the entire list. Don't display
+`REFUNDED` for customer-payment history unless that endpoint actually returns
+it; refund support has a separate limited scope.
+
+`GET /api/v1/payments` without `orderId` is a paged customer-payment response,
+not a combined history feed. Supplier history currently requires listing the
+organization's purchase orders and requesting each order's settlement list,
+then sorting normalized results by creation time. Empty lists are normal. Keep
+HTTP DTO types separate from the view model so a future unified backend-history
+API can replace the adapter without rewriting the UI.
+
+The current `payment.service.spec.ts` fixtures use the proposed normalized
+shape, not the backend's actual DTOs. Replace/add fixtures using the exact
+`PaymentResponse` page/list and `PurchaseOrderSettlementResponse[]` shapes
+above. Cover manufacturer and distributor direction, empty arrays, absent
+provider/reconciliation fields, and dates where `settledAt` is null. The
+current table's “Reconciliation” column must not imply that purchase-order
+settlements include reconciliation evidence; render “Not provided by this
+endpoint” for those rows or use a neutral “Settlement details” column. Do not
+invent provider or counterparty data where the DTO has none.
+
+Keep normalization defensive: accept either a page's `content` or a list;
+handle malformed rows without failing the entire screen; preserve raw status
+for details; and sort only after validating timestamps. Do not log tokens,
+account numbers, provider payloads, or full response bodies. For customer
+payments, direction is incoming from the organization's view; for supplier
+settlements use organization type as described above. These DTOs lack
+counterparty names, so use a neutral “Customer order”/“Supplier order” label
+plus order ID unless another authorized API supplies the name.
 
 ## Organization payout destination onboarding
 
@@ -239,6 +331,15 @@ payouts. Keep `APP_DEMO_CUSTOMER_FULFILLMENT=false` when testing genuine
 provider payments. A Paystack `TEST` success is sandbox-only and must be
 visually distinct from a live payment/payout.
 
+The current web customer-payment model is MPESA-only and treats phone as
+required. Update the existing model/service/component so provider is selectable
+(`DARAJA` or `PAYSTACK`), phone is required only for Daraja, and Paystack
+authorization URL plus `providerMode` are handled. The centralized-checkout UI
+should offer backend-supported Paystack card and generic mobile-money methods
+when enabled; don't label generic mobile money as Paystack M-Pesa, and don't
+use `DEMO` for provider sandbox testing. Keep an explicitly enabled demo path
+visibly separate from Paystack TEST.
+
 ## Shared implementation rules
 
 - Bearer tokens go only to LogiFlow APIs. No Paystack secret, Daraja secret,
@@ -266,3 +367,8 @@ visually distinct from a live payment/payout.
 > secrets, trust redirects, show a payable as paid out, or invent API fields.
 > Add tests for pending/unknown/success/failure, idempotency, TEST/LIVE labels,
 > beneficiary confirmation, masked data, API errors, and access restrictions.
+> Update the existing payment-history adapter first: customer payment history
+> returns `PaymentResponse` (page or one-row list), while a purchase-order
+> history request returns `PurchaseOrderSettlementResponse` rows. Parse them
+> separately and never fabricate absent provider, reconciliation, or
+> counterparty fields.

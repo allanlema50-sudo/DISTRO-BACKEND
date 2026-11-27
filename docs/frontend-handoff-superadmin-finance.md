@@ -5,6 +5,12 @@ reconciliation, payouts, and financial oversight. This is an operator console,
 not a place to initiate customer checkout. Preserve the existing admin app,
 role guard, API client, navigation, and design system.
 
+The inspected admin client is Angular with a shared `PaymentsService`, payment
+models, and a `/payments` page. It currently consumes legacy payment list/detail
+routes and does not call the unified activity or finance APIs below. Extend the
+existing services/models and route structure; migrate the activity page to the
+unified read API rather than maintaining a second browser-side aggregation.
+
 ## Financial concepts the UI must keep separate
 
 - **Collection:** money reported as received by the provider for a customer
@@ -50,6 +56,15 @@ refund amounts/states, and dispute counts. This is LogiFlow's stored view; it
 does not query Paystack or a bank statement. Refresh after actions; no live
 stream/websocket is provided by this endpoint.
 
+The current admin `Payment` model collapses some provider statuses and omits
+`providerMode` and `transactionType`. Preserve `REVERSED` distinctly from
+`REFUNDED`, add a TEST/LIVE/DEMO badge based on the API's returned mode/demo
+fields, and identify customer-order versus marketplace-checkout rows. Never
+infer mode from the configured environment: historical records carry their own
+mode. Do not use the legacy `PATCH /api/v1/admin/payments/{paymentId}/status`
+as a way to manually force a provider payment outcome; provider confirmation
+and reconciliation are authoritative.
+
 ## Implemented finance and operations APIs
 
 All routes under `/api/v1/admin/financial/**` require `SUPER_ADMIN`, unless
@@ -93,6 +108,14 @@ route. Show a persistent TEST/LIVE/DEMO badge. For marketplace records show
 gross, fees, commission, payable, settlement/refund/dispute indicators. Label
 customer-order and marketplace-checkout transactions explicitly.
 
+**Interaction requirements:** initialize with a bounded recent date window,
+not an unbounded history query. Keep filters visible with Apply/Reset; changing
+a filter resets to page zero. Show loading skeletons, an empty result with a
+“change filters” action, and an error with retry. Preserve filters when opening
+and closing a detail view. Show only fields returned by the API; absent values
+must say “Not available”, not be inferred. After an action, refetch the detail
+and activity page. This API is request/refresh-based, not a live push stream.
+
 ### 2. Ledger and commission rules
 
 Show journals and entries as accounting evidence. A balanced journal means
@@ -102,6 +125,13 @@ dates, active status, and audit metadata returned by the API. Confirm create
 and deactivate actions; refresh the rule list after success. Never calculate
 historical charges using today's rule.
 
+Use a read-only journal detail view with debit/credit entries, account,
+currency, source, event, and creation time exactly as returned. Rule creation
+uses a dedicated form for currency, organization scope, percentage, fixed fee,
+and effective dates. Keep input values on validation/conflict errors.
+Deactivation requires confirmation naming the rule; it must not rewrite prior
+journals.
+
 ### 3. Beneficiaries
 
 List organization, method, currency, masked destination, provider mode, status,
@@ -109,6 +139,12 @@ submission/review timestamps, and review note. Do not display full account or
 phone details. If review is enabled, the organization destination remains
 unavailable until approved. Rejecting/reviewing must use the exact API status
 and request DTO; ask the API for current state after a conflict.
+
+Provide pending/active/rejected filters and a detail panel with masked
+destination and organization identity. Review/reject dialogs should state that
+this changes LogiFlow's eligibility record, not provider KYC. Require any
+review note required by the request DTO, disable duplicate submission, and
+refresh after a conflict or ambiguous timeout before offering another action.
 
 ### 4. Settlements and payout batches
 
@@ -126,6 +162,20 @@ offer a second transfer under a new reference. Retry only after a conclusive
 failure/reversal and refresh batch/settlement state after any action. The
 attempt-history endpoint is essential when older and newer transfer attempts
 receive callbacks out of order.
+
+For batch creation, show selectable eligible settlements with organization,
+amount, currency, destination mask, and current status. Require explicit
+selection and a review/total confirmation before creating a batch. Approval
+and execution are separate actions with separate confirmations. The execution
+confirmation must name mode, recipient mask, amount, currency, and explain the
+result may remain pending. Disable actions while in flight. After timeout,
+query the batch, settlement, and attempt history before retrying; never issue a
+new transfer merely because the browser did not receive a response. Distinguish
+`PROCESSING` (unresolved), `FAILED` (conclusive provider failure), `REVERSED`
+(provider reversed a prior success), and `SETTLED` (provider-reported success,
+not independent bank proof). For automatic TEST settlement, show that no live
+funds moved and why the settlement became eligible, including delivery-hold
+state when returned.
 
 `PAYSTACK_TRANSFERS_ENABLED` is independent of checkout collection. An internal
 Paystack TEST success does not mean a real payout occurred. `POST
@@ -146,12 +196,29 @@ evidence to Paystack or resolve a provider dispute. A dispute can block supplier
 settlement; clearing requires the provider to report resolved and a nonblank
 internal review note. Show provider dashboard follow-up as a separate task.
 
+The refund request view must show the exact payment, full amount, currency,
+mode, and supported limitations before confirmation. After submission, keep
+the result pending until refreshed provider evidence confirms processed or
+failed; never optimistically change payment/payable state. Dispute detail may
+show evidence/deadline fields only if the API returns them. Provide a separate
+internal-review form and make clear that the note does not upload evidence to
+Paystack.
+
 ### 6. Webhook inbox and reconciliation
 
 For `DEAD_LETTER`, show event identity, type, attempt count, last error, and
 timestamps; allow manual retry only after inspection. Dead letter means event
 processing failed, not that the underlying payment failed. Do not expose raw
 webhook secrets/signatures.
+
+Use a searchable, paginated inbox with explicit `RETRY`, `PROCESSING`,
+`PROCESSED`, and `DEAD_LETTER` states. A retry confirmation must name the event
+type/reference and explain that it reprocesses a notification; it does not
+recharge a customer or resend a transfer. Disable retry while processing and
+refresh after the action. Reports need client-side date validation (maximum
+31 days), loading/empty/error states, and pagination that respects the
+endpoint's indexing convention. Do not imply that export or statement storage
+exists unless a separate supported feature is implemented.
 
 The internal report checks LogiFlow records for allocations, ledger balance,
 settlements, refunds, disputes, and payout/reversal journals. The on-demand
@@ -183,6 +250,20 @@ Dispute review:
 Confirm each financially meaningful action, display the server's exact
 conflict/validation reason, then re-fetch the relevant resource. Do not assume
 that an HTTP timeout means the operation did not reach Paystack.
+
+## Super Admin delivery acceptance checklist
+
+- Every page is role-protected and handles `401/403` without leaking finance
+  records across sessions.
+- Every list has loading, empty, error/retry, and pagination/filter states.
+- Amounts always show currency; TEST/LIVE/DEMO comes from the stored API
+  record, never from current deployment settings.
+- Every write has the required permission, confirmation, pending state,
+  duplicate-submit guard, and post-action refresh.
+- Ambiguous provider outcomes stay visibly unresolved and cannot be retried as
+  a new transfer/refund until the backend reports a conclusive state.
+- Tests cover filters, date bounds, page indexing, masked beneficiary display,
+  permission errors, and payment/settlement status distinctions.
 
 ## Copy-ready implementation prompt
 

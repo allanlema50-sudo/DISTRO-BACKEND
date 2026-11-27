@@ -66,6 +66,51 @@ class PaystackPaymentServiceTest {
     }
 
     @Test
+    void verifiesLegacyTestWebhookWithTestSecretWhenSigningSecretIsUnavailable() throws Exception {
+        byte[] body = "{\"event\":\"charge.success\",\"data\":{\"reference\":\"LF-LEGACY\",\"status\":\"success\",\"amount\":12550,\"currency\":\"KES\"}}"
+                .getBytes(StandardCharsets.UTF_8);
+        PaystackPaymentService service = service(new RestTemplate(), "TEST", "sk_test_secret", "");
+        String signature = new Hmac("sk_test_secret").hex(new byte[0], body);
+
+        PaystackPaymentService.Webhook webhook = service.parseAndVerifyWebhook(body, null, signature);
+
+        assertThat(webhook.event()).isEqualTo("charge.success");
+        assertThat(webhook.reference()).isEqualTo("LF-LEGACY");
+    }
+
+    @Test
+    void acceptsLiveConfigurationWithoutSigningSecretAndUsesLegacySecretKeyVerification() throws Exception {
+        byte[] body = "{\"event\":\"charge.success\",\"data\":{\"reference\":\"LF-LIVE\",\"status\":\"success\",\"amount\":12550,\"currency\":\"KES\"}}"
+                .getBytes(StandardCharsets.UTF_8);
+        PaystackPaymentService service = service(new RestTemplate(), "LIVE", "sk_live_secret", "");
+        service.validateConfiguration();
+        String signature = new Hmac("sk_live_secret").hex(new byte[0], body);
+
+        PaystackPaymentService.Webhook webhook = service.parseAndVerifyWebhook(body, null, signature);
+
+        assertThat(webhook.reference()).isEqualTo("LF-LIVE");
+    }
+
+    @Test
+    void rejectsWebhookUrlConfiguredAsSigningSecret() {
+        PaystackPaymentService service = service(new RestTemplate(), "TEST", "sk_test_secret",
+                "https://api.example.test/webhook");
+
+        assertThatThrownBy(service::validateConfiguration)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("whsec_");
+    }
+
+    @Test
+    void rejectsTimestampedWebhookWhenSigningSecretIsMissing() {
+        PaystackPaymentService service = service(new RestTemplate(), "TEST", "sk_test_secret", "");
+        assertThatThrownBy(() -> service.parseAndVerifyWebhook(
+                "{}".getBytes(StandardCharsets.UTF_8),
+                "t=" + Instant.now().getEpochSecond() + ",v1=whk_test:00", null))
+                .hasMessage("Invalid Paystack webhook signature");
+    }
+
+    @Test
     void rejectsInvalidWebhookSignature() {
         PaystackPaymentService service = service(new RestTemplate());
         assertThatThrownBy(() -> service.parseAndVerifyWebhook(
@@ -195,8 +240,13 @@ class PaystackPaymentServiceTest {
     }
 
     private static PaystackPaymentService service(RestTemplate restTemplate) {
-        return new PaystackPaymentService(restTemplate, new JsonMapper(), true, true, "TEST",
-                "https://api.paystack.co", "sk_test_secret", WEBHOOK_SECRET, "");
+        return service(restTemplate, "TEST", "sk_test_secret", WEBHOOK_SECRET);
+    }
+
+    private static PaystackPaymentService service(RestTemplate restTemplate, String mode,
+                                                  String secretKey, String webhookSecret) {
+        return new PaystackPaymentService(restTemplate, new JsonMapper(), true, true, mode,
+                "https://api.paystack.co", secretKey, webhookSecret, "");
     }
 
     private record Hmac(String secret) {

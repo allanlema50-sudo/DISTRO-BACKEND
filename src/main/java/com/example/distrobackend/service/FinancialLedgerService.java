@@ -31,6 +31,9 @@ public class FinancialLedgerService {
     private static final String REFUND_EVENT = "PAYMENT_REFUNDED";
     private static final String REVERSAL_EVENT = "PAYMENT_REVERSED";
     private static final String PAYOUT_EVENT = "PAYOUT";
+    static final String FEE_ACCRUED_EVENT = "PLATFORM_FEE_ACCRUED";
+    static final String PURCHASE_ORDER_SETTLEMENT = "PURCHASE_ORDER_SETTLEMENT";
+    static final String PURCHASE_ORDER_FEE = "PURCHASE_ORDER_FEE";
     static final String CUSTOMER_ORDER_PAYMENT = "CUSTOMER_ORDER_PAYMENT";
 
     private final LedgerAccountRepository accountRepository;
@@ -142,11 +145,22 @@ public class FinancialLedgerService {
     @Transactional
     public void recordCustomerOrderCapture(UUID paymentId, Organization beneficiary,
                                            BigDecimal gross, String currency) {
-        if (paymentId == null || beneficiary == null) {
+        recordFullAmountCapture(CUSTOMER_ORDER_PAYMENT, paymentId, beneficiary, gross, currency);
+    }
+
+    /**
+     * Platform-collected money owed in full to the beneficiary, with no commission.
+     * Used for customer M-Pesa orders and for direct purchase orders paid by STK push.
+     * Bank transfers go straight to the manufacturer and never use this method.
+     */
+    @Transactional
+    public void recordFullAmountCapture(String sourceType, UUID sourceId, Organization beneficiary,
+                                        BigDecimal gross, String currency) {
+        if (sourceType == null || sourceType.isBlank() || sourceId == null || beneficiary == null) {
             throw new ApiException(ErrorCode.BAD_REQUEST, "A payment ledger source and beneficiary are required");
         }
         LedgerJournal existing = journalRepository
-                .findBySourceTypeAndSourceIdAndEventType(CUSTOMER_ORDER_PAYMENT, paymentId, CAPTURE_EVENT)
+                .findBySourceTypeAndSourceIdAndEventType(sourceType, sourceId, CAPTURE_EVENT)
                 .orElse(null);
         if (existing != null) {
             return;
@@ -160,16 +174,54 @@ public class FinancialLedgerService {
         LedgerAccount payable = organizationAccount(LedgerAccountType.ORGANIZATION_PAYABLE,
                 normalizedCurrency, beneficiary);
         LedgerJournal journal = new LedgerJournal();
-        journal.setSourceType(CUSTOMER_ORDER_PAYMENT);
-        journal.setSourceId(paymentId);
+        journal.setSourceType(sourceType);
+        journal.setSourceId(sourceId);
         journal.setEventType(CAPTURE_EVENT);
         journal.setCurrency(normalizedCurrency);
-        journal.setDescription("Customer M-Pesa collected for " + beneficiary.getName());
+        journal.setDescription("M-Pesa collected for " + beneficiary.getName());
         journal.setSimulated(false);
         addEntry(journal, clearing, LedgerEntryDirection.DEBIT, normalizedGross, normalizedCurrency,
                 "Customer payment received by provider");
         addEntry(journal, payable, LedgerEntryDirection.CREDIT, normalizedGross, normalizedCurrency,
-                "Amount payable to distributor");
+                "Amount payable to beneficiary");
+        assertBalanced(journal);
+        journalRepository.save(journal);
+    }
+
+    /**
+     * Accrues a platform fee as a receivable from the paying organization:
+     * debit its fee receivable, credit platform revenue. The manufacturer's
+     * payable is not touched. A second call for the same source is a no-op.
+     */
+    @Transactional
+    public void accruePlatformFeeReceivable(String sourceType, UUID sourceId, Organization payer,
+                                            BigDecimal fee, String currency, String description) {
+        if (sourceType == null || sourceType.isBlank() || sourceId == null || payer == null) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "A fee ledger source and paying organization are required");
+        }
+        if (journalRepository.findBySourceTypeAndSourceIdAndEventType(sourceType, sourceId, FEE_ACCRUED_EVENT)
+                .isPresent()) {
+            return;
+        }
+        String normalizedCurrency = normalizeCurrency(currency);
+        BigDecimal normalizedFee = requireCurrencyScale(fee, "fee", currencyScale(normalizedCurrency));
+        if (normalizedFee.signum() <= 0) {
+            throw new ApiException(ErrorCode.BAD_REQUEST, "A platform fee to accrue must be positive");
+        }
+        LedgerAccount receivable = organizationAccount(LedgerAccountType.PLATFORM_FEE_RECEIVABLE,
+                normalizedCurrency, payer);
+        LedgerAccount revenue = platformAccount(LedgerAccountType.PLATFORM_REVENUE, normalizedCurrency);
+        LedgerJournal journal = new LedgerJournal();
+        journal.setSourceType(sourceType);
+        journal.setSourceId(sourceId);
+        journal.setEventType(FEE_ACCRUED_EVENT);
+        journal.setCurrency(normalizedCurrency);
+        journal.setDescription(description);
+        journal.setSimulated(false);
+        addEntry(journal, receivable, LedgerEntryDirection.DEBIT, normalizedFee, normalizedCurrency,
+                "Platform fee receivable from " + payer.getName());
+        addEntry(journal, revenue, LedgerEntryDirection.CREDIT, normalizedFee, normalizedCurrency,
+                "Platform fee revenue");
         assertBalanced(journal);
         journalRepository.save(journal);
     }

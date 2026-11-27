@@ -122,6 +122,32 @@ M-Pesa variables are optional for starting the API, but they must be configured
 before payment initiation or callback processing can work. Copy the complete
 list from `.env.example`; do not invent values for production credentials.
 
+### Demo flags (must stay false for production)
+
+| Variable | Default | Purpose |
+|---|---:|---|
+| `APP_DEMO_CUSTOMER_FULFILLMENT` | `false` | Skips Daraja and enables admin demo-dispatch |
+| `LOGIFLOW_DEMO_PAYMENTS_ENABLED` | `false` | Simulated marketplace DEMO payments |
+
+The `prod` Spring profile refuses to start if either flag is true.
+
+### Sandbox STK testing (staging only)
+
+Develop against local Docker. For Safaricom sandbox STK, use a **separate**
+staging deployment with its **own database** — never the live database.
+
+Required for staging STK:
+
+- Public HTTPS callback URL reachable by Safaricom, e.g.
+  `https://<staging-host>/api/v1/payments/mpesa/callback?token=<MPESA_CALLBACK_SECRET>`
+  (and checkout callback if used)
+- `MPESA_BASE_URL=https://sandbox.safaricom.co.ke`
+- `MPESA_CONSUMER_KEY`, `MPESA_CONSUMER_SECRET`, `MPESA_SHORTCODE`, `MPESA_PASSKEY`
+- `MPESA_CALLBACK_URL` / `MPESA_CHECKOUT_CALLBACK_URL`, `MPESA_CALLBACK_SECRET`
+- `APP_DEMO_CUSTOMER_FULFILLMENT=false`, `LOGIFLOW_DEMO_PAYMENTS_ENABLED=false`
+- `SPRING_PROFILES_ACTIVE` not set to `prod` until go-live (or use prod with
+  demo flags false and a non-empty sandbox IP allowlist if required)
+
 ## Start the backend with Docker
 
 From the repository root, with Docker Desktop running:
@@ -617,8 +643,11 @@ JWT contains the new role. Do not expose a public endpoint for assigning
 `SUPER_ADMIN`, and do not leave the bootstrap password enabled in a long-running
 production deployment.
 
-For production, set `SPRING_PROFILES_ACTIVE=prod` and configure the real OTP
-provider variables. `EMAIL_PROVIDER` selects the HTTPS transport for OTP mail
+**Production deployments must set `SPRING_PROFILES_ACTIVE=prod`.** That profile
+enforces M-Pesa callback IP allowlisting, disables the legacy callback header
+secret, and refuses to start when `APP_DEMO_CUSTOMER_FULFILLMENT` or
+`LOGIFLOW_DEMO_PAYMENTS_ENABLED` is true. Configure the real OTP provider
+variables as well. `EMAIL_PROVIDER` selects the HTTPS transport for OTP mail
 and onboarding mail: `mailgun`, `brevo`, or `log`. `log` prints the email and
 OTP to the console and the application refuses to start with it unless the
 `local` profile is active. `OTP_PROVIDER=mailgun` sends OTPs through Mailgun's

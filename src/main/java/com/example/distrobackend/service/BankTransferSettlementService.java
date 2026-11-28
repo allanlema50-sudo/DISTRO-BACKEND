@@ -7,7 +7,6 @@ import com.example.distrobackend.Domain.entity.SettlementProofDocument;
 import com.example.distrobackend.Domain.enums.NotificationPriority;
 import com.example.distrobackend.Domain.enums.NotificationType;
 import com.example.distrobackend.Domain.enums.Organizationtype;
-import com.example.distrobackend.Domain.enums.PaymentTerms;
 import com.example.distrobackend.Domain.enums.PurchaseOrderStatus;
 import com.example.distrobackend.Domain.enums.SettlementMethod;
 import com.example.distrobackend.Domain.enums.SettlementPaymentStatus;
@@ -161,8 +160,8 @@ public class BankTransferSettlementService {
 
     /**
      * Confirms a submitted payment and records the amount received. Only the
-     * supplier's manufacturer administrator may do this. PAY_NOW orders need the
-     * exact total; CREDIT orders accept partial amounts up to the balance.
+     * supplier's manufacturer administrator may do this. The amount received must
+     * equal the order total.
      * Confirming a reference that is already confirmed with the same amount is
      * a no-op. Returns the order id.
      */
@@ -207,13 +206,7 @@ public class BankTransferSettlementService {
         }
         BigDecimal due = settlement.effectiveTotalDue();
         BigDecimal paid = settlement.getAmountPaid() == null ? BigDecimal.ZERO : settlement.getAmountPaid();
-        BigDecimal remaining = due.subtract(paid);
-        if (order.getPaymentTerms() == PaymentTerms.CREDIT) {
-            if (received.compareTo(remaining) > 0) {
-                throw new ApiException(ErrorCode.PAYMENT_AMOUNT_MISMATCH,
-                        "The amount received exceeds the outstanding balance of " + remaining.toPlainString());
-            }
-        } else if (received.compareTo(due) != 0) {
+        if (received.compareTo(due) != 0) {
             throw new ApiException(ErrorCode.PAYMENT_AMOUNT_MISMATCH,
                     "The amount received must equal the order total of " + due.toPlainString());
         }
@@ -235,7 +228,7 @@ public class BankTransferSettlementService {
         settlementRepository.save(settlement);
 
         if (settled) {
-            // Reserves stock for PAY_NOW orders once the commit lands; credit orders reserved at creation.
+            // Reserves stock once the pay-now settlement commits.
             eventPublisher.publishEvent(PurchaseOrderPaymentVerifiedEvent.purchaseOrder(order.getId()));
         }
         String message = "Bank payment " + reference + " of " + received.toPlainString() + " "

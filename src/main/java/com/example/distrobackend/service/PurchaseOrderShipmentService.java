@@ -210,9 +210,6 @@ public class PurchaseOrderShipmentService {
         if (!FulfilmentGate.paidInFull(order,
                 settlementRepository.findByPurchaseOrderIdOrderByCreatedAtDesc(order.getId()))) return;
         if (order.getStatus() != PurchaseOrderStatus.APPROVED) return;
-        // Credit orders reserve stock when created and may already be mid-fulfilment.
-        if (order.getPaymentTerms() == com.example.distrobackend.Domain.enums.PaymentTerms.CREDIT
-                && order.isStockReserved()) return;
         if (reserveStock(order)) {
             order.setFulfilmentStatus("READY_FOR_PICKING");
         } else {
@@ -222,9 +219,8 @@ public class PurchaseOrderShipmentService {
     }
 
     /**
-     * Reserves the order's stock from a single manufacturer warehouse. Direct
-     * PAY_NOW orders call this once payment is settled; CREDIT orders call it
-     * when the order is created. Joins the caller's transaction.
+     * Reserves the order's stock from a single manufacturer warehouse once a
+     * pay-now order is settled. Joins the caller's transaction.
      */
     public boolean reserveStock(PurchaseOrder order) {
         if (order.isStockReserved()) return true;
@@ -359,11 +355,9 @@ public class PurchaseOrderShipmentService {
         if (purchaseOrder.getCheckout() == null) {
             List<PurchaseOrderSettlement> settlements = settlementRepository
                     .findByPurchaseOrderIdOrderByCreatedAtDesc(purchaseOrder.getId());
-            if (settlements.isEmpty()
-                    && purchaseOrder.getPaymentTerms() != com.example.distrobackend.Domain.enums.PaymentTerms.CREDIT) {
+            if (settlements.isEmpty()) {
                 throw new ApiException(ErrorCode.CONFLICT, "The purchase order has no settlement record");
             }
-            // PAY_NOW needs a settlement for the exact total; CREDIT may dispatch before settlement.
             FulfilmentGate.requirePaymentSatisfied(purchaseOrder, settlements,
                     "The purchase order must be settled for the exact amount before dispatch");
         } else {

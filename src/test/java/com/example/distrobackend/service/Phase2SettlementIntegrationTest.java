@@ -8,7 +8,6 @@ import com.example.distrobackend.Domain.entity.StockItem;
 import com.example.distrobackend.Domain.entity.StockLocation;
 import com.example.distrobackend.Domain.entity.User;
 import com.example.distrobackend.Domain.entity.Warehouse;
-import com.example.distrobackend.Domain.enums.CreditTermStatus;
 import com.example.distrobackend.Domain.enums.FeePayer;
 import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.PaymentTerms;
@@ -23,18 +22,14 @@ import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
 import com.example.distrobackend.dto.ConfirmBankPaymentRequest;
 import com.example.distrobackend.dto.CreatePurchaseOrderRequest;
-import com.example.distrobackend.dto.CreditStatementResponse;
 import com.example.distrobackend.dto.PickPurchaseOrderItemRequest;
 import com.example.distrobackend.dto.PlatformFeeReportResponse;
 import com.example.distrobackend.dto.PurchaseOrderItemRequest;
 import com.example.distrobackend.dto.PurchaseOrderResponse;
 import com.example.distrobackend.dto.PurchaseOrderSettlementResponse;
-import com.example.distrobackend.dto.UpdateCreditDefaultRequest;
-import com.example.distrobackend.dto.UpdateCreditTermsRequest;
 import com.example.distrobackend.dto.UpdatePlatformFeeRequest;
 import com.example.distrobackend.repository.DistributorProductAuthorizationRepository;
 import com.example.distrobackend.repository.OrganizationRepository;
-import com.example.distrobackend.repository.PlatformCreditDefaultRepository;
 import com.example.distrobackend.repository.PurchaseOrderSettlementPaymentRepository;
 import com.example.distrobackend.repository.PurchaseOrderSettlementRepository;
 import com.example.distrobackend.repository.StockItemRepository;
@@ -92,9 +87,7 @@ class Phase2SettlementIntegrationTest extends AbstractPostgresIntegrationTest {
 
     @Autowired PurchaseOrderService purchaseOrderService;
     @Autowired BankTransferSettlementService bank;
-    @Autowired CreditTermsService creditTerms;
     @Autowired PlatformFeeService feeService;
-    @Autowired CreditOverdueService overdueService;
     @Autowired SettlementProofDocumentService proofService;
     @Autowired PaymentService paymentService;
     @Autowired OrganizationRepository organizations;
@@ -105,7 +98,6 @@ class Phase2SettlementIntegrationTest extends AbstractPostgresIntegrationTest {
     @Autowired DistributorProductAuthorizationRepository authorizations;
     @Autowired PurchaseOrderSettlementRepository settlements;
     @Autowired PurchaseOrderSettlementPaymentRepository paymentRepository;
-    @Autowired PlatformCreditDefaultRepository creditDefaults;
     @Autowired JdbcTemplate jdbc;
     @Autowired PlatformTransactionManager transactionManager;
 
@@ -195,11 +187,6 @@ class Phase2SettlementIntegrationTest extends AbstractPostgresIntegrationTest {
     private PurchaseOrderResponse placeOrder(World w, PaymentTerms terms, int quantity) {
         return purchaseOrderService.create(w.distAdmin, new CreatePurchaseOrderRequest(
                 w.manufacturer.getId(), List.of(new PurchaseOrderItemRequest(w.stock.getId(), quantity)), terms));
-    }
-
-    private void setCredit(World w, String limit, int days, CreditTermStatus status) {
-        creditTerms.putCredit(w.mfrAdmin, w.distributor.getId(),
-                new UpdateCreditTermsRequest(new BigDecimal(limit), days, status, null, null));
     }
 
     private void submit(World w, PurchaseOrderResponse order, String reference) {
@@ -394,218 +381,6 @@ class Phase2SettlementIntegrationTest extends AbstractPostgresIntegrationTest {
         PurchaseOrderSettlementResponse settlement = bankSettlement(reload(w, order));
         assertEquals(SettlementStatus.PENDING, settlement.status());
         assertEquals(SettlementPaymentStatus.SUBMITTED, settlement.payments().get(0).status());
-    }
-
-    @Test
-    void creditOrdersAcceptPartialPaymentsAndTrackTheRemainder() {
-        World w = world();
-        setCredit(w, "1000.00", 30, null);
-        PurchaseOrderResponse order = placeOrder(w, PaymentTerms.CREDIT, 6);   // 600.00
-
-        submit(w, order, "PART-A");
-        submit(w, order, "PART-B");
-        submit(w, order, "PART-C");
-        confirm(w, order, "PART-A", "200.00");
-        confirm(w, order, "PART-B", "200.00");
-
-        PurchaseOrderResponse partial = reload(w, order);
-        assertEquals(0, new BigDecimal("400.00").compareTo(partial.amountPaid()));
-        assertEquals(0, new BigDecimal("200.00").compareTo(partial.amountOutstanding()));
-        PurchaseOrderSettlementResponse settlement = bankSettlement(partial);
-        assertEquals(SettlementStatus.PENDING, settlement.status());   // partial is derived, never a new status
-        assertEquals(0, new BigDecimal("200.00").compareTo(settlement.amountOutstanding()));
-
-        assertCode(ErrorCode.PAYMENT_AMOUNT_MISMATCH, () -> confirm(w, order, "PART-C", "300.00"));
-        confirm(w, order, "PART-C", "200.00");
-
-        PurchaseOrderResponse paid = reload(w, order);
-        assertEquals(SettlementStatus.SETTLED, bankSettlement(paid).status());
-        assertEquals(0, new BigDecimal("600.00").compareTo(paid.amountPaid()));
-        assertEquals(0, paid.amountOutstanding().compareTo(BigDecimal.ZERO));
-        // A settled order takes no further payments.
-        assertCode(ErrorCode.PAYMENT_STATE_CONFLICT, () -> submit(w, order, "PART-D"));
-    }
-
-    // ------------------------------------------------------------ credit terms
-
-    @Test
-    void creditOrderOverTheLimitIsRejectedButPayNowIsNot() {
-        World w = world();
-        setCredit(w, "1000.00", 30, null);
-
-        PurchaseOrderResponse first = placeOrder(w, PaymentTerms.CREDIT, 6);        // 600
-        assertEquals(PaymentTerms.CREDIT, first.paymentTerms());
-        assertNotNull(first.dueAt());
-        assertEquals(6, reservedQuantity(w));                                       // reserved at creation
-
-        assertCode(ErrorCode.CREDIT_LIMIT_EXCEEDED, () -> placeOrder(w, PaymentTerms.CREDIT, 5));   // 600 + 500 > 1000
-        assertEquals(6, reservedQuantity(w));                                       // rejected order holds nothing
-
-        PurchaseOrderResponse payNow = placeOrder(w, PaymentTerms.PAY_NOW, 30);     // 3000, same limit ignored
-        assertEquals(PaymentTerms.PAY_NOW, payNow.paymentTerms());
-        assertNull(payNow.dueAt());
-        assertEquals(6, reservedQuantity(w));                                       // PAY_NOW reserves only after payment
-
-        PurchaseOrderResponse second = placeOrder(w, PaymentTerms.CREDIT, 4);       // 600 + 400 = 1000, at the limit
-        assertEquals(10, reservedQuantity(w));
-        assertNotNull(second.id());
-    }
-
-    @Test
-    void creditIsRefusedWithoutUsableTerms() {
-        World w = world();
-        creditDefaults.deleteAll();
-        assertCode(ErrorCode.CREDIT_NOT_AVAILABLE, () -> placeOrder(w, PaymentTerms.CREDIT, 1));   // no row, no default
-
-        setCredit(w, "1000.00", 30, CreditTermStatus.SUSPENDED);
-        assertCode(ErrorCode.CREDIT_NOT_AVAILABLE, () -> placeOrder(w, PaymentTerms.CREDIT, 1));   // suspended
-
-        // PAY_NOW is never affected.
-        placeOrder(w, PaymentTerms.PAY_NOW, 1);
-        assertEquals(0, reservedQuantity(w));
-    }
-
-    @Test
-    void platformDefaultAppliesOnlyWhenConfiguredWithALimit() {
-        World w = world();
-        try {
-            creditTerms.putDefault(w.superAdmin, new UpdateCreditDefaultRequest("KES", new BigDecimal("0.00"), 14, null));
-            assertCode(ErrorCode.CREDIT_NOT_AVAILABLE, () -> placeOrder(w, PaymentTerms.CREDIT, 1));   // zero limit = off
-
-            creditTerms.putDefault(w.superAdmin, new UpdateCreditDefaultRequest("KES", new BigDecimal("500.00"), 14, 0L));
-            PurchaseOrderResponse order = placeOrder(w, PaymentTerms.CREDIT, 4);
-            assertNotNull(order.dueAt());
-            assertCode(ErrorCode.CREDIT_LIMIT_EXCEEDED, () -> placeOrder(w, PaymentTerms.CREDIT, 2));
-
-            // A relationship row overrides the default.
-            setCredit(w, "5000.00", 60, null);
-            placeOrder(w, PaymentTerms.CREDIT, 20);
-        } finally {
-            creditDefaults.deleteAll();
-        }
-    }
-
-    @Test
-    void creditOrdersCanBePickedBeforePaymentButPayNowOrdersCannotAndPaymentIsNeverBlockedByFulfilment() {
-        World w = world();
-        setCredit(w, "5000.00", 30, null);
-        PurchaseOrderResponse credit = placeOrder(w, PaymentTerms.CREDIT, 3);
-        PurchaseOrderResponse payNow = placeOrder(w, PaymentTerms.PAY_NOW, 3);
-
-        PurchaseOrderResponse picked = purchaseOrderService.pickManufacturerItem(w.mfrStaff, credit.id(),
-                new PickPurchaseOrderItemRequest(credit.items().get(0).id(), 3));
-        assertEquals("READY_FOR_PACKING", picked.fulfilmentStatus());
-
-        // An unpaid PAY_NOW order has no reserved stock yet, so it cannot be picked.
-        assertCode(ErrorCode.INVALID_STATE_TRANSITION, () -> purchaseOrderService.pickManufacturerItem(w.mfrStaff,
-                payNow.id(), new PickPurchaseOrderItemRequest(payNow.items().get(0).id(), 3)));
-
-        // Fulfilment is under way on the credit order and a bank payment is still recorded.
-        submit(w, credit, "LATE-PAY-1");
-        confirm(w, credit, "LATE-PAY-1", "300.00");
-        PurchaseOrderResponse paid = reload(w, credit);
-        assertEquals(SettlementStatus.SETTLED, bankSettlement(paid).status());
-        assertEquals("READY_FOR_PACKING", paid.fulfilmentStatus());   // settling did not reset fulfilment
-    }
-
-    @Test
-    void overdueCreditBlocksNewCreditOrdersUntilPaid() {
-        World w = world();
-        setCredit(w, "5000.00", 30, null);
-        PurchaseOrderResponse overdue = placeOrder(w, PaymentTerms.CREDIT, 2);
-        jdbc.update("update purchase_orders set due_at = now() - interval '2 days' where id = ?", overdue.id());
-
-        assertCode(ErrorCode.CREDIT_OVERDUE, () -> placeOrder(w, PaymentTerms.CREDIT, 1));
-        placeOrder(w, PaymentTerms.PAY_NOW, 1);   // PAY_NOW still works
-
-        assertTrue(overdueService.flagOverdue(java.time.OffsetDateTime.now(), 100) >= 1);
-        assertNotNull(jdbc.queryForObject("select overdue_at from purchase_orders where id = ?",
-                java.sql.Timestamp.class, overdue.id()));
-        PurchaseOrderResponse flagged = reload(w, overdue);
-        assertTrue(flagged.overdue());
-        CreditStatementResponse statement = creditTerms.statement(w.mfrAdmin, w.distributor.getId());
-        assertTrue(statement.orders().stream().anyMatch(l -> l.purchaseOrderId().equals(overdue.id()) && l.overdue()));
-        assertEquals(1, statement.credit().overdueOrders());
-
-        submit(w, overdue, "OVERDUE-PAY");
-        confirm(w, overdue, "OVERDUE-PAY", "200.00");
-        placeOrder(w, PaymentTerms.CREDIT, 1);   // paid, so credit reopens
-    }
-
-    @Test
-    void supplierAdministratorCanCancelAnUntouchedOverdueCreditOrderAndStockIsReleased() {
-        World w = world();
-        setCredit(w, "5000.00", 30, null);
-        PurchaseOrderResponse order = placeOrder(w, PaymentTerms.CREDIT, 4);
-        assertEquals(4, reservedQuantity(w));
-
-        assertCode(ErrorCode.CONFLICT, () -> purchaseOrderService.cancelOverdue(w.mfrAdmin, order.id(), null));   // not due yet
-        jdbc.update("update purchase_orders set due_at = now() - interval '1 day' where id = ?", order.id());
-        assertCode(ErrorCode.ACCESS_DENIED, () -> purchaseOrderService.cancelOverdue(w.distAdmin, order.id(), null));
-        assertCode(ErrorCode.ACCESS_DENIED, () -> purchaseOrderService.cancelOverdue(w.mfrStaff, order.id(), null));
-        assertCode(ErrorCode.ACCESS_DENIED, () -> purchaseOrderService.cancelOverdue(world().mfrAdmin, order.id(), null));
-
-        PurchaseOrderResponse cancelled = purchaseOrderService.cancelOverdue(w.mfrAdmin, order.id(), "No payment");
-        assertEquals(PurchaseOrderStatus.CANCELLED, cancelled.status());
-        assertEquals(0, reservedQuantity(w));
-        // Cancelled credit no longer counts against the limit.
-        assertEquals(0, creditTerms.getCredit(w.mfrAdmin, w.distributor.getId()).outstanding().signum());
-    }
-
-    @Test
-    void anOverdueCreditOrderWithPaymentsCannotBeCancelled() {
-        World w = world();
-        setCredit(w, "5000.00", 30, null);
-        PurchaseOrderResponse order = placeOrder(w, PaymentTerms.CREDIT, 4);
-        submit(w, order, "HALF-PAY");
-        confirm(w, order, "HALF-PAY", "100.00");
-        jdbc.update("update purchase_orders set due_at = now() - interval '1 day' where id = ?", order.id());
-
-        assertCode(ErrorCode.CONFLICT, () -> purchaseOrderService.cancelOverdue(w.mfrAdmin, order.id(), null));
-        assertEquals(4, reservedQuantity(w));
-    }
-
-    @Test
-    void concurrentCreditOrdersCannotExceedTheLimit() throws Exception {
-        World w = world();
-        setCredit(w, "1000.00", 30, null);
-        int threads = 6;                       // each order is 400, so at most two fit under 1000
-        CountDownLatch ready = new CountDownLatch(threads);
-        CountDownLatch go = new CountDownLatch(1);
-        ExecutorService pool = Executors.newFixedThreadPool(threads);
-        List<Future<ErrorCode>> results = new ArrayList<>();
-        try {
-            for (int i = 0; i < threads; i++) {
-                Callable<ErrorCode> task = () -> {
-                    ready.countDown();
-                    go.await();
-                    try {
-                        placeOrder(w, PaymentTerms.CREDIT, 4);
-                        return null;
-                    } catch (ApiException ex) {
-                        return ex.getCode();
-                    }
-                };
-                results.add(pool.submit(task));
-            }
-            ready.await();
-            go.countDown();
-            int created = 0;
-            for (Future<ErrorCode> result : results) {
-                ErrorCode code = result.get();
-                if (code == null) {
-                    created++;
-                } else {
-                    assertEquals(ErrorCode.CREDIT_LIMIT_EXCEEDED, code);
-                }
-            }
-            assertEquals(2, created);
-        } finally {
-            pool.shutdownNow();
-        }
-        assertEquals(0, new BigDecimal("800.00").compareTo(
-                creditTerms.getCredit(w.mfrAdmin, w.distributor.getId()).outstanding()));
-        assertEquals(8, reservedQuantity(w));
     }
 
     // ---------------------------------------------------------------- platform fee

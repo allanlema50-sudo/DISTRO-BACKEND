@@ -63,8 +63,6 @@ public class PurchaseOrderService {
     private final ProductAuthorizationService productAuthorizationService;
     private final DistributorProductAuthorizationRepository authorizationRepository;
     private final PurchaseOrderSettlementPaymentRepository settlementPaymentRepository;
-    private final CreditTermsService creditTermsService;
-    private final PurchaseOrderShipmentService shipmentService;
 
     @Transactional
     public PurchaseOrderResponse create(AuthenticatedUser actor, CreatePurchaseOrderRequest request) {
@@ -80,13 +78,7 @@ public class PurchaseOrderService {
             throw new ApiException(ErrorCode.BAD_REQUEST, "Buyer and supplier organizations must differ");
         }
 
-        PaymentTerms paymentTerms = request.effectivePaymentTerms();
-        CreditTermsService.CreditContext credit = null;
-        if (paymentTerms == PaymentTerms.CREDIT) {
-            // Locks the buyer organization and the pair's terms row for the rest of this
-            // transaction, so concurrent credit orders queue and see each other's balance.
-            credit = creditTermsService.lockAndResolve(buyer, supplier, "KES");
-        }
+        request.effectivePaymentTerms();
 
         Set<UUID> seenItems = new HashSet<>();
         PurchaseOrder purchaseOrder = new PurchaseOrder();
@@ -154,12 +146,7 @@ public class PurchaseOrderService {
         }
         purchaseOrder.setTotalAmount(total);
         purchaseOrder.setStockReserved(false);
-        purchaseOrder.setPaymentTerms(paymentTerms);
-        if (credit != null) {
-            creditTermsService.requireWithinLimit(credit, buyer, supplier, total);
-            purchaseOrder.setDueAt(purchaseOrder.getSubmittedAt().plusDays(credit.termDays()));
-            purchaseOrder.setCreditTermsVersion(credit.termsVersion());
-        }
+        purchaseOrder.setPaymentTerms(PaymentTerms.PAY_NOW);
         PurchaseOrder saved = purchaseOrderRepository.save(purchaseOrder);
 
         PurchaseOrderSettlement settlement = new PurchaseOrderSettlement();
@@ -167,16 +154,6 @@ public class PurchaseOrderService {
         settlement.setStatus(SettlementStatus.PENDING);
         settlement.setAmount(total);
         settlementRepository.saveAndFlush(settlement);
-        if (credit != null) {
-            // Credit orders ship before they are paid, so the stock is held from the start.
-            // Failing here rolls back the order, the credit it would have used and the lock.
-            if (!shipmentService.reserveStock(saved)) {
-                throw new ApiException(ErrorCode.CONFLICT,
-                        "Stock for this credit order could not be reserved from a single warehouse");
-            }
-            saved.setFulfilmentStatus("READY_FOR_PICKING");
-            saved = purchaseOrderRepository.save(saved);
-        }
         return toResponse(saved);
     }
 
@@ -330,66 +307,6 @@ public class PurchaseOrderService {
         return toResponse(saved);
     }
 
-    /**
-     * Cancels an overdue credit order that nothing has been paid on and that has
-     * not started fulfilment, releasing its reserved stock. Manufacturer admin of
-     * the supplier only. Overdue orders are never cancelled automatically.
-     */
-    @Transactional
-    public PurchaseOrderResponse cancelOverdue(AuthenticatedUser actor, UUID id, String note) {
-        requireManufacturerAdmin(actor);
-        PurchaseOrder purchaseOrder = purchaseOrderRepository.findByIdForUpdate(id)
-                .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND, "Purchase order not found"));
-        if (!actor.organizationId().equals(purchaseOrder.getSupplierOrganization().getId())) {
-            throw new ApiException(ErrorCode.ACCESS_DENIED);
-        }
-        if (purchaseOrder.getPaymentTerms() != PaymentTerms.CREDIT
-                || purchaseOrder.getStatus() != PurchaseOrderStatus.APPROVED) {
-            throw new ApiException(ErrorCode.CONFLICT, "Only an approved credit order can be cancelled for non-payment");
-        }
-        BigDecimal paid = settlementRepository.sumAmountPaid(id);
-        boolean overdue = purchaseOrder.getDueAt() != null && purchaseOrder.getDueAt().isBefore(OffsetDateTime.now())
-                && purchaseOrder.getTotalAmount().subtract(paid == null ? BigDecimal.ZERO : paid).signum() > 0;
-        if (!overdue) {
-            throw new ApiException(ErrorCode.CONFLICT, "The credit order is not overdue");
-        }
-        if (paid != null && paid.signum() > 0) {
-            throw new ApiException(ErrorCode.CONFLICT,
-                    "Part of this order has been paid. It cannot be cancelled; collect the remaining balance");
-        }
-        if (settlementPaymentRepository.existsBySettlement_PurchaseOrder_Id(id)) {
-            throw new ApiException(ErrorCode.CONFLICT,
-                    "A payment is awaiting confirmation on this order. Confirm or resolve it first");
-        }
-        boolean started = purchaseOrder.getItems().stream()
-                .anyMatch(item -> item.getPickedQuantity() > 0 || item.getPackedQuantity() > 0)
-                || purchaseOrderShipmentRepository.existsByPurchaseOrder_Id(id);
-        if (started) {
-            throw new ApiException(ErrorCode.CONFLICT, "Fulfilment has already started on this order");
-        }
-        releaseStockReservation(purchaseOrder);
-        purchaseOrder.setStatus(PurchaseOrderStatus.CANCELLED);
-        purchaseOrder.setFulfilmentStatus("CANCELLED");
-        String reason = note == null || note.isBlank() ? "Cancelled for overdue credit payment" : note.trim();
-        purchaseOrder.setRejectionReason(reason);
-        for (PurchaseOrderSettlement settlement
-                : settlementRepository.findByPurchaseOrderIdOrderByCreatedAtDesc(id)) {
-            if (settlement.getStatus() == SettlementStatus.PENDING) {
-                settlement.setStatus(SettlementStatus.FAILED);
-                settlement.setNote("Order cancelled for overdue credit payment");
-                settlementRepository.save(settlement);
-            }
-        }
-        PurchaseOrder saved = purchaseOrderRepository.save(purchaseOrder);
-        userRepository.findByOrganization_IdAndRole(saved.getBuyerOrganization().getId(),
-                        UserRole.DISTRIBUTOR_ADMIN, org.springframework.data.domain.Pageable.unpaged())
-                .forEach(user -> notificationService.create(user, "Credit order cancelled",
-                        "Purchase order " + saved.getPurchaseOrderNumber()
-                                + " was cancelled because payment was overdue.",
-                        NotificationType.ORDER, NotificationPriority.HIGH, saved.getId(), "PURCHASE_ORDER"));
-        return toResponse(saved);
-    }
-
     @Transactional(readOnly = true)
     public java.util.List<PurchaseOrderSettlementResponse> settlements(AuthenticatedUser actor, UUID id) {
         PurchaseOrder purchaseOrder = getForEitherParty(actor, id);
@@ -512,15 +429,8 @@ public class PurchaseOrderService {
                         && paymentSatisfied(purchaseOrder) && dispatchReady(purchaseOrder),
                 purchaseOrder.getPackageCount(),
                 purchaseOrder.getPaymentTerms(), purchaseOrder.getDueAt(),
-                creditOverdue(purchaseOrder, amountPaid), amountPaid,
+                false, amountPaid,
                 purchaseOrder.getTotalAmount().subtract(amountPaid).max(BigDecimal.ZERO));
-    }
-
-    private boolean creditOverdue(PurchaseOrder order, BigDecimal amountPaid) {
-        return order.getPaymentTerms() == PaymentTerms.CREDIT
-                && order.getStatus() == PurchaseOrderStatus.APPROVED
-                && order.getDueAt() != null && order.getDueAt().isBefore(OffsetDateTime.now())
-                && order.getTotalAmount().subtract(amountPaid).signum() > 0;
     }
 
     private boolean isPurchaseOrderPaid(PurchaseOrder order) {
@@ -592,12 +502,21 @@ public class PurchaseOrderService {
     private PurchaseOrderSettlementResponse toSettlementResponse(PurchaseOrderSettlement settlement) {
         java.util.List<com.example.distrobackend.dto.SettlementPaymentResponse> payments =
                 settlementPaymentRepository.findBySettlement_IdOrderBySubmittedAtAsc(settlement.getId()).stream()
-                        .map(CreditTermsService::toPaymentResponse).toList();
+                        .map(PurchaseOrderService::toPaymentResponse).toList();
         BigDecimal due = settlement.effectiveTotalDue();
         BigDecimal paid = settlement.getAmountPaid() == null ? BigDecimal.ZERO : settlement.getAmountPaid();
         return new PurchaseOrderSettlementResponse(settlement.getId(), settlement.getStatus(),
                 settlement.getAmount(), settlement.getCurrency(), settlement.getProviderReference(),
                 settlement.getNote(), settlement.getSettledAt(), settlement.getCreatedAt(),
                 settlement.getMethod(), due, paid, due.subtract(paid).max(BigDecimal.ZERO), payments);
+    }
+
+    private static com.example.distrobackend.dto.SettlementPaymentResponse toPaymentResponse(
+            com.example.distrobackend.Domain.entity.PurchaseOrderSettlementPayment payment) {
+        return new com.example.distrobackend.dto.SettlementPaymentResponse(
+                payment.getId(), payment.getMethod(), payment.getPayerReference(),
+                payment.getAmount(), payment.getStatus(),
+                payment.getProofDocument() == null ? null : payment.getProofDocument().getId(),
+                payment.getSubmittedAt(), payment.getConfirmedAt());
     }
 }

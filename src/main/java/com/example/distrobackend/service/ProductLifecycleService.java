@@ -122,6 +122,30 @@ public class ProductLifecycleService {
         return ProductResponse.from(stockItemRepository.save(item));
     }
 
+    /**
+     * Replaces the single picture stored for a product the caller's organization owns.
+     * A distributor can replace only their own offer. The bytes stay in {@code product_images}.
+     */
+    @Transactional
+    public ProductResponse replaceImage(AuthenticatedUser actor, UUID productId, MultipartFile file) {
+        if (actor == null || actor.organizationId() == null || actor.organizationType() == null) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        validateImage(file);
+        StockItem item = stockItemRepository.findByIdAndOrganizationIdForUpdate(productId, actor.organizationId())
+                .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.STOCK_ITEM_NOT_FOUND));
+        boolean distributorOffer = actor.organizationType() == Organizationtype.DISTRIBUTOR;
+        if (distributorOffer && item.getSourceStockItem() == null) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED,
+                    "A distributor can only replace the picture on their own offer");
+        }
+        if (!distributorOffer && actor.organizationType() != Organizationtype.MANUFACTURER) {
+            throw new ApiException(ErrorCode.ACCESS_DENIED);
+        }
+        saveImage(item, file);
+        return ProductResponse.from(stockItemRepository.save(item));
+    }
+
     @Transactional
     public ProductResponse updatePublication(AuthenticatedUser actor, UUID productId,
                                               ProductPublicationRequest request) {
@@ -153,9 +177,13 @@ public class ProductLifecycleService {
         StockItem item = stockItemRepository.findById(productId)
                 .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.STOCK_ITEM_NOT_FOUND));
         if (!visibleTo(actor, item)) throw new ApiException(ErrorCode.ACCESS_DENIED);
-        StockItem imageOwner = item.getSourceStockItem() == null ? item : item.getSourceStockItem();
-        ProductImage image = imageRepository.findById(imageOwner.getId())
-                .orElseThrow(() -> new ResourceNotFoundException(ErrorCode.NOT_FOUND, "Product image not found"));
+        ProductImage image = imageRepository.findById(item.getId()).orElse(null);
+        if (image == null && item.getSourceStockItem() != null) {
+            image = imageRepository.findById(item.getSourceStockItem().getId()).orElse(null);
+        }
+        if (image == null) {
+            throw new ResourceNotFoundException(ErrorCode.NOT_FOUND, "Product image not found");
+        }
         return new ImagePayload(image.getContent(), image.getContentType());
     }
 

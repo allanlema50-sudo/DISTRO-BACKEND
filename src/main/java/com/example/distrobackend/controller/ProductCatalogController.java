@@ -33,6 +33,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.UUID;
@@ -98,6 +99,14 @@ public class ProductCatalogController {
                                            @Valid @org.springframework.web.bind.annotation.ModelAttribute
                                            UpdateProductMultipartRequest request) {
         return productLifecycleService.update(actor, productId, request);
+    }
+
+    @PostMapping(value = "/{productId}/image", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasAnyRole('MANUFACTURER_ADMIN','MANUFACTURER_STAFF','DISTRIBUTOR_ADMIN','DISTRIBUTOR_STAFF') and @tenantAccess.hasOrganization(authentication)")
+    public ProductResponse replaceImage(@AuthenticationPrincipal AuthenticatedUser actor,
+                                        @PathVariable UUID productId,
+                                        @RequestParam("image") MultipartFile image) {
+        return productLifecycleService.replaceImage(actor, productId, image);
     }
 
     @GetMapping(value = "/{productId}/image", produces = {MediaType.IMAGE_JPEG_VALUE,

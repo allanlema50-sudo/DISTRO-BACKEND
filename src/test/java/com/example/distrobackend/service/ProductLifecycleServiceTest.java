@@ -3,6 +3,8 @@ package com.example.distrobackend.service;
 import com.example.distrobackend.Domain.entity.Organization;
 import com.example.distrobackend.Domain.entity.ProductImage;
 import com.example.distrobackend.Domain.entity.StockItem;
+import com.example.distrobackend.Domain.entity.Warehouse;
+import com.example.distrobackend.Exception.ResourceNotFoundException;
 import com.example.distrobackend.Domain.enums.Organizationtype;
 import com.example.distrobackend.Domain.enums.ProductPublicationStatus;
 import com.example.distrobackend.Domain.enums.UserRole;
@@ -27,6 +29,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -93,5 +96,82 @@ class ProductLifecycleServiceTest {
         assertThat(imageCaptor.getValue().getProduct()).isSameAs(productCaptor.getValue());
         assertThat(productCaptor.getValue().getId()).isEqualTo(productId);
         assertThat(imageCaptor.getValue().getProductId()).isNull();
+    }
+
+    @Test
+    void distributorReplacesTheirOfferPictureAndCustomersReceiveThoseBytes() {
+        UUID distributorId = UUID.randomUUID();
+        UUID offerId = UUID.randomUUID();
+        Organization distributor = organization(distributorId, Organizationtype.DISTRIBUTOR);
+        Organization manufacturer = organization(UUID.randomUUID(), Organizationtype.MANUFACTURER);
+        StockItem source = publishedProduct(manufacturer);
+        Warehouse warehouse = new Warehouse();
+        warehouse.setActive(true);
+        StockItem offer = new StockItem();
+        offer.setId(offerId);
+        offer.setOrganization(distributor);
+        offer.setSourceStockItem(source);
+        offer.setWarehouse(warehouse);
+        offer.setActive(true);
+        offer.setPublicationStatus(ProductPublicationStatus.PUBLISHED);
+        byte[] jpeg = new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, 0x00, (byte) 0xFF, (byte) 0xD9};
+
+        when(stockItemRepository.findByIdAndOrganizationIdForUpdate(offerId, distributorId))
+                .thenReturn(Optional.of(offer));
+        when(imageRepository.findById(offerId)).thenReturn(Optional.empty());
+        when(imageRepository.saveAndFlush(any(ProductImage.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(stockItemRepository.save(any(StockItem.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        AuthenticatedUser distributorAdmin = new AuthenticatedUser(UUID.randomUUID(),
+                UserRole.DISTRIBUTOR_ADMIN, distributorId, Organizationtype.DISTRIBUTOR,
+                Instant.now().plusSeconds(60));
+        productLifecycleService.replaceImage(distributorAdmin, offerId,
+                new MockMultipartFile("image", "offer.jpg", "image/jpeg", jpeg));
+
+        ArgumentCaptor<ProductImage> saved = ArgumentCaptor.forClass(ProductImage.class);
+        verify(imageRepository).saveAndFlush(saved.capture());
+        assertThat(saved.getValue().getProduct()).isSameAs(offer);
+        assertThat(saved.getValue().getContent()).containsExactly(jpeg);
+
+        when(imageRepository.findById(offerId)).thenReturn(Optional.of(saved.getValue()));
+        when(stockItemRepository.findById(offerId)).thenReturn(Optional.of(offer));
+        AuthenticatedUser customer = new AuthenticatedUser(UUID.randomUUID(), UserRole.CUSTOMER,
+                null, null, Instant.now().plusSeconds(60));
+        ProductLifecycleService.ImagePayload payload = productLifecycleService.image(customer, offerId);
+        assertThat(payload.content()).containsExactly(jpeg);
+        assertThat(payload.contentType()).isEqualTo("image/jpeg");
+    }
+
+    @Test
+    void anotherDistributorCannotReplaceAnOfferPicture() {
+        UUID offerId = UUID.randomUUID();
+        UUID otherOrg = UUID.randomUUID();
+        when(stockItemRepository.findByIdAndOrganizationIdForUpdate(offerId, otherOrg))
+                .thenReturn(Optional.empty());
+        AuthenticatedUser other = new AuthenticatedUser(UUID.randomUUID(), UserRole.DISTRIBUTOR_ADMIN,
+                otherOrg, Organizationtype.DISTRIBUTOR, Instant.now().plusSeconds(60));
+        assertThatThrownBy(() -> productLifecycleService.replaceImage(other, offerId,
+                new MockMultipartFile("image", "offer.jpg", "image/jpeg",
+                        new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, 0x00, (byte) 0xFF, (byte) 0xD9})))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    private static Organization organization(UUID id, Organizationtype type) {
+        Organization organization = new Organization();
+        organization.setId(id);
+        organization.setType(type);
+        return organization;
+    }
+
+    private static StockItem publishedProduct(Organization manufacturer) {
+        StockItem source = new StockItem();
+        source.setId(UUID.randomUUID());
+        source.setOrganization(manufacturer);
+        source.setActive(true);
+        source.setPublicationStatus(ProductPublicationStatus.PUBLISHED);
+        source.setImageAvailable(true);
+        return source;
     }
 }

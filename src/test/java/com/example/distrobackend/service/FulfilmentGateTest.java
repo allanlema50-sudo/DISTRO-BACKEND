@@ -50,9 +50,9 @@ class FulfilmentGateTest {
     }
 
     @Test
-    void creditOrdersMayBeFulfilledBeforePayment() {
+    void unpaidOrdersAreNotFulfilledEvenIfMarkedCredit() {
         PurchaseOrder order = order(PaymentTerms.CREDIT, "500.00");
-        assertTrue(FulfilmentGate.paymentSatisfied(order, List.of()));
+        assertFalse(FulfilmentGate.paymentSatisfied(order, List.of()));
         assertFalse(FulfilmentGate.paidInFull(order, List.of()));
     }
 

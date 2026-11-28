@@ -11,7 +11,7 @@ import java.util.UUID;
 public record CreatePurchaseOrderRequest(
         @NotNull UUID supplierOrganizationId,
         @NotEmpty @Valid List<PurchaseOrderItemRequest> items,
-        /** PAY_NOW when omitted. CREDIT needs credit terms from the supplier. */
+        /** Only PAY_NOW is accepted. Omitted means PAY_NOW. */
         PaymentTerms paymentTerms
 ) {
     public CreatePurchaseOrderRequest(UUID supplierOrganizationId, List<PurchaseOrderItemRequest> items) {
@@ -19,6 +19,11 @@ public record CreatePurchaseOrderRequest(
     }
 
     public PaymentTerms effectivePaymentTerms() {
-        return paymentTerms == null ? PaymentTerms.PAY_NOW : paymentTerms;
+        if (paymentTerms == null || paymentTerms == PaymentTerms.PAY_NOW) {
+            return PaymentTerms.PAY_NOW;
+        }
+        throw new com.example.distrobackend.Exception.ApiException(
+                com.example.distrobackend.Exception.ErrorCode.BAD_REQUEST,
+                "Purchase orders are pay-now only");
     }
 }

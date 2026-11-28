@@ -2,7 +2,6 @@ package com.example.distrobackend.service;
 
 import com.example.distrobackend.Domain.entity.PurchaseOrder;
 import com.example.distrobackend.Domain.entity.PurchaseOrderSettlement;
-import com.example.distrobackend.Domain.enums.PaymentTerms;
 import com.example.distrobackend.Domain.enums.SettlementStatus;
 import com.example.distrobackend.Exception.ApiException;
 import com.example.distrobackend.Exception.ErrorCode;
@@ -14,8 +13,7 @@ import java.util.Collection;
  * The single place that decides whether a direct purchase order may move
  * through warehouse fulfilment (pick, pack, dispatch).
  *
- * <p>PAY_NOW orders need a SETTLED settlement for the exact total. CREDIT
- * orders may be picked and dispatched before settlement.
+ * <p>Direct purchase orders are pay-now: they need a SETTLED settlement for the exact total.
  *
  * <p>This gate governs fulfilment only. Recording a payment that has actually
  * arrived (a confirmed bank transfer) never calls it, so a later dispute that
@@ -28,9 +26,6 @@ public final class FulfilmentGate {
     private FulfilmentGate() { }
 
     public static boolean paymentSatisfied(PurchaseOrder order, Collection<PurchaseOrderSettlement> settlements) {
-        if (order.getPaymentTerms() == PaymentTerms.CREDIT) {
-            return true;
-        }
         return paidInFull(order, settlements);
     }
 

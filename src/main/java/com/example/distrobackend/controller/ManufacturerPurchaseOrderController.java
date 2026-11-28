@@ -108,14 +108,6 @@ public class ManufacturerPurchaseOrderController {
         return purchaseOrderService.getForManufacturer(actor, purchaseOrderId);
     }
 
-    @PostMapping("/{purchaseOrderId}/cancel-overdue")
-    @PreAuthorize("hasRole('MANUFACTURER_ADMIN')")
-    public PurchaseOrderResponse cancelOverdue(@AuthenticationPrincipal AuthenticatedUser actor,
-                                               @PathVariable UUID purchaseOrderId,
-                                               @Valid @RequestBody(required = false) com.example.distrobackend.dto.CancelOverdueRequest note) {
-        return purchaseOrderService.cancelOverdue(actor, purchaseOrderId, note == null ? null : note.note());
-    }
-
     @GetMapping("/{purchaseOrderId}/settlement/proofs/{documentId}")
     public ResponseEntity<byte[]> proof(@AuthenticationPrincipal AuthenticatedUser actor,
                                         @PathVariable UUID purchaseOrderId,
